@@ -160,7 +160,7 @@ def main():
                 'era': era,
                 'is_data': is_data
             }
-            runs_files = {local_file_name: "Runs" if local_file_name else file_name}
+            runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
             runs_samples ={
                 options.dataset:{
                     'files': runs_files,
@@ -279,8 +279,6 @@ def main():
             coffea_console.print("-------------------------------------------")
             failed=True
             ixrd += 1
-            if ixrd > (len(aliases) - 1):
-                break
 
 if __name__ == "__main__":
     main()
