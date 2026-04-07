@@ -1,0 +1,351 @@
+boosthist:
+  # - ./data/merged-histogram-WZ-2018-Inc_WZ_lateset_alltau_jet_separation.pkl.gz
+  # - ./data/merged-histogram-WZ-2018-Inc_WZ_l_and_b_jet_separation.pkl.gz
+  - ./merged-histogram-WZ-2018-Inc_WZ_lateset_dd.pkl.gz
+  
+    
+xsections:
+  !include ../DCTools/config/inc-WZ/xsections_2018.yaml
+
+luminosity:
+  # from : https://docs.google.com/presentation/d/1gEF2jExqS1hWs-dlYgxrTT2xQztYbBZcrLdw45Aiy7g/edit#slide=id.gaa4333d304_0_0
+  value: 59.83
+  # uncertainties with correlation breakdown from https://twiki.cern.ch/twiki/bin/view/CMS/LumiRecommendationsRun2
+  # Use null where no values are supposed to be inserted ("-")
+  # 2016 block
+  # uncer_lumi_13TeV_1516_l: 1.0118
+  # uncer_lumi_13TeV_151617_l: 1.0004
+  # uncer_lumi_13TeV_15161718_l: 1.0035
+  # 2017 block
+  # uncer_lumi_13TeV_1516_l: null
+  # uncer_lumi_13TeV_151617_l: 1.0055
+  # uncer_lumi_13TeV_15161718_l: 1.0061
+  # 2018 block
+  uncer_lumi_13TeV_1516_l: null
+  uncer_lumi_13TeV_151617_l: null
+  uncer_lumi_13TeV_15161718_l: 1.0084
+
+groups:
+  WW:
+    processes:
+      - WWTo2L2Nu_TuneCP5_13TeV-powheg-pythia8
+      - GluGluToWWToENEN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToENMN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToENTN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToMNMN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToMNEN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToMNTN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToTNMN_TuneCP5_13TeV_MCFM701_pythia8
+      - GluGluToWWToTNTN_TuneCP5_13TeV_MCFM701_pythia8
+      - WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8
+    type:
+      background
+    color:
+      "#99B6F7"
+  WZ_ewk:
+    processes:
+      - WZJJ_EWK_InclusivePolarization_TuneCP5_13TeV_madgraph-madspin-pythia8
+    type:
+      background
+    color:
+      "#33FFF6"
+  VVV:
+    processes:
+      - WWZ_4F_TuneCP5_13TeV-amcatnlo-pythia8
+      - WZZ_TuneCP5_13TeV-amcatnlo-pythia8
+      - ZZZ_TuneCP5_13TeV-amcatnlo-pythia8
+    type:
+      background
+    color:
+      "#580C82"
+  VBFZ:
+    processes:
+      - EWKZ2Jets_ZToLL_M-50_TuneCP5_withDipoleRecoil_13TeV-madgraph-pythia8
+    type:
+      background
+    color:
+      "#D2691E"
+  # other:
+  #   processes:
+  #     - EWKZ2Jets_ZToLL_M-50_TuneCP5_withDipoleRecoil_13TeV-madgraph-pythia8
+  #     - WWTo2L2Nu_TuneCP5_13TeV-powheg-pythia8
+  #     - GluGluToWWToENEN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToENMN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToENTN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToMNMN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToMNEN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToMNTN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToTNMN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - GluGluToWWToTNTN_TuneCP5_13TeV_MCFM701_pythia8
+  #     - WJetsToLNu_TuneCP5_13TeV-madgraphMLM-pythia8
+  #     - WWZ_4F_TuneCP5_13TeV-amcatnlo-pythia8
+  #     - WZZ_TuneCP5_13TeV-amcatnlo-pythia8
+  #     - ZZZ_TuneCP5_13TeV-amcatnlo-pythia8
+      
+  #   type:
+  #     background
+  #   color:
+  #     "#D2691E"
+  Top:
+    processes:
+      - ST_tW_antitop_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8
+      - ST_tW_top_5f_inclusiveDecays_TuneCP5_13TeV-powheg-pythia8
+      # - ST_tW_antitop_5f_NoFullyHadronicDecays_TuneCP5_13TeV-powheg-pythia8/.root
+      # - ST_tW_top_5f_NoFullyHadronicDecays_TuneCP5_13TeV-powheg-pythia8
+      - ST_s-channel_4f_leptonDecays_TuneCP5_13TeV-amcatnlo-pythia8
+      - ST_t-channel_antitop_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8
+      - ST_t-channel_top_4f_InclusiveDecays_TuneCP5_13TeV-powheg-madspin-pythia8
+      - tZq_ll_4f_ckm_NLO_TuneCP5_13TeV-amcatnlo-pythia8
+      - TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8
+      - TTWJetsToLNu_TuneCP5_13TeV-amcatnloFXFX-madspin-pythia8
+      # - TTWJetsToQQ_TuneCP5_13TeV-amcatnloFXFX-madspin-pythia8
+      - TTZToLLNuNu_M-10_TuneCP5_13TeV-amcatnlo-pythia8
+      - TTZToQQ_TuneCP5_13TeV-amcatnlo-pythia8
+      - TTToSemiLeptonic_TuneCP5_13TeV-powheg-pythia8
+    type:
+      background
+    color:
+      "#2E6D92"
+  ZZ:
+    processes:
+      - ZZTo4L_TuneCP5_13TeV_powheg_pythia8
+      - ZZTo2L2Nu_TuneCP5_13TeV_powheg_pythia8
+      - ZZJJ_ZZTo2L2Nu_EWK_dipoleRecoil_TuneCP5_13TeV-madgraph-pythia8
+      - GluGluToContinToZZTo2e2mu_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo2e2tau_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo2mu2tau_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo4e_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo4mu_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo4tau_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo2e2nu_TuneCP5_13TeV-mcfm701-pythia8
+      - GluGluToContinToZZTo2mu2nu_TuneCP5_13TeV-mcfm701-pythia8
+      # - ZZJJTo4L_TuneCP5_13TeV-madgraph-pythia8
+    type:
+      background
+    color:
+      "#cba6f7"
+  DY:
+    processes:
+       #- DYJetsToTauTau_M-50_AtLeastOneEorMuDecay_massWgtFix_TuneCP5_13TeV-powhegMiNNLO-pythia8-photos
+      # - DYJetsToLL_LHEFilterPtZ-0To50_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_LHEFilterPtZ-50To100_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_LHEFilterPtZ-100To250_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_LHEFilterPtZ-250To400_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_LHEFilterPtZ-400To650_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_LHEFilterPtZ-650ToInf_MatchEWPDG20_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_M-50_HT-100to200_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-1200to2500_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-200to400_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-2500toInf_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-400to600_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-600to800_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-70to100_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      # - DYJetsToLL_M-50_HT-800to1200_TuneCP5_PSweights_13TeV-madgraphMLM-pythia8
+      - DYJetsToLL_0J_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      - DYJetsToLL_1J_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      - DYJetsToLL_2J_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_M-50_TuneCP5_13TeV-amcatnloFXFX-pythia8
+      # - DYJetsToLL_M-50_TuneCP5_13TeV-madgraphMLM-pythia8
+    type:
+      background
+    color:
+      "#F6D68D"
+  DDDY:
+    processes:
+      - MuonEG
+      - DoubleMuon
+      - SingleMuon
+      - EGamma
+    type:
+      background
+    color:
+      # "#2E8B57"
+      "#808080"
+    remap_class_name:
+      inc_WZ_DataDrivenDY
+  WZ:
+    processes:
+      - WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8
+    type:
+      signal
+    color:
+      "#46B3A5"
+  # DDDY:
+  #   processes:
+  #     - MuonEG
+  #     - DoubleMuon
+  #     - SingleMuon
+  #     - EGamma
+  #   type:
+  #     background
+  #   color:
+  #     # "#2E8B57"
+  #     "#808080"
+  #   remap_class_name:
+  #     inc_WZ_DataDrivenDY
+  data:
+    processes:
+      - MuonEG
+      - DoubleMuon
+      - SingleMuon
+      - EGamma
+    type:
+      data
+    color:
+      "#181926"
+
+plotting:
+    inc-DY0:
+        tau_pt:
+            rebin: 2 
+            range: [0, 300]
+            blind: false
+    inc-DY1:
+        tau_pt_loose:
+            rebin: 2 
+            range: [0, 300]
+            blind: false
+    inc-SR0:
+        tau_pt:
+            rebin: 2 
+            range: [0, 300]
+            blind: true
+    inc-SR1:
+        tau_pt:
+            rebin: 2 
+            range: [0, 300]
+            blind: true
+    inc-B0:
+        tau_pt_loose:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+    inc-B1:
+        tau_pt_loose:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+    inc-C0:
+        tau_pt_loose:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+    inc-C1:
+        tau_pt_loose:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+    inc-D0:
+        tau_pt:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+    inc-D1:
+        tau_pt:
+            rebin: 1 
+            range: [0, 300]
+            blind: false
+
+datadriven:
+    DDDY:
+        Corrections:
+            LNTTau_to_VTTau_TransferFactor:
+                method: inc_WZ_DYDD_TransferFactor
+                correctionset_flow: clamp
+                correctionset_top_description: loose-not-tight tau to very-tight tau fake rate for Drell-Yan
+                correctionset_output_label: fake_rate
+                correctionset_output_description: fake rate for Drell-Yan
+                channels:
+                    inc-D0: tau_pt
+                    inc-D1: tau_pt
+                    inc-C0: tau_pt_loose
+                    inc-C1: tau_pt_loose
+                channel_ratios:
+                    0:
+                        numerator: inc-D0
+                        denominator: inc-C0
+                    1:
+                        numerator: inc-D1
+                        denominator: inc-C1
+                update_axes_meta:
+                    # rename tau_pt_loose axis name so that histograms can be added consistently
+                    tau_pt_loose:
+                        name: tau_pt
+                dict_to_hist_axis:
+                    axis_name: jet_multiplicity
+                    axis_label: Number of jets
+                    axis_type: Regular
+                    axis_storage: Weight
+            LNTTau_HighMET_DY_to_Data_Estimate:
+                method: inc_WZ_DYDD_ProbDY
+                correctionset_flow: clamp
+                correctionset_top_description: tau_pt parametrized probability event is from Drell-Yan
+                correctionset_output_label: prob_dy
+                correctionset_output_description: probability event comes from Drell-Yan
+                channels:
+                    inc-B0: tau_pt_loose
+                    inc-B1: tau_pt_loose
+                channel_absolutes:
+                    0: inc-B0
+                    1: inc-B1
+                update_axes_meta:
+                    # rename tau_pt_loose axis name so that histograms can be added consistently
+                    tau_pt_loose:
+                        name: tau_pt
+                dict_to_hist_axis:
+                    axis_name: jet_multiplicity
+                    axis_label: Number of jets
+                    axis_type: Regular
+                    axis_storage: Weight
+            LNTTau_LowMET_DY_to_Data_Estimate:
+                method: inc_WZ_DYDD_ProbDY
+                correctionset_flow: clamp
+                correctionset_top_description: tau_pt parametrized probability event is from Drell-Yan
+                correctionset_output_label: prob_dy
+                correctionset_output_description: probability event comes from Drell-Yan
+                channels:
+                    inc-C0: tau_pt_loose
+                    inc-C1: tau_pt_loose
+                channel_absolutes:
+                    0: inc-C0
+                    1: inc-C1
+                update_axes_meta:
+                    # rename tau_pt_loose axis name so that histograms can be added consistently
+                    tau_pt_loose:
+                        name: tau_pt
+                dict_to_hist_axis:
+                    axis_name: jet_multiplicity
+                    axis_label: Number of jets
+                    axis_type: Regular
+                    axis_storage: Weight
+
+        CompoundCorrections:
+            LNTTau_VTTau_DDDY_Closure:
+                correctionset_top_description: tau_pt parametrized Drell-Yan closure weight combining LowMET DY probability with LNT to VT Tau fake rate
+                correctionset_output_label: dddy_closure
+                correctionset_output_type: real
+                correctionset_output_description: data-driven Drell-Yan fake rate weight combining LNT to VT tau fake rate with Probability DY from the LowMET region
+                inputs_update: []
+                input_op: "*"
+                output_op: "*"
+                stack: ["LNTTau_to_VTTau_TransferFactor", "LNTTau_LowMET_DY_to_Data_Estimate"]
+            LNTTau_VTTau_DDDY_Estimate:
+                correctionset_top_description: tau_pt parametrized Drell-Yan fake rate weight combining HighMET DY probability with LNT to VT Tau fake rate
+                correctionset_output_label: dddy_estimate
+                correctionset_output_type: real
+                correctionset_output_description: data-driven Drell-Yan fake rate weight combining LNT to VT tau fake rate with Probability DY from the HighMET region
+                inputs_update: []
+                input_op: "*"
+                output_op: "*"
+                stack: ["LNTTau_to_VTTau_TransferFactor", "LNTTau_HighMET_DY_to_Data_Estimate"]
+                # inputs:
+                #     name: "jet_multiplicity"
+                
+                #     inputs=[
+                #         cs.Variable(name="jet_multiplicity", type="real",
+                #                     description="Number of jets"),
+                #         cs.Variable(name="tau_pt", type="real",
+                #                     description="Tau pT [GeV]"),
+                #     ],
+                #     output=cs.Variable(name="weight", type="real",
+                #                        description="DD estimate weight"),
