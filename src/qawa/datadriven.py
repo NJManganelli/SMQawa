@@ -5,6 +5,7 @@ import awkward as ak
 from pathlib import Path
 import numpy as np
 import hist
+import rich
 from typing import Dict, List, Tuple, Optional
 import warnings
 
@@ -353,6 +354,7 @@ if __name__ == "__main__":
                 print(f"Wrote to {outfile}"
                       f"\n\tCorrections: {[x.name for x in new_corrections]}\n\tCompoundCorrections: {[x.name for x in new_compoundcorrections]}"
                       )
+                rich.print(new_cset)
             else:
                 print(f"Skipping write of new correctionset json: with {len(new_corrections)} Corrections and {len(new_compoundcorrections)} CompoundCorrections to {outfile}"
                       f"\nWould have respectivelywritten \n\tCorrections: {[x.name for x in new_corrections]}\n\tCompoundCorrections: {[x.name for x in new_compoundcorrections]}"
