@@ -1,0 +1,376 @@
+diff --git a/src/qawa/process/wztau2lnu_inclusive.py b/src/qawa/process/wztau2lnu_inclusive.py
+index ca31cb7..4f78dfe 100644
+--- a/src/qawa/process/wztau2lnu_inclusive.py
++++ b/src/qawa/process/wztau2lnu_inclusive.py
+@@ -16,12 +16,65 @@ import pickle
+ import numpy as np
+ import pandas as pd
+ import math
++import time
++from collections import defaultdict
+ 
+ from coffea import processor
+ from coffea.nanoevents.methods import candidate
+ from coffea.analysis_tools import Weights, PackedSelection
+ from coffea.lumi_tools import LumiMask
+ from coffea.util import coffea_console
++
++
++# =============================================================================
++# PROFILING UTILITIES
++# =============================================================================
++class ProcessorTimer:
++    """Simple timer utility for profiling processor performance."""
++
++    def __init__(self):
++        self.timings = defaultdict(lambda: {'total': 0.0, 'count': 0, 'min': float('inf'), 'max': 0.0})
++        self._start_times = {}
++
++    def start(self, label):
++        """Start timing a section."""
++        self._start_times[label] = time.perf_counter()
++
++    def stop(self, label):
++        """Stop timing a section and accumulate."""
++        if label in self._start_times:
++            elapsed = time.perf_counter() - self._start_times[label]
++            self.timings[label]['total'] += elapsed
++            self.timings[label]['count'] += 1
++            self.timings[label]['min'] = min(self.timings[label]['min'], elapsed)
++            self.timings[label]['max'] = max(self.timings[label]['max'], elapsed)
++            del self._start_times[label]
++            return elapsed
++        return 0.0
++
++    def report(self):
++        """Print timing report."""
++        coffea_console.print("\n" + "="*80)
++        coffea_console.print("PROFILING REPORT")
++        coffea_console.print("="*80)
++
++        # Sort by total time descending
++        sorted_timings = sorted(self.timings.items(), key=lambda x: x[1]['total'], reverse=True)
++
++        coffea_console.print(f"{'Section':<45} {'Total (s)':<12} {'Count':<8} {'Avg (ms)':<12} {'Min (ms)':<12} {'Max (ms)':<12}")
++        coffea_console.print("-"*80)
++
++        for label, data in sorted_timings:
++            avg_ms = (data['total'] / data['count'] * 1000) if data['count'] > 0 else 0
++            min_ms = data['min'] * 1000 if data['min'] != float('inf') else 0
++            max_ms = data['max'] * 1000
++            coffea_console.print(f"{label:<45} {data['total']:<12.4f} {data['count']:<8} {avg_ms:<12.3f} {min_ms:<12.3f} {max_ms:<12.3f}")
++
++        coffea_console.print("="*80 + "\n")
++
++# Global timer instance
++_TIMER = ProcessorTimer()
++# =============================================================================
+ from qawa.roccor import rochester_correction
+ from qawa.leptonsSF import LeptonScaleFactors
+ from qawa.jetPU import jetPUScaleFactors
+@@ -691,13 +744,18 @@ class wzinclusive_processor(processor.ProcessorABC):
+ 
+ 
+     def process_shift(self, event, shift_name:str=''):
++        _TIMER.start('process_shift_total')
++        _TIMER.start('process_shift_setup')
++
+         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
+         dataset = event.metadata['dataset']
+         is_data = event.metadata.get("is_data")
+         selection = PackedSelection()
+         weights = Weights(len(event), storeIndividual=True)
+-        
++
++        _TIMER.start('build_histos')
+         histos = self.build_histos()
++        _TIMER.stop('build_histos')
+         
+         if is_data:
+             selection.add('lumimask', self._json[self._era](event.run, event.luminosityBlock))
+@@ -732,12 +790,14 @@ class wzinclusive_processor(processor.ProcessorABC):
+                 event.Flag.goodVertices &
+                 event.Flag.eeBadScFilter &
+                 event.Flag.globalTightHalo2016Filter &
+-                event.Flag.BadChargedCandidateFilter & 
++                event.Flag.BadChargedCandidateFilter &
+                 event.Flag.BadPFMuonFilter
+             )
+ 
++        _TIMER.stop('process_shift_setup')
+ 
+         # Electrons and Muons and Taus
++        _TIMER.start('build_leptons')
+         tight_lep, loose_lep, non_iso_leptons = build_leptons(
+ 
+             event.Muon,
+@@ -745,7 +805,9 @@ class wzinclusive_processor(processor.ProcessorABC):
+         )
+         tight_sorter = ak.argsort(tight_lep.pt, axis=1, ascending=False)
+         tight_lep = tight_lep[tight_sorter]
+-        
++        _TIMER.stop('build_leptons')
++
++        _TIMER.start('build_taus')
+         had_taus = build_htaus(event.Tau, tight_lep)
+         had_taus_loose = build_htaus_loose(event.Tau, tight_lep)
+         had_taus_tight = build_htaus_tight(event.Tau, tight_lep)
+@@ -782,16 +844,20 @@ class wzinclusive_processor(processor.ProcessorABC):
+         deep_tau_e = lead_tau_loose.rawDeepTau2017v2p1VSe
+         deep_tau_mu = lead_tau_loose.rawDeepTau2017v2p1VSmu
+         deep_tau_jet = lead_tau_loose.rawDeepTau2017v2p1VSjet
++        _TIMER.stop('build_taus')
+ 
+-        jets = event.Jet        
++        _TIMER.start('build_jets')
++        jets = event.Jet
+         good_jets, good_bjet = build_jets(jets, tight_lep, had_taus_loose, self.btag_wp, self._era, self._isAPV)
+-        
++
+         ngood_jets  = ak.num(good_jets)
+         ngood_bjets = ak.num(good_bjet)
+-        
++
+         event['ngood_bjets'] = ngood_bjets
+         event['ngood_jets']  = ngood_jets
+-       
++        _TIMER.stop('build_jets')
++
++        _TIMER.start('compute_observables')
+         # lepton quantities
+         def z_lepton_pair(leptons):
+             pair = ak.combinations(leptons, 2, axis=1, fields=['l1', 'l2'])
+@@ -1029,24 +1095,38 @@ class wzinclusive_processor(processor.ProcessorABC):
+         event['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
+         event['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
+ 
++        _TIMER.stop('compute_observables')
+ 
+         # Now adding weights
++        _TIMER.start('compute_weights')
+         _ones = np.ones(len(weights.weight()))
+         if not is_data:
+             weights.add('genweight', event.genWeight)
+             # self._btag.append_btag_sf(jets, weights)
++            _TIMER.start('sf_jetPU')
+             self._jpSF.append_jetPU_sf(good_jets, weights)
+-            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
++            _TIMER.stop('sf_jetPU')
++
++            _TIMER.start('sf_pileup')
++            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt)
++            _TIMER.stop('sf_pileup')
++
++            _TIMER.start('sf_tauID')
+             self._tauID.append_tauID_sf(had_taus, weights)
++            _TIMER.stop('sf_tauID')
++
++            _TIMER.start('sf_trigger')
+             self._add_trigger_sf(weights, lead_lep, subl_lep)
+-            
++            _TIMER.stop('sf_trigger')
++
+             weights.add (
+-                    'LeptonSF', 
+-                    lead_lep.SF*subl_lep.SF, 
+-                    lead_lep.SF_up*subl_lep.SF_up, 
++                    'LeptonSF',
++                    lead_lep.SF*subl_lep.SF,
++                    lead_lep.SF_up*subl_lep.SF_up,
+                     lead_lep.SF_down*subl_lep.SF_down
+             )
+-            
++
++            _TIMER.start('sf_ewk')
+             if self.ewk_process_name:
+                 self.ewk_corr.get_weight(
+                         event.GenPart,
+@@ -1056,6 +1136,7 @@ class wzinclusive_processor(processor.ProcessorABC):
+                 )
+             else:
+                 weights.add("kEW", _ones, _ones, _ones)
++            _TIMER.stop('sf_ewk')
+             
+             if "PSWeight" in event.fields:
+                 theory_ps_weight(weights, event.PSWeight)
+@@ -1082,7 +1163,6 @@ class wzinclusive_processor(processor.ProcessorABC):
+                     weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+                 else:
+                     coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
+-                
+             if 'LHEReweightingWeight' in event.fields and 'aQGC' in dataset:
+                 for i in range(1057):
+                     weights.add(f"eft_{self._eftnames[i]}", event.LHEReweightingWeight[:, i])
+@@ -1094,6 +1174,8 @@ class wzinclusive_processor(processor.ProcessorABC):
+             # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
+             weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
+             weights.add("datadriven_DDDY",_ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
++        _TIMER.stop('compute_weights')
++
+         # selections (delta_tau_met_phi cut is removed from SR)
+ 
+         common_sel = ['triggers', 'lumimask', 'metfilter']
+@@ -1173,42 +1255,40 @@ class wzinclusive_processor(processor.ProcessorABC):
+                 coffea_console.print(f"\t{field:<{longest_field}}={getattr(collection, field)}")
+         
+         def _histogram_filler(ch, syst, var, _weight=None):
++            _TIMER.start('hfill_selection')
+             sel_ = channels[ch]
+             sel_args_ = {
+                 s.replace('~',''): (False if '~' in s else True) for s in sel_ if var not in s
+             }
+-            cut =  selection.require(**sel_args_)
++            cut = selection.require(**sel_args_)
++            _TIMER.stop('hfill_selection')
+ 
+             systname = 'nominal' if syst is None else syst
+-            
+-            if _weight is None: 
++
++            _TIMER.start('hfill_weight')
++            if _weight is None:
+                 if syst in weights.variations:
+                     weight = weights.weight(modifier=syst)[cut]
+                 else:
+                     weight = weights.weight()[cut]
+             else:
+                 weight = weights.weight()[cut] * _weight[cut]
+-            
++            _TIMER.stop('hfill_weight')
++
+             vv = ak.to_numpy(ak.fill_none(weight, np.nan))
+             if np.isnan(np.any(vv)):
+                 coffea_console.print(f" - {syst} weight contains invalid values:", vv[np.isnan(vv)], vv[np.isinf(vv)])
+ 
+-            # if ch in ['inc-SR1', 'inc-DY1']:
+-            #     if var in ["met_pt", "mT_WZ", "lead_jet_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_dphi", "met_phi", "lead_jet_phi", "dilep_loose_tau_phi"] :
+-            #         if systname in ['nominal', 'JESUp', 'JESDown']:
+-            #             coffea_console.print(ch, var, systname, _format_variable(event[var], cut)[:2], event.event[cut][:2])
+-            #             if ch=='inc-SR1' and var=="mT_WZ" :
+-            #                 collection_printer(event.Tau[:2])
+-
+-
++            _TIMER.start('hfill_fill')
+             histos[var].fill(
+                 **{
+-                    "channel": ch, 
+-                    "systematic": systname, 
+-                    var: _format_variable(event[var], cut), 
++                    "channel": ch,
++                    "systematic": systname,
++                    var: _format_variable(event[var], cut),
+                     "weight": ak.nan_to_num(weight,nan=1.0, posinf=1.0, neginf=1.0)
+                 }
+             )
++            _TIMER.stop('hfill_fill')
+ 
+         def _histogram_filler2D(ch, syst, var1, var2, _weight=None):
+             sel_ = channels[ch]
+@@ -1244,7 +1324,9 @@ class wzinclusive_processor(processor.ProcessorABC):
+             systematics = [None] + list(weights.variations)
+         else:
+             systematics = [shift_name]
+-            
++
++        _TIMER.start('histogram_filling_loop')
++        n_fills = 0
+         for ch in channels:
+             for sys in systematics:
+                 _histogram_filler(ch, sys, 'leading_lep_pt')
+@@ -1294,22 +1376,27 @@ class wzinclusive_processor(processor.ProcessorABC):
+                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_loose_tau')
+                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_tight_tau')
+                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_vtight_tau')
++                n_fills += 47  # 47 histogram fills per channel/systematic combo
++        _TIMER.stop('histogram_filling_loop')
+ 
++        _TIMER.stop('process_shift_total')
+         return {dataset: histos}
+         
+     def process(self, event):
++        _TIMER.start('process_total')
+         dataset_name = event.metadata['dataset']
+         is_data = event.metadata.get("is_data")
+-        
++
+ 
+         # JES/JER corrections
++        _TIMER.start('jme_corrections')
+         rho = event.fixedGridRhoFastjetAll
+         cache = {}
+ 
+-        
++
+         raw_met = event.RawMET
+         met_to_correct = event.MET
+-       
++
+         jets = self._jmeu.corrected_jets_L123_JER(event.Jet, event.fixedGridRhoFastjetAll, cache)
+         jets_to_correct_met = self._jmeu.corrected_jets_L123_noJER(event.Jet, event.fixedGridRhoFastjetAll, cache)
+         met = self._jmeu.corrected_met(met_to_correct, jets, event.fixedGridRhoFastjetAll, cache) # we are adding fully smeared L123 jets
+@@ -1321,26 +1408,31 @@ class wzinclusive_processor(processor.ProcessorABC):
+         event = ak.with_field(event, met, 'MET')
+         
+ 
+-        run = event.run 
++        run = event.run
+         npv = event.PV.npvs
+-        
++
+         met = met_phi_xy_correction(
+-            event.MET, run, npv, 
+-            is_mc=not is_data, 
++            event.MET, run, npv,
++            is_mc=not is_data,
+             era=self._era
+         )
+         event = ak.with_field(event, met, 'MET')
++        _TIMER.stop('jme_corrections')
++
+ 
+-    
+         if is_data:
+-            
++            _TIMER.start('rochester_correction')
+             # Apply rochester_correction
+-            muon = event.Muon 
++            muon = event.Muon
+             muon_pt,muon_pt_roccorUp,muon_pt_roccorDown=rochester_correction(is_data).apply_rochester_correction (muon)
+             muon['pt'] = muon_pt
+             event = ak.with_field(event, muon, 'Muon')
++            _TIMER.stop('rochester_correction')
+ 
+-            return self.process_shift(event, None)
++            result = self.process_shift(event, None)
++            _TIMER.stop('process_total')
++            _TIMER.report()
++            return result
+ 
+         
+         # Adding scale factors to Muon and Electron fields
+@@ -1451,13 +1543,23 @@ class wzinclusive_processor(processor.ProcessorABC):
+             shifts.append(({"Jet": hem_jets, "MET": hem_met}, "HEMDown"))
+             shifts.append(({"Jet": event.Jet, "MET": event.MET}, "HEMUp"))
+ 
++        coffea_console.print(f"[PROFILE] Processing {len(shifts)} systematic shifts...")
++        _TIMER.start('all_shifts_loop')
+         shifts = [
+             self.process_shift(
+-                update_collection(event, collections), 
++                update_collection(event, collections),
+                 name
+             ) for collections, name in shifts
+         ]
+-        return processor.accumulate(shifts)
++        _TIMER.stop('all_shifts_loop')
++
++        _TIMER.start('accumulate_shifts')
++        result = processor.accumulate(shifts)
++        _TIMER.stop('accumulate_shifts')
++
++        _TIMER.stop('process_total')
++        _TIMER.report()
++        return result
+     
+ 
+     
