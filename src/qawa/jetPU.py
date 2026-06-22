@@ -15,7 +15,9 @@ import uproot
 
 
 class jetPUScaleFactors:
-    def __init__(self, era:str='2018', wp:str='M', isAPV=False):
+    def __init__(self, era:str='2018', wp:str='M', isAPV=False, isEE=False, isBPix=False):
+        if isEE or isBPix:
+            raise NotImplementedError("The implementation for 2022 and 2023 eras is complete for jetPUScaleFactors, ensure they are applicable and if so complete this method, or disable them entirely")
         self._era = era
         self._wp  = wp
         self.isAPV = isAPV
