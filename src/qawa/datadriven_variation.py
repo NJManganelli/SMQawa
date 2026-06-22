@@ -6,12 +6,16 @@ from pathlib import Path
 
 class DataDrivenEventReweight:
     def __init__ (
-        self,
-        era: str = "2018",
+            self,
+            era: str = "2018",
+            clibhandler = None,
     ):
-        _data_path = Path(os.path.dirname(__file__)) / f"data/dd/{era}/WZ_inclusive_data_driven_{era}.json" #need to chage after 2016 and 2017 correction
-        assert _data_path.exists(), f"DataDrivenEventReweight could not find the expected json file: {str(_data_path)}"
-        self.dd_estimator = correctionlib.CorrectionSet.from_file(str(_data_path)).compound["LNTTau_TTau_DD_Estimate"]
+        if clibhandler is not None:
+            self.dd_estimator = clibhandler.getCorrectionSet("dddy").compound["LNTTau_TTau_DD_Estimate"]
+        else:
+            _data_path = Path(os.path.dirname(__file__)) / f"data/dd/{era}/WZ_inclusive_data_driven_{era}.json"
+            assert _data_path.exists(), f"DataDrivenEventReweight could not find the expected json file: {str(_data_path)}"
+            self.dd_estimator = correctionlib.CorrectionSet.from_file(str(_data_path)).compound["LNTTau_TTau_DD_Estimate"]
         
     def estimate_dd_DY(self, jet_multiplicity, tau_pt, systematic: str = None):
         if systematic is None:
