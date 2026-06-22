@@ -3,6 +3,7 @@ from coffea import nanoevents
 from coffea.nanoevents import NanoAODSchema, BaseSchema
 from coffea.util import coffea_console
 from qawa.process.coffea_sumw import coffea_sumw
+from qawa.common import nanoaod_version
 import argparse
 import pickle
 import gzip
@@ -74,6 +75,7 @@ def main():
     auto_isMC = None  #if neither data or mc tag is found, keep as None
     auto_dataset = None
     auto_runperiod = ""
+    auto_ver = nanoaod_version(options.infile)
     if "NANOAODSIM" in split_args:
         auto_isMC = True
     elif "NANOAOD" in split_args:
@@ -124,7 +126,7 @@ def main():
         try:
             file_name = options.infile
             if '/store/' in options.infile:
-                if options.infile.startswith("root://"):
+                if options.infile.startswith("root://") or options.infile.startswith("file:"):
                     pass
                 else:
                     file_name = aliases[ixrd] + options.infile
@@ -162,7 +164,7 @@ def main():
                 'era': era,
                 'is_data': is_data
             }
-            runs_files = {local_file_name: "Runs" if local_file_name else file_name}
+            runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
             runs_samples ={
                 options.dataset:{
                     'files': runs_files,
@@ -214,6 +216,7 @@ def main():
                 --> {list(events_files.keys())[0]}
                 -- dataset   = {options.dataset}
                 -- period    = {options.runperiod}
+                -- version   = {auto_ver}
                 -- executor  = {options.executor}
                 -- copyInput = {options.copyInput}
                 -- maxChunks = {options.maxChunks if options.maxChunks > 0 else "None"}
@@ -232,7 +235,8 @@ def main():
                 proc_configured = wzinclusive_processor(
                     era=options.era,
                     ewk_process_name=ewk_flag,
-                    run_period=options.runperiod if is_data else ''
+                    run_period=options.runperiod if is_data else '',
+                    version=auto_ver,
                 )
             elif options.analysis in ["inc-WZ-Fxsec"]:
                 from qawa.process.Fxsec import wzinclusive_processor # Fiducial XSec test processor for inc-WZ
@@ -240,7 +244,8 @@ def main():
                 proc_configured = wzinclusive_processor(
                     era=options.era,
                     ewk_process_name=ewk_flag,
-                    run_period=options.runperiod if is_data else ''
+                    run_period=options.runperiod if is_data else '',
+                    version=auto_ver,
                 )
             elif options.analysis in ["trig-eff"]:
                 coffea_console.print(" --- wztau2lnu_inclusive trigger efficiency processor ... ")
