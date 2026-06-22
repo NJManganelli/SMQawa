@@ -245,35 +245,6 @@ def apply_hem_uncertainty(jets, met):
 
 
 class wzinclusive_processor(processor.ProcessorABC):
-    # EWK corrections process has to be define before hand, it has to change when we move to dask
-    # DONE
-    #    Central loading of correctionlib corrections with correction tags from /cvmfs or local backup
-    #    b-tagging loads WPs directly from correctionlib
-    #    Dynamically apply jetPUID SFs if needed (AK4CHS vs AK4PUPPI)
-    #    Dynamically apply PU Reweighting from correctionlib if available, old format if not
-    #    Add jetId using correctionlib with backcompatibility
-    #    Add jet type to JECs/JME uncertainties, partial implementation for correctionlib to prepare for that in the future
-    #    Added option to switch lepton IDs in lepton SFs (most combinations in correctionlib: cutbased/mva + pfiso/miniiso + ...)
-    #    muon and lepton SFs using correcitonlib
-    #    split lepton reco / id systematics according to CMS recommendations
-    #    validated muon/electron SFs
-    #    hooks for 2022/2023 EE/BPix (framework)
-    #    nanoAODversion hook for branching IDs and corrections
-    #    unified tau ID method for VTight/Tight/Loose
-    #    analysis hook in tau ID to define custom WPs for inc-WZ
-    #    Test MET xy corrections using Run II (Run III missing?) -> going to be a problem
-    #    Update 2024 JME txt files
-    #    Add post-scale/smear reco/id/iso SF calculation as optional arguments to muonSF and electronSF...
-    #    Muon Scale and Smearing; replaces Rochester Corrections; core implementation by MUO is broken because of ROOT-PRNG usage, forked HiggsDNA implementation
-    #    Electron Scale and Smearing; Used to be embedded in Nano, must be applied in Run III, maybe Run II v15 too - done
-    #    Switch to systematics interface consistently (lepton shifts, lepton scale factors, other scale factors
-    #    add handler path with isAPV isEE isBPix for convenience/alt to subera, add LumiMask DC files to the paths and use getPath in the LumiMask below,
-    #    Switch uncertainties breakdown to conform to CMS required naming convention and breakdowns
-    #    Utilize com + plug into electroweak corrections
-    #    NEED new electron loose iso and loose non-iso ID, mvaIso_WPL is GONE
-    #    Replacement of placeholder 2024trigger rules
-    #    Utilize Israr's 2024 trigger efficiencies in clib format
-    # TODOS
     # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, then maybe add the dd loading to the clibhandler for consistency... update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing,  need to add in the tau ID 2018 algo for Run 3, and choose the right btagger for selection inside the select jets functions...
     # NEED
     #    JER Smearing broken in txt format, need to update to clib, unclear if coffea version fully ready with L1 and new MET stuff
