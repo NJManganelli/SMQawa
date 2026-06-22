@@ -3,6 +3,7 @@ from coffea.analysis_tools import Weights
 from coffea import processor
 from scipy import interpolate
 from coffea.nanoevents.methods import candidate
+from coffea.jetmet_tools.CorrectedMETFactory import corrected_polar_met
 
 import awkward as ak
 import numpy as np
@@ -34,8 +35,34 @@ _lhapdf_config = {
     }
 
 }
+NANOAOD_VERSION_RE = re.compile(r"NANO(?:AOD)?(?:APV)?v(\d+)", re.IGNORECASE)
+def nanoaod_version(path: str) -> str | None:
+    m = NANOAOD_VERSION_RE.search(path)
+    if m:
+        return f"v{m.group(1)}"
+    if re.search(r"Run2025[A-Z]/.+/NANOAOD/PromptReco", path):
+        return "v15"  # 2025 prompt NanoAOD is produced as v15
+    return None    
 
-def met_phi_xy_correction(met, run, npv, is_mc:bool=False, era:str='2016'):
+
+def met_phi_xy_correction(met, run, npv, is_mc:bool=False, era:str='2016', jet_type:str=None, clibhandler=None):
+    if clibhandler is not None:
+        corrector = clibhandler.getCorrectionSet("met")
+        pt_key, phi_key = None, None
+        if jet_type == "AK4CHS":
+            pt_key = f"pt_metphicorr_pfmet_{'mc' if is_mc else 'data'}"
+            phi_key = f"pt_metphicorr_pfmet_{'mc' if is_mc else 'data'}"
+        elif jet_type == "AK4PUPPI":
+            pt_key = f"pt_metphicorr_puppimet_{'mc' if is_mc else 'data'}"
+            phi_key = f"pt_metphicorr_puppimet_{'mc' if is_mc else 'data'}"
+        else:
+            raise ValueError(f"Unexpected jet_type in met_phi_xy_correction when clibhandler has been enabled: {jet_type}")
+        pt_ = corrector[pt_key].evaluate(met.pt, met.phi, npv, run)
+        phi_ = corrector[phi_key].evaluate(met.pt, met.phi, npv, run)
+        met['pt'] = pt_
+        met['phi'] = phi_
+        return met
+        
     xcor = ak.ones_like(run)
     ycor = ak.ones_like(run)
     
@@ -131,7 +158,10 @@ def trigger_rules(event, rules:dict, era:str='2018'):
     ds_names_ = {
         '2016' : ['DoubleMuon', 'SingleMuon', 'DoubleEG', 'SingleElectron', 'MuonEG'],
         '2017' : ['DoubleMuon', 'SingleMuon', 'DoubleEG', 'SingleElectron', 'MuonEG'],
-        '2018' : ['DoubleMuon', 'SingleMuon', 'EGamma', 'MuonEG']
+        '2018' : ['DoubleMuon', 'SingleMuon', 'EGamma', 'MuonEG'],
+        '2024' : ['Muon', 'EGamma', 'MuonEG'],
+        '2025' : ['Muon', 'EGamma', 'MuonEG'],
+        '2026' : ['Muon', 'EGamma', 'MuonEG'],
     }
     
     _pass = np.zeros(len(event), dtype='bool')
@@ -263,7 +293,24 @@ def transverse_energy(fourmomentum):
 
 
 class pileup_weights:
-    def __init__(self, do_syst:bool=True, era:str='2018'):
+    def __init__(self, do_syst:bool=True, era:str='2018', clibhandler=None, clibkey:str=None):
+        if clibhandler is None:
+            self.__init_legacy__(do_syst=do_syst, era=era)
+            self.clib = None
+        else:
+            self.__init_clib__(era=era, clibhandler=clibhandler, clibkey=clibkey)
+
+    def __init_clib__(self, era:str='2018', clibhandler=None, clibkey=None):
+        cset = clibhandler.getCorrectionSet("puWeights")
+        if clibkey is None:
+            all_keys = list(cset.keys())
+            if len(all_keys) == 1:
+                clibkey = all_keys[0]
+            else:
+                raise ValueError(f"clibkey must be specified, available set of corrections: {all_keys} [CompoundCorrections: {list(cset.compound.keys())}")
+        self.clib = cset[clibkey]
+        
+    def __init_legacy__(self, do_syst:bool=True, era:str='2018'):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/PU/')
         files_  = {
             "Nom" : f"{_data_path}/PileupHistogram-goldenJSON-13tev-{era}-69200ub-99bins.root",
@@ -295,9 +342,9 @@ class pileup_weights:
     def append_pileup_weight(self, weights, pu):
         weights.add(
             'pileup_weight',
-            self.corrections['puWeight'    ](pu),
-            self.corrections['puWeightUp'  ](pu),
-            self.corrections['puWeightDown'](pu),
+            self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'    ](pu),
+            self.clib.evaluate(pu, 'up'     ) if self.clib else self.corrections['puWeightUp'  ](pu),
+            self.clib.evaluate(pu, 'down'   ) if self.clib else self.corrections['puWeightDown'](pu),
         )
         return weights
     
@@ -548,7 +595,33 @@ class ewk_corrector:
             weights.add('kEW', weight, weight*ewk_uncert, weight/ewk_uncert)
             weights.add('kNNLO', knnlo)
             
-        
-        
-        
-        
+def propagate_shift_to_met(sink, events, met, shifted_collection, unc_type=None, is_correction=True):
+    """Designed originally for propagating the lepton scale and resolution systematic uncertainties to the MET for proper correlation, utilizing the corrected_polar_met function of coffea"""
+    if is_correction:
+        raise NotImplementedError("propagation of scale shifts to MET for central variation not implemented, consider implications of doing so carefully including prop to JES/JER/UES variations")
+    else:
+        systematic = []
+        match unc_type:
+            case "Scale":
+                systematic = [name for name in shifted_collection.systematics.fields if name.startswith("scale")]
+            case "Resolution":
+                systematic = [name for name in shifted_collection.systematics.fields if name.startswith("res")]
+            case _:
+                raise NotImplementedError
+        if len(systematic) > 0:
+            systematic = systematic[0]
+        else:
+            raise ValueError(f"No matching systematic found in set for unc_type={unc_type}: {shifted_collection.systematics.fields}")
+
+        shifted_up = getattr(shifted_collection.systematics, systematic).up
+        shifted_down = getattr(shifted_collection.systematics, systematic).down
+        up = corrected_polar_met(
+            met.pt, met.phi, shifted_up.pt, shifted_up.phi, shifted_collection.pt, positive=None, dx=None, dy=None
+        )
+        down = corrected_polar_met(
+            met.pt, met.phi, shifted_down.pt, shifted_down.phi, shifted_collection.pt, positive=None, dx=None, dy=None
+        )
+        return ak.zip({
+            "pt": np.concatenate((up[:, None].pt, down[:, None].pt), axis=1),
+            "phi": np.concatenate((up[:, None].phi, down[:, None].phi), axis=1),
+        }, depth_limit=1)
