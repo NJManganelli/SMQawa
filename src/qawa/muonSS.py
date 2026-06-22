@@ -1,14 +1,11 @@
-# Ref: https://gitlab.cern.ch/cms-muonPOG/muonscarekit/-/blob/master/scripts/MuonScaRe.py
+# Ref: https://gitlab.cern.ch/cms-analysis/general/HiggsDNA/-/blob/1ca2899697461f7dcf3488ce67229867709f90c1/higgs_dna/systematics/muon_systematics.py
+# Ref2: https://gitlab.cern.ch/cms-muonPOG/muonscarekit/-/blob/master/scripts/MuonScaRe.py
 
 import numpy as np
 import awkward as ak
 import correctionlib
 import os
 from coffea.lookup_tools.doublecrystalball import doublecrystalball
-import logging
-
-logger = logging.getLogger(__name__)
-
 
 def get_rndm(eta, nL, cset):
     # obtain parameters from correctionlib
@@ -85,9 +82,6 @@ def filter_boundaries(pt_corr, pt, low_pt_threshold=26):
     n_pt_outside = ak.sum(outside_bounds)
 
     if n_pt_outside > 0:
-        logger.debug(
-            f"[ Muon S&S ] There are {n_pt_outside} events with muon pt outside of [{low_pt_threshold},200] GeV. Setting those entries to their initial value."
-        )
         pt_corr = ak.where(pt > 200, pt, pt_corr)
         pt_corr = ak.where(pt < low_pt_threshold, pt, pt_corr)
 
@@ -97,11 +91,6 @@ def filter_boundaries(pt_corr, pt, low_pt_threshold=26):
     n_nan = ak.sum(nan_entries)
 
     if n_nan > 0:
-        logger.debug(
-            f"[ Muon S&S ] There are {n_nan} nan entries in the corrected pt. "
-            "This might be due to the number of tracker layers hitting boundaries. "
-            "Setting those entries to their initial value."
-        )
         pt_corr = ak.where(np.isnan(pt_corr), pt, pt_corr)
 
     return pt_corr
@@ -172,7 +161,7 @@ def pt_resol_var(pt_woresol, pt_wresol, eta, updn, cset):
             pt_var_f,
         )
     else:
-        logger.info("[ Muon Scale ] ERROR: updn must be 'up' or 'dn'")
+        raise ValueError(f"updn must be up or down, got {updn}")
 
     # MUO POG-style guardrail also for variations
     ratio_var = pt_var_f / pt_woresol_f
@@ -251,12 +240,9 @@ def pt_scale_var(pt, eta, phi, charge, updn, cset):
 
 
 # Reference: https://gitlab.cern.ch/cms-muonPOG/muonscarekit
-def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=True):
-    """
-    Applies the photon pt scale corrections (use on data!) and corresponding uncertainties (on MC!).
-    JSONs need to be pulled first with scripts/pull_files.py
-    """
+def muon_pt_scare(sink, events, unc_type=None, is_correction=True, clibhandler=None):
 
+    evaluator = clibhandler.getCorrectionSet("muon_scalesmearing")
     # for later unflattening:
     counts = ak.num(events.Muon.pt)
     # decide if the process data
@@ -264,34 +250,6 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
 
     muons_jagged = events.Muon
     muons = ak.flatten(muons_jagged)
-
-    if year == "2022preEE":
-        path_json = os.path.join(
-            os.path.dirname(__file__), "JSONs/MuonScaRe/2022_Summer22.json"
-        )
-    elif year == "2022postEE":
-        path_json = os.path.join(
-            os.path.dirname(__file__), "JSONs/MuonScaRe/2022_Summer22EE.json"
-        )
-    elif year == "2023preBPix":
-        path_json = os.path.join(
-            os.path.dirname(__file__), "JSONs/MuonScaRe/2023_Summer23.json"
-        )
-    elif year == "2023postBPix":
-        path_json = os.path.join(
-            os.path.dirname(__file__), "JSONs/MuonScaRe/2023_Summer23BPix.json"
-        )
-    elif year == "2024":
-        path_json = os.path.join(
-            os.path.dirname(__file__), "JSONs/MuonScaRe/2024.json"
-        )
-    else:
-        logger.info(
-            'WARNING: there are only scale corrections for the year strings ["2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024"]! \n Exiting. \n'
-        )
-        exit()
-
-    evaluator = correctionlib.CorrectionSet.from_file(path_json)
 
     if is_correction:
         muons["pt_nanoaod"] = muons.pt
@@ -307,10 +265,8 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
 
         muons["pt_scale_factor"] = muons_pt_scalecorr / muons.pt_nanoaod
         muons["pt_scalecorr"] = muons_pt_scalecorr
-        logger.debug("[ Muon Scale ] Muon pt scale correction applied")
 
         if is_data:
-            logger.debug("[ Muon Scale ] Data only need muon pt scale correction")
             muons["pt"] = muons["pt_scalecorr"]
             muons_jagged = ak.unflatten(muons, counts)
             events["Muon"] = muons_jagged
@@ -322,9 +278,6 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
             )
             muons["pt_scare_factor"] = muons_pt_scarecorr / muons.pt_nanoaod
             muons["pt_scarecorr"] = muons_pt_scarecorr
-            logger.debug(
-                "[ Muon SCARE ] MC need both pt scale and resolution corrections"
-            )
 
             muons["pt"] = muons["pt_scarecorr"]
             muons_jagged = ak.unflatten(muons, counts)
@@ -337,10 +290,7 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
         if unc_type:
             if unc_type == "Scale":
                 if not hasattr(muons, "pt_scalecorr"):
-                    logger.info(
-                        "[ Muon Scale ] WARNING: muons.pt_scalecorr is not defined! \n Exiting. \n"
-                    )
-                    exit()
+                    raise ValueError(f"Muon collection missing pt_scalecorr field")
                 muons_pt_scalecorr_up = pt_scale_var(
                     muons.pt_scarecorr,
                     muons.eta,
@@ -371,10 +321,7 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
                 if not hasattr(muons, "pt_scalecorr") or not hasattr(
                     muons, "pt_scarecorr"
                 ):
-                    logger.info(
-                        "[ Muon S&S ] WARNING: muons.pt_scalecorr or muons.pt_scarecorr is not defined! \n Exiting. \n"
-                    )
-                    exit()
+                    raise ValueError("muons.pt_scalecorr or muons.pt_scarecorr is not defined!")
                 muons_pt_rescorr_up = pt_resol_var(
                     muons.pt_scalecorr, muons.pt_scarecorr, muons.eta, "up", evaluator
                 )
@@ -390,7 +337,5 @@ def muon_pt_scare(pt, events, year="2022postEE", unc_type=None, is_correction=Tr
                     axis=1,
                 ) * (ak.ones_like(muons.pt_nanoaod)[:, None])
             else:
-                logger.info(
-                    '[ Muon S&S ] WARNING: there are only unc_type strings ["Scale", "Resolution"]! \n Exiting. \n'
-                )
-                exit()
+                raise ValueError(f"unc_type must be one of Scale or Resolution, got {unc_type}")
+                
