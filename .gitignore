@@ -40,3 +40,4 @@ MANIFEST
 *.root
 *.pkl
 *.pyc
+*.DS_store
