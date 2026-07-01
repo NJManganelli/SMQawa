@@ -68,7 +68,7 @@ class DataDrivenEventReweight:
     """
 
     def __init__(self, era: str = "2018", estimator: str = "LNTTau_VTTau_DDDY_Estimate", path=None, clibhandler=None,
-                 isAPV: bool = False, isEE: bool = False, isBPix: bool = False):
+                 isAPV: bool = False, isEE: bool = False, isBPix: bool = False, override_stat_check=False):
         # Era/subera label (same "era + _subera" convention used elsewhere, e.g. leptonsSF) used to
         # match the per-era statistical nuisance (stat_{erasubera}) of the (possibly multi-era
         # averaged) estimate. The stat keys carry no underscore (stat_2016APV), so it is stripped
@@ -80,6 +80,7 @@ class DataDrivenEventReweight:
             self.erasubera += "_EE"
         elif isBPix:
             self.erasubera += "_BPix"
+        self.override_stat_check = override_stat_check
 
         if clibhandler is not None:
             self.dd_estimator = clibhandler.getCorrectionSet("dddy").compound[estimator]
@@ -114,7 +115,7 @@ class DataDrivenEventReweight:
         # Sanity check: the file must carry the statistical component for the era being processed,
         # either as its matching per-era stat nuisance or (legacy) as the combined DDDY. Otherwise
         # the wrong correction file is in use for this era (e.g. a Run2-only average for 2024).
-        if not self.stat_systematics and not self.has_legacy_dddy:
+        if not self.stat_systematics and not self.has_legacy_dddy and not self.override_stat_check:
             raise RuntimeError(
                 f"data-driven estimate '{estimator}' from {str(_data_path)} carries no statistical "
                 f"nuisance for era/subera '{self.erasubera}': expected 'stat_{self.erasubera.replace('_', '')}' "

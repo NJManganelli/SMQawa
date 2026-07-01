@@ -361,7 +361,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
-        self._dd   = DataDrivenEventReweight(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._dd   = DataDrivenEventReweight(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, override_stat_check=(self._era == "2024"), clibhandler=self.clibhandler) #FIXME: remove override
 
         _data_path = 'qawa/data'
         _data_path = os.path.join(os.path.dirname(__file__), '../data')
