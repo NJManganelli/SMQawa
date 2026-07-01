@@ -32,7 +32,7 @@ from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from qawa.btag import BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection
 from qawa.gen_match import find_best_match
-from qawa.datadriven_variation import DataDrivenEventReweight
+from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
@@ -245,12 +245,11 @@ def apply_hem_uncertainty(jets, met):
 
 
 class wzinclusive_processor(processor.ProcessorABC):
-    # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, then maybe add the dd loading to the clibhandler for consistency... update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing,  need to add in the tau ID 2018 algo for Run 3, and choose the right btagger for selection inside the select jets functions...
+    # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing
     # NEED
     #    JER Smearing broken in txt format, need to update to clib, unclear if coffea version fully ready with L1 and new MET stuff
     #    Verify electroweak corrections are working as intended
     #    Update inc-ZZ to utilize the same interfaces
-    # IMMEDIATE ACTION LIST: b-tag on-demand file loading or workaround, MET workaround...
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
     def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, version="v9"):
@@ -343,6 +342,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.zmass = 91.1873 # GeV
         self.clibhandler = CorrectionlibHandler(era = self._era, subera=None, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix,
                                                 analysis="inc-WZ", nanoAODversion=self._ver, cvmfs_head="/cvmfs/")
+        self.clibhandler.printStatus(console=coffea_console)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         # FIXME: JMEUncertainty class not ready for Correctionlib yet... need upstream updates
@@ -361,7 +361,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
-        self._dd   = DataDrivenEventReweight(era=self._era, clibhandler=None) #FIXME
+        self._dd   = DataDrivenEventReweight(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
 
         _data_path = 'qawa/data'
         _data_path = os.path.join(os.path.dirname(__file__), '../data')
@@ -400,8 +400,12 @@ class wzinclusive_processor(processor.ProcessorABC):
             # FIXME: Do we need to adjust inputs or derive new corrections for Run III? For now we'll put in the beam_energy
             self.ewk_corr = ewk_corrector(process=ewk_process_name, beam_energy=self.beam_energy)
 
+        # Target (coarse) tau fake-rate binning of the hard-coded/derived correction set. The
+        # tau_pt / tau_pt_loose histograms below are now filled at fine 5-GeV granularity
+        # (Regular(120, 0, 600)) so the data-driven derivation can rebin down to exactly this
+        # scheme via `hist.rebin(groups=[4, 1, 1, 1, 1, 4, 4, 4, 100])` (see datadriven configs).
         self.ABCD_tau_bins = [20,25,30,35,40,60,80,100,1000]
-        #to change this in tau_pt use this in tau histogram hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt", label=r"$p_{T}^{tau}$ (GeV)")
+        #to change this in tau_pt_vtight use this in tau histogram hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt_vtight", label=r"$p_{T}^{tau_vtight}$ (GeV)")
 
         self.build_histos = lambda: {
             'dilep_mt_llnunu': hist.Hist(
@@ -482,11 +486,12 @@ class wzinclusive_processor(processor.ProcessorABC):
                 hist.axis.Regular(150, 0, 1500, name="inv_m_WZ", label=r"$m_{inv}^{WZ}$ (GeV)"),
                 hist.storage.Weight()
             ),
-            'tau_pt': hist.Hist(
+            'tau_pt_vtight': hist.Hist(
                 hist.axis.StrCategory([], name="channel"   , growth=True),
                 hist.axis.StrCategory([], name="systematic", growth=True),
-                # hist.axis.Regular(60, 0, 600, name="tau_pt", label=r"$p_{T}^{tau}$ (GeV)"), 
-                hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt", label=r"$p_{T}^{tau}$ (GeV)"),
+                # 5-GeV bins (rebinnable to self.ABCD_tau_bins in the data-driven derivation):
+                # hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt_vtight", label=r"$p_{T}^{tau_vtight}$ (GeV)"),
+                hist.axis.Regular(120, 0, 600, name="tau_pt_vtight", label=r"$p_{T}^{tau_vtight}$ (GeV)"),
                 hist.storage.Weight()
             ),
             'taus_eta': hist.Hist(
@@ -504,8 +509,16 @@ class wzinclusive_processor(processor.ProcessorABC):
             'tau_pt_loose': hist.Hist(
                 hist.axis.StrCategory([], name="channel"   , growth=True),
                 hist.axis.StrCategory([], name="systematic", growth=True),
-                # hist.axis.Regular(60, 0, 600, name="tau_pt_loose", label=r"$p_{T}^{tau_loose}$ (GeV)"), 
-                hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt_loose", label=r"$p_{T}^{tau_loose}$ (GeV)"),
+                # 5-GeV bins (rebinnable to self.ABCD_tau_bins in the data-driven derivation):
+                # hist.axis.Variable(self.ABCD_tau_bins, name="tau_pt_loose", label=r"$p_{T}^{tau_loose}$ (GeV)"),
+                hist.axis.Regular(120, 0, 600, name="tau_pt_loose", label=r"$p_{T}^{tau_loose}$ (GeV)"),
+                hist.storage.Weight()
+            ),
+            'tau_pt_tight': hist.Hist(
+                hist.axis.StrCategory([], name="channel"   , growth=True),
+                hist.axis.StrCategory([], name="systematic", growth=True),
+                # 5-GeV bins (rebinnable to self.ABCD_tau_bins in the data-driven derivation):
+                hist.axis.Regular(120, 0, 600, name="tau_pt_tight", label=r"$p_{T}^{tau_tight}$ (GeV)"),
                 hist.storage.Weight()
             ),
             'taus_eta_loose': hist.Hist(
@@ -946,7 +959,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         lead_tau_tight = ak.firsts(had_taus_tight)
         lead_tau_loose = ak.firsts(had_taus_loose)
 
-        tau_pt = lead_tau_vtight.pt
+        tau_pt_vtight = lead_tau_vtight.pt
+        tau_pt_tight = lead_tau_tight.pt
         taus_eta = lead_tau_vtight.eta
         taus_phi = lead_tau_vtight.phi
         tau_E = lead_tau_vtight.E
@@ -1201,7 +1215,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         event['dijet_mass'] = ak.fill_none(dijet_mass,-99)
         event['dijet_deta'] = ak.fill_none(dijet_deta,-99)
         event['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
-        event['tau_pt'] = ak.fill_none(tau_pt,-99)
+        event['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
+        event['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
         event['taus_phi'] = ak.fill_none(taus_phi,-99)
         event['taus_eta'] = ak.fill_none(taus_eta,-99)
         event['delta_R'] = ak.fill_none(delta_R,-99)
@@ -1298,7 +1313,19 @@ class wzinclusive_processor(processor.ProcessorABC):
         else:
             # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
             weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
-            weights.add("datadriven_DDDY",_ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
+            if self._dd.stat_systematics:
+                # Per-era statistical nuisance(s): DataDrivenEventReweight restricts stat_systematics
+                # to the single stat_{era} matching the era/subera being processed, so the other
+                # eras' stat nuisances stay at nominal for these events (keeping them decorrelated).
+                for _stat in self._dd.stat_systematics:
+                    weights.add(f"datadriven_{_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Down"))
+            elif self._dd.has_legacy_dddy:
+                # Legacy estimate: a single combined statistical nuisance
+                weights.add("datadriven_DDDY",_ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
+            # Propagated MC systematics from the non-DY subtraction, added under their bare source
+            # names so they correlate with the same-named analysis nuisances on the MC.
+            for _mcsyst in self._dd.mc_systematics:
+                weights.add(_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Down"))
         # selections (delta_tau_met_phi cut is removed from SR)
 
         common_sel = ['triggers', 'lumimask', 'metfilter']
@@ -1502,7 +1529,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 _histogram_filler(ch, sys, 'trailing_lep_eta')
                 _histogram_filler(ch, sys, 'met_pt')
                 _histogram_filler(ch, sys, 'met_phi')
-                _histogram_filler(ch, sys, 'tau_pt')
+                _histogram_filler(ch, sys, 'tau_pt_vtight')
+                _histogram_filler(ch, sys, 'tau_pt_tight')
                 _histogram_filler(ch, sys, 'taus_phi')
                 _histogram_filler(ch, sys, 'taus_eta')
                 _histogram_filler(ch, sys, 'tau_pt_loose')

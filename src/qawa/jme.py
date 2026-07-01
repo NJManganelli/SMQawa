@@ -9,10 +9,10 @@ from coffea.jetmet_tools import CorrectedJetsFactory
 from coffea.jetmet_tools import CorrectedMETFactory
 
 from coffea.lookup_tools import dense_lookup
+from coffea.util import coffea_console
 import awkward as ak
 import numpy as np
 import os
-import warnings
 
 
 jec_name_map = {
@@ -130,7 +130,7 @@ class JMEUncertainty:
             ]
             correction_list_L123_JER += common_files
         if jet_type == "AK4PFPuppi":
-            warnings.warn("JER disabled for AK4PFPuppi jets due to broken text file format, need correctionlib version to replace it")
+            coffea_console.print("[red]JER disabled for AK4PFPuppi jets due to broken text file format, need correctionlib version to replace it[/red]")
 
 
         extract_L1.add_weight_sets(correction_list_L1)

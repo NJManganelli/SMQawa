@@ -1,7 +1,10 @@
+import os
+import datetime
 from pathlib import Path
-import warnings
 import rich
-
+from rich.table import Table
+from rich.markup import escape
+from coffea.util import coffea_console
 import correctionlib
 
 # Directory of the installed `qawa` package (.../src/qawa). Anchoring on
@@ -226,10 +229,10 @@ class CorrectionlibHandler:
                 key = cset.split(".")[0] if "." in cset else cset # strip filetype/compression
                 key = "puWeights" if "puWeights_" in key else key# strip era specifier from weights
                 if key in self._paths:
-                    warnings.warn(f"Unexpectedly overwriting {key} [{self._paths[key]}] with {path}")
+                    coffea_console.print(f"[red]Unexpectedly overwriting {key}[/red] [yellow]{escape(str(self._paths[key]))}[/yellow] with [blue]{escape(str(path))}[/blue]")
                 self._paths[key] = path
             else:
-                warnings.warn(f"Failed to load expected Central Path: {path}")
+                coffea_console.print(f"Failed to load expected Central Path: {path}")
 
     def _loadCentralExceptions(self):
         # Because there's always a special little exception to add misery to our lives
@@ -241,6 +244,8 @@ class CorrectionlibHandler:
         if analysis == "inc-WZ":
             match self._era:
                 case "2024":
+                    # PLACEHOLDER - once Run 3 dddy (2024 only to start with) is derived, replace with Run3/...Run3.json
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
                     self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
                 # Correctionlib conversions of the legacy ROOT trigger SFs
                 # (histo_triggerEff_sel0_<era>.root), produced by
@@ -249,11 +254,14 @@ class CorrectionlibHandler:
                 # they are NOT yet a drop-in replacement for the eta-dependent
                 # legacy lookup. Uncomment a case to route that era through the
                 # correctionlib path in wztau2lnu_inclusive._add_trigger_sf.
-                # case "2016":
+                case "2016":
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2016.json")
-                # case "2017":
+                case "2017":
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2017.json")
-                # case "2018":
+                case "2018":
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2018.json")
                 case _:
                     pass
@@ -261,6 +269,258 @@ class CorrectionlibHandler:
             pass
         else:
             raise ValueError
+
+    # ------------------------------------------------------------------
+    # Status reporting / validation helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _isValidDate(name: str) -> bool:
+        """A tag counts as a real version only if it is an ISO date (YYYY-MM-DD).
+
+        The moving 'latest' symlink and hand-written tags like
+        'add_b_tagging_WPs' are deliberately excluded: we never want to pin to
+        a moving target, and non-date tags cannot be ordered chronologically.
+        """
+        try:
+            datetime.date.fromisoformat(name)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def _isCvmfsPath(self, path: Path) -> bool:
+        """True if the path lives under the CAT POG metadata tree on /cvmfs."""
+        try:
+            return self._poghead in Path(path).resolve().parents or self._poghead in Path(path).parents
+        except (OSError, RuntimeError):
+            return self._poghead in Path(path).parents
+
+    def _countNewerTags(self, path):
+        """Count how many newer date-tagged versions of a correction file exist.
+
+        Returns a ``(count, kind)`` tuple where ``kind`` is:
+          * ``"ok"``      currently-selected tag is a valid date; ``count`` is the
+                          number of strictly-newer date tags that still contain
+                          this file.
+          * ``"nondate"`` selected tag is not a date (e.g. 'add_b_tagging_WPs' or
+                          'latest'); ``count`` is the number of date-tagged
+                          versions available, none of which we can order against.
+          * ``"na"``      not a /cvmfs POG path, so version tracking does not
+                          apply (user-supplied JSON, local fallbacks, ...).
+        """
+        p = Path(path)
+        if not self._isCvmfsPath(p):
+            return (None, "na")
+        selected = p.parent.name          # the <date-or-tag> directory
+        tagdir = p.parent.parent          # poghead/POG/<tag>
+        cset = p.name                     # the correction file itself
+        if not tagdir.is_dir():
+            return (None, "na")
+        versions = []
+        for child in tagdir.iterdir():
+            if not child.is_dir() or child.name == "latest":
+                continue
+            if not self._isValidDate(child.name):
+                continue
+            # only count siblings that actually provide the same file
+            if not (child / cset).exists():
+                continue
+            versions.append(child.name)
+        if self._isValidDate(selected):
+            # ISO date strings sort chronologically as plain strings
+            newer = [v for v in versions if v > selected]
+            return (len(newer), "ok")
+        return (len(versions), "nondate")
+
+    @staticmethod
+    def _newerTagColor(count: int) -> str:
+        """Interpolate green (0 newer) -> yellow -> red (>=5 newer)."""
+        frac = min(max(count, 0), 5) / 5.0
+        green, yellow, red = (0, 180, 0), (220, 200, 0), (200, 0, 0)
+        if frac <= 0.5:
+            t = frac / 0.5
+            c = tuple(int(green[i] + t * (yellow[i] - green[i])) for i in range(3))
+        else:
+            t = (frac - 0.5) / 0.5
+            c = tuple(int(yellow[i] + t * (red[i] - yellow[i])) for i in range(3))
+        return f"rgb({c[0]},{c[1]},{c[2]})"
+
+    @staticmethod
+    def _discoverConsole():
+        """Return the live coffea console if it is already around, else a fresh one.
+
+        Reusing coffea's console means the status table shares the same output
+        stream as any in-flight progress bars, so printing it does not corrupt
+        or fight with them.
+        """
+        import sys
+        mod = sys.modules.get("coffea.util")
+        if mod is not None and hasattr(mod, "coffea_console"):
+            return mod.coffea_console
+        try:
+            from coffea.util import coffea_console as _cc
+            return _cc
+        except Exception:
+            from rich.console import Console
+            return Console()
+
+    def _relForDisplay(self, path):
+        """Anchor a path against a known root so common prefixes collapse away.
+
+        Returns the path's components relative to the best-matching root: the
+        CAT POG tree on /cvmfs (components start at the POG), the packaged qawa
+        data dir (prefixed with a ``~`` marker), or the filesystem root for
+        anything else. The leading absolute separator is folded into the first
+        component so tree joins never produce a doubled slash.
+        """
+        p = Path(path)
+        if self._poghead in p.parents:
+            return p.relative_to(self._poghead).parts
+        if _QAWA_DATA in p.parents:
+            return ("~",) + p.relative_to(_QAWA_DATA).parts
+        parts = p.parts
+        if len(parts) > 1 and parts[0] == os.sep:
+            parts = (parts[0] + parts[1],) + parts[2:]
+        return parts
+
+    def printStatus(self, console=None, title: str | None = None, print_it: bool = True):
+        """Render a rich table summarising every tracked correction path.
+
+        Columns: the path (first) rendered as a tree — directory prefixes shared
+        by more than one entry are lifted onto their own line and the members
+        indented beneath — then the shorthand name (the key for
+        ``getCorrectionSet``), whether the file exists on disk, whether a
+        CorrectionSet has been loaded, and how many newer date-tagged versions
+        exist on /cvmfs (green = up to date, shading toward red for 5+ versions
+        behind; magenta = a non-date tag is pinned and cannot be version-checked).
+
+        Pass ``console`` to reuse an existing rich console (e.g. coffea's), or
+        leave it ``None`` to auto-discover the coffea console if it is imported.
+        """
+        console = console if console is not None else self._discoverConsole()
+
+        # Merge the loadable paths with the "not a cset" entries (Golden JSONs,
+        # or files whose load attempt failed) so nothing is hidden.
+        entries = dict(self._paths)
+        for k, v in self._notcsets.items():
+            entries.setdefault(k, v)
+
+        # Precompute every cell up front, keyed by the display path components.
+        display = []
+        for key, path in entries.items():
+            p = Path(path)
+            exists_cell = "[green]✔[/green]" if p.exists() else "[red]✘[/red]"
+            if key in self._csets:
+                loaded_cell = "[green]✔[/green]"
+            elif key in self._notcsets:
+                loaded_cell = "[yellow]not a cset[/yellow]"
+            else:
+                loaded_cell = "[dim]–[/dim]"
+            count, kind = self._countNewerTags(p)
+            if kind == "na":
+                newer_cell = "[dim]–[/dim]"
+            elif kind == "nondate":
+                newer_cell = f"[magenta]{count}⚠[/magenta]"
+            else:
+                color = self._newerTagColor(count)
+                suffix = " (current)" if count == 0 else ""
+                newer_cell = f"[{color}]{count}{suffix}[/{color}]"
+            display.append({
+                "key": key,
+                "parts": self._relForDisplay(p),
+                "exists": exists_cell,
+                "loaded": loaded_cell,
+                "newer": newer_cell,
+            })
+        display.sort(key=lambda e: e["parts"])
+
+        # Build a trie over the path components so shared directory prefixes can
+        # be factored out. Each node holds sub-directories and terminal files.
+        def _new_node():
+            return {"dirs": {}, "files": []}
+
+        root = _new_node()
+        for e in display:
+            node = root
+            for seg in e["parts"][:-1]:
+                node = node["dirs"].setdefault(seg, _new_node())
+            node["files"].append((e["parts"][-1], e))
+
+        def _count_leaves(node):
+            return len(node["files"]) + sum(_count_leaves(c) for c in node["dirs"].values())
+
+        def _single_leaf(node):
+            # Called only on subtrees holding exactly one file; return its
+            # remaining path (relative to node) and the entry.
+            if node["files"]:
+                return node["files"][0]
+            seg = next(iter(node["dirs"]))
+            tail, e = _single_leaf(node["dirs"][seg])
+            return f"{seg}/{tail}", e
+
+        def _fmt_leaf(indent, s):
+            # Dim the directory portion, leave the filename at full contrast.
+            if "/" in s:
+                d, f = s.rsplit("/", 1)
+                return f"{indent}[dim]{escape(d)}/[/dim]{escape(f)}"
+            return f"{indent}{escape(s)}"
+
+        rows = []  # (path_cell, entry_or_None); None marks a shared-prefix header
+
+        def _walk(node, depth):
+            indent = "  " * depth
+            for seg in sorted(node["dirs"]):
+                child = node["dirs"][seg]
+                # Collapse a chain of single-child directories into one segment.
+                segs = [seg]
+                while len(child["dirs"]) == 1 and not child["files"]:
+                    only = next(iter(child["dirs"]))
+                    segs.append(only)
+                    child = child["dirs"][only]
+                compressed = "/".join(segs)
+                if _count_leaves(child) > 1:
+                    # Shared by more than one entry: give it its own line.
+                    rows.append((f"{indent}[bold dim]{escape(compressed)}/[/bold dim]", None))
+                    _walk(child, depth + 1)
+                else:
+                    # Only one file below: keep it inline, no header line.
+                    tail, e = _single_leaf(child)
+                    rows.append((_fmt_leaf(indent, f"{compressed}/{tail}"), e))
+            for fname, e in sorted(node["files"], key=lambda t: t[0]):
+                rows.append((_fmt_leaf(indent, fname), e))
+
+        _walk(root, 0)
+
+        table = Table(
+            title=title or f"CorrectionlibHandler status  [dim]({self._run} {self._era}"
+            + (f"-{self._subera}" if self._subera else "")
+            + f", NanoAOD{self._ver}, {self._analysis})[/dim]",
+            title_justify="left",
+            expand=False,
+            header_style="bold",
+            caption=(
+                f"[dim]cvmfs POG root:[/dim] {self._poghead}\n"
+                f"[dim]qawa data root (~):[/dim] {_QAWA_DATA}\n"
+                "[dim]newer tags: [/dim][rgb(0,180,0)]0 (current)[/] .. "
+                "[rgb(200,0,0)]>=5 behind[/]   "
+                "[magenta]magenta = non-date tag pinned[/magenta]"
+            ),
+            caption_justify="left",
+        )
+        table.add_column("path", overflow="fold")
+        table.add_column("name", style="bold cyan", no_wrap=True)
+        table.add_column("exists", justify="center")
+        table.add_column("loaded", justify="center")
+        table.add_column("newer tags", justify="right")
+
+        for path_cell, e in rows:
+            if e is None:
+                table.add_row(path_cell, "", "", "", "")
+            else:
+                table.add_row(path_cell, e["key"], e["exists"], e["loaded"], e["newer"])
+
+        if print_it:
+            console.print(table)
+        return table
 
     def keys(self):
         return self._paths.keys()
@@ -275,9 +535,11 @@ class CorrectionlibHandler:
         return self._paths[key]
 
     def __setitem__(self, key, value):
-        assert value.exists()
+        value = Path(value)
+        if not value.exists():
+            raise ValueError(f"Refusing to set {key}: path does not exist: {value}")
         if key in self._paths:
-            warnings.warn(f"Unexpectedly overwriting {key} [{self._paths[key]}] with {path}")
+            coffea_console.print(f"[red]Unexpectedly overwriting {key}[/red] [yellow]{escape(str(self._paths[key]))}[/yellow] with [blue]{escape(str(value))}[/blue]")
         self._paths[key] = value
 
     def getPath(self, lookup: str, fallbackNone: bool = False):
@@ -324,6 +586,7 @@ if __name__ == "__main__":
             test = ch.getCorrectionSet(k)
             rich.print("\t", k, v, len(test.keys()), len(test.compound.keys()))
         rich.print(f"\texpected={expected}, [green]actual={len(ch._csets.keys())}[/green]")
+        ch.printStatus()
     for era, subera in sorted(all_pairs):
         # v9 corrections
         if int(era) > 2018:

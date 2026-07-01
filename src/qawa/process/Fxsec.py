@@ -24,7 +24,7 @@ from qawa.tauSF import tauIDScaleFactors
 from qawa.btag import BTVCorrector, btag_id
 from qawa.jme import JMEUncertainty, update_collection
 from qawa.gen_match import delta_r2, find_best_match
-from qawa.datadriven_variation import DataDrivenEventReweight
+from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy
 
 def build_leptons_fv(muons, electrons):
