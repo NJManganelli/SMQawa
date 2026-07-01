@@ -278,6 +278,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             self.com = 13.6
         else:
             raise NotImplementedError("Unhandled era for center of mass (com) energy")
+        self._process_shift_warnings = True
 
         
         
@@ -1239,7 +1240,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             if self._jpSF is not None:
                 self._jpSF.append_jetPU_sf(good_jets, weights)
             else:
-                coffea_console.print("[red]JET PU ID SFs DISABLED[/red]")
+                if self._process_shift_warnings:
+                    coffea_console.print("[red]JET PU ID SFs DISABLED[/red]")
             self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
             self._tauID.append_tauID_multiwp_sf(had_taus, had_taus_tight, had_taus_loose,
                                                 tau_mask_vtight, tau_mask_tight, tau_mask_loose,
@@ -1282,7 +1284,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                     weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
                     weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
                 else:
-                    coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
+                    if self._process_shift_warnings:
+                        coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
 
             if 'LHEReweightingWeight' in event.fields and 'aQGC' in dataset:
                 for i in range(1057):
@@ -1538,7 +1541,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_loose_tau')
                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_tight_tau')
                 _histogram_filler(ch, sys, 'delta_R_non_iso_lep_vtight_tau')
-
+        self._process_shift_warnings = False # this will only print warning for first process shift
         return {dataset: histos}
 
     def process(self, event):
@@ -1713,7 +1716,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 ({"Jet": jets.JER.down                    , "MET": met.JER.down                      }, "JERDown"             ),
                 ]
         else:
-            coffea_console.print(f"WARNING: JER variation missing in jets, met, or both: JER in\n\tjets... {'JER' in jets.fields}\n\tmet... {'JER' in met.fields}")
+            if self._process_shift_warnings:
+                coffea_console.print(f"WARNING: JER variation missing in jets, met, or both: JER in\n\tjets... {'JER' in jets.fields}\n\tmet... {'JER' in met.fields}")
         if "scale_e" in event.Electron.systematics.fields:
             shifts += [
                 ({"Electron": event.Electron.systematics.scale_e.up  , "MET": met.systematics.scale_e.up}, "scale_eUp"  ),
