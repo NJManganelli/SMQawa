@@ -4,6 +4,12 @@ import rich
 
 import correctionlib
 
+# Directory of the installed `qawa` package (.../src/qawa). Anchoring on
+# __file__ makes data lookups independent of the current working directory,
+# so they resolve inside Singularity/HTCondor where CWD is not the repo root.
+_QAWA_DIR = Path(__file__).resolve().parent
+_QAWA_DATA = _QAWA_DIR / "data"
+
 _runIII_v15_pogs_tags_pogtags_csets = (
     ("DC", "Collisions22", "2026-02-26", "Cert_Collisions2022_355100_362760_Golden.json"),
     ("DC", "Collisions23", "2026-02-26", "Cert_Collisions2023_366442_370790_Golden.json"),
@@ -235,7 +241,7 @@ class CorrectionlibHandler:
         if analysis == "inc-WZ":
             match self._era:
                 case "2024":
-                    self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2024.json")
+                    self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
                 # Correctionlib conversions of the legacy ROOT trigger SFs
                 # (histo_triggerEff_sel0_<era>.root), produced by
                 # convert_trigger_sf.py. These collapse the eta dependence of the
