@@ -37,6 +37,20 @@ from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, th
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
 
+# Fill-time optimization: accumulate all weight systematics of a process_shift pass
+# in a single MultiCell-storage fill per (channel, variable) and expand back to the
+# standard (channel, systematic, variable) Weight-storage histograms before
+# returning, so the output format seen by processor.accumulate, hist-merger, and
+# DCTools is unchanged. ~100x faster nominal-pass filling; measured in
+# benchmarks/bench_histogram_fill.py.
+# FIXME: MultiCell is deliberately kept transient (fill + immediate expansion)
+# because boost-histogram (1.7.1) MultiCell storage loses already-filled contents
+# when a growth axis resizes during fill (categories must be pre-declared), and
+# its compatibility with hist-serv is not yet established. Once it is stable and
+# for-sure hist-serv compatible, this can be refactored to keep MultiCell as the
+# native histogram format instead of expanding per process_shift pass.
+USE_MULTICELL_FILL = True
+
 
 
 def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-baseline", leptonIDs=None):
@@ -1426,60 +1440,16 @@ class wzinclusive_processor(processor.ProcessorABC):
         def _format_variable(variable, cut):
             if cut is None:
                 vv = ak.to_numpy(ak.fill_none(variable, np.nan))
-                if np.isnan(np.any(vv)):
-                    coffea_console.print(" - vv with nan:", vv)
-                return ak.to_numpy(ak.fill_none(variable, np.nan))
             else:
                 vv = ak.to_numpy(ak.fill_none(variable[cut], np.nan))
-                if np.isnan(np.any(vv)):
-                    coffea_console.print(" - vv with nan:", vv)
-                return ak.to_numpy(ak.fill_none(variable[cut], np.nan))
+            if np.any(np.isnan(vv)):
+                coffea_console.print(" - vv with nan:", vv)
+            return vv
 
         def collection_printer(collection):
             longest_field = max([len(field) for field in collection.fields])
             for field in collection.fields:
                 coffea_console.print(f"\t{field:<{longest_field}}={getattr(collection, field)}")
-
-        def _histogram_filler(ch, syst, var, _weight=None):
-            sel_ = channels[ch]
-            sel_args_ = {
-                s.replace('~',''): (False if '~' in s else True) for s in sel_ if var not in s
-            }
-            cut =  selection.require(**sel_args_)
-            # if syst == "nominal
-            # print("ch syst var nselected", ch, syst, var
-            # print(f"ch={ch} var={var}")
-            # selection.cutflow(*sel_args_.keys(), weights=weights, weightsmodifier=None).print()
-            systname = 'nominal' if syst is None else syst
-
-            if _weight is None: 
-                if syst in weights.variations:
-                    weight = weights.weight(modifier=syst)[cut]
-                else:
-                    weight = weights.weight()[cut]
-            else:
-                weight = weights.weight()[cut] * _weight[cut]
-
-            vv = ak.to_numpy(ak.fill_none(weight, np.nan))
-            if np.isnan(np.any(vv)):
-                coffea_console.print(f" - {syst} weight contains invalid values:", vv[np.isnan(vv)], vv[np.isinf(vv)])
-
-            # if ch in ['inc-SR1', 'inc-DY1']:
-            #     if var in ["met_pt", "mT_WZ", "lead_jet_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_dphi", "met_phi", "lead_jet_phi", "dilep_loose_tau_phi"] :
-            #         if systname in ['nominal', 'JESUp', 'JESDown']:
-            #             coffea_console.print(ch, var, systname, _format_variable(event[var], cut)[:2], event.event[cut][:2])
-            #             if ch=='inc-SR1' and var=="mT_WZ" :
-            #                 collection_printer(event.Tau[:2])
-
-
-            histos[var].fill(
-                **{
-                    "channel": ch, 
-                    "systematic": systname, 
-                    var: _format_variable(event[var], cut), 
-                    "weight": ak.nan_to_num(weight,nan=1.0, posinf=1.0, neginf=1.0)
-                }
-            )
 
         def _histogram_filler2D(ch, syst, var1, var2, _weight=None):
             sel_ = channels[ch]
@@ -1499,7 +1469,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 weight = weights.weight()[cut] * _weight[cut]
 
             vv = ak.to_numpy(ak.fill_none(weight, np.nan))
-            if np.isnan(np.any(vv)):
+            if np.any(np.isnan(vv)) or np.any(np.isinf(vv)):
                 coffea_console.print(f" - {syst} weight contains invalid values:", vv[np.isnan(vv)], vv[np.isinf(vv)])
 
             histos[var1+"_2D_"+var2].fill(
@@ -1515,57 +1485,107 @@ class wzinclusive_processor(processor.ProcessorABC):
             systematics = [None] + list(weights.variations)
         else:
             systematics = [shift_name]
+        systnames = ['nominal' if s is None else s for s in systematics]
 
+        histogram_variables = [
+            'leading_lep_pt', 'leading_lep_phi', 'leading_lep_eta',
+            'trailing_lep_pt', 'trailing_lep_phi', 'trailing_lep_eta',
+            'met_pt', 'met_phi',
+            'tau_pt_vtight', 'tau_pt_tight', 'taus_phi', 'taus_eta',
+            'tau_pt_loose', 'taus_phi_loose', 'taus_eta_loose',
+            'lead_jet_pt', 'lead_jet_phi', 'lead_jet_eta',
+            'njets',
+            # 'nbjets',
+            'nhtaus_loose', 'nhtaus_tight', 'nhtaus_vtight',
+            'dilep_pt', 'dilep_dphi', 'dilep_deta', 'dilep_m', 'dilep_dR',
+            'delta_R', 'delta_R_jet_tau', 'delta_R_jet_dilep',
+            'dphi_met_ll', 'dilep_dphi_tau', 'dphi_jet_met', 'delta_tau_met_phi',
+            'mT_W', 'mT_WZ', 'inv_m_WZ', 'dilep_tau_loose_met_hadron_mt', 'dilep_mt_llnunu',
+            'HTl', 'ST',
+            'deep_tau_e', 'deep_tau_mu', 'deep_tau_jet',
+            'delta_R_non_iso_lep_loose_tau', 'delta_R_non_iso_lep_tight_tau', 'delta_R_non_iso_lep_vtight_tau',
+        ]
+
+        # The per-systematic event weights are independent of channel and variable,
+        # so compute (and sanitize) each full-length weight vector exactly once.
+        weight_by_syst = {}
+        for syst in systematics:
+            if syst in weights.variations:
+                w = weights.weight(modifier=syst)
+            else:
+                w = weights.weight()
+            if np.any(np.isnan(w)) or np.any(np.isinf(w)):
+                coffea_console.print(f" - {syst} weight contains invalid values:", w[np.isnan(w)], w[np.isinf(w)])
+            weight_by_syst[syst] = np.nan_to_num(w, nan=1.0, posinf=1.0, neginf=1.0)
+
+        if USE_MULTICELL_FILL:
+            n_syst = len(systematics)
+            weight_matrix = np.stack([weight_by_syst[syst] for syst in systematics], axis=1)
+            # NOTE: the channel categories MUST be pre-declared here: boost-histogram
+            # (1.7.1) MultiCell storage loses already-filled contents when a growth
+            # axis resizes during a later fill.
+            multicell_histos = {
+                var: hist.Hist(
+                    hist.axis.StrCategory(list(channels), name="channel", growth=True),
+                    histos[var].axes[-1],
+                    storage=hist.storage.MultiCell(2 * n_syst),
+                ) for var in histogram_variables
+            }
+
+        cut_cache = {}
         for ch in channels:
-            for sys in systematics:
-                _histogram_filler(ch, sys, 'leading_lep_pt')
-                _histogram_filler(ch, sys, 'leading_lep_phi')
-                _histogram_filler(ch, sys, 'leading_lep_eta')
-                _histogram_filler(ch, sys, 'trailing_lep_pt')
-                _histogram_filler(ch, sys, 'trailing_lep_phi')
-                _histogram_filler(ch, sys, 'trailing_lep_eta')
-                _histogram_filler(ch, sys, 'met_pt')
-                _histogram_filler(ch, sys, 'met_phi')
-                _histogram_filler(ch, sys, 'tau_pt_vtight')
-                _histogram_filler(ch, sys, 'tau_pt_tight')
-                _histogram_filler(ch, sys, 'taus_phi')
-                _histogram_filler(ch, sys, 'taus_eta')
-                _histogram_filler(ch, sys, 'tau_pt_loose')
-                _histogram_filler(ch, sys, 'taus_phi_loose')
-                _histogram_filler(ch, sys, 'taus_eta_loose')
-                _histogram_filler(ch, sys, 'lead_jet_pt')
-                _histogram_filler(ch, sys, 'lead_jet_phi')
-                _histogram_filler(ch, sys, 'lead_jet_eta')
-                _histogram_filler(ch, sys, 'njets')
-                # _histogram_filler(ch, sys, 'nbjets')
-                _histogram_filler(ch, sys, 'nhtaus_loose')
-                _histogram_filler(ch, sys, 'nhtaus_tight')
-                _histogram_filler(ch, sys, 'nhtaus_vtight')
-                _histogram_filler(ch, sys, 'dilep_pt')
-                _histogram_filler(ch, sys, 'dilep_dphi')
-                _histogram_filler(ch, sys, 'dilep_deta')
-                _histogram_filler(ch, sys, 'dilep_m')
-                _histogram_filler(ch, sys, 'dilep_dR')
-                _histogram_filler(ch, sys, 'delta_R')
-                _histogram_filler(ch, sys, 'delta_R_jet_tau')
-                _histogram_filler(ch, sys, 'delta_R_jet_dilep')
-                _histogram_filler(ch, sys, 'dphi_met_ll')
-                _histogram_filler(ch, sys, 'dilep_dphi_tau')
-                _histogram_filler(ch, sys, 'dphi_jet_met')
-                _histogram_filler(ch, sys, 'delta_tau_met_phi')
-                _histogram_filler(ch, sys, 'mT_W')
-                _histogram_filler(ch, sys, 'mT_WZ')
-                _histogram_filler(ch, sys, 'inv_m_WZ')
-                _histogram_filler(ch, sys, 'dilep_tau_loose_met_hadron_mt')
-                _histogram_filler(ch, sys, 'dilep_mt_llnunu')
-                _histogram_filler(ch, sys, 'HTl')
-                _histogram_filler(ch, sys, 'ST')
-                _histogram_filler(ch, sys, 'deep_tau_e')
-                _histogram_filler(ch, sys, 'deep_tau_mu')
-                _histogram_filler(ch, sys, 'deep_tau_jet')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_loose_tau')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_tight_tau')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_vtight_tau')
+            # Group the variables by their N-1 selection (same substring-based cut
+            # removal the per-variable filler applied), so each distinct cut and the
+            # weights gathered with it are computed once per channel rather than
+            # once per (variable, systematic) fill.
+            var_groups = {}
+            for var in histogram_variables:
+                sel_args_ = {
+                    s.replace('~', ''): (False if '~' in s else True) for s in channels[ch] if var not in s
+                }
+                var_groups.setdefault(tuple(sorted(sel_args_.items())), []).append(var)
+            for sel_key, group_vars in var_groups.items():
+                cut = cut_cache.get(sel_key)
+                if cut is None:
+                    cut = selection.require(**dict(sel_key))
+                    cut_cache[sel_key] = cut
+                if USE_MULTICELL_FILL:
+                    # One fill per variable deposits all systematics at once: the
+                    # slots hold [w_0..w_S, w_0^2..w_S^2], the squares accumulating
+                    # the per-systematic variances that Weight storage would track.
+                    w_sel = weight_matrix[cut]
+                    w_slots = np.concatenate([w_sel, w_sel * w_sel], axis=1)
+                    for var in group_vars:
+                        vv = _format_variable(event[var], cut)
+                        multicell_histos[var].fill(**{"channel": ch, var: vv}, weight=w_slots)
+                else:
+                    w_sel = [weight_by_syst[syst][cut] for syst in systematics]
+                    for var in group_vars:
+                        vv = _format_variable(event[var], cut)
+                        h = histos[var]
+                        for systname, w in zip(systnames, w_sel):
+                            h.fill(**{"channel": ch, "systematic": systname, var: vv, "weight": w})
+
+        if USE_MULTICELL_FILL:
+            # Expand the MultiCell slots back into the standard
+            # (channel, systematic, variable) Weight-storage histograms so everything
+            # downstream (processor.accumulate, hist-merger, DCTools) sees an
+            # unchanged format. Unlike growth-axis fills, channels that selected zero
+            # events in this chunk remain present (all-zero) on the channel axis;
+            # label-aligned growth-axis addition merges both cases identically.
+            for var in histogram_variables:
+                hmc = multicell_histos[var]
+                h = hist.Hist(
+                    hist.axis.StrCategory(list(hmc.axes[0]), name="channel", growth=True),
+                    hist.axis.StrCategory(systnames, name="systematic", growth=True),
+                    hmc.axes[-1],
+                    hist.storage.Weight(),
+                )
+                view = h.view(flow=True)       # (n_channel, n_syst, n_bins + flow)
+                view_mc = hmc.view(flow=True)  # (2 * n_syst, n_channel, n_bins + flow)
+                view["value"] = np.moveaxis(view_mc[:n_syst], 0, 1)
+                view["variance"] = np.moveaxis(view_mc[n_syst:], 0, 1)
+                histos[var] = h
 
         return {dataset: histos}
 
