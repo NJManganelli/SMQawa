@@ -5,7 +5,11 @@ if [[ "$1" == "zsh" ]]; then
 #!/usr/bin/env zsh
 autoload bashcompinit
 bashcompinit
-source SMQawa/call_host.zsh
+if [ ! -d "lpc-scripts" ]; then
+  git clone https://github.com/FNALLPC/lpc-scripts.git
+fi
+https://github.com/FNALLPC/lpc-scripts.git
+source lpc-scripts/call_host.sh
 
 export INSTALL_LOC_EXTERNAL=\$PWD
 export INSTALL_LOC=/srv/
@@ -15,7 +19,10 @@ EOF
 else
     cat <<EOF > shell
 #!/usr/bin/env bash
-source SMQawa/call_host.sh
+if [ ! -d "lpc-scripts" ]; then
+  git clone https://github.com/FNALLPC/lpc-scripts.git
+fi
+source lpc-scripts/call_host.sh
 
 export INSTALL_LOC_EXTERNAL=\$PWD
 export INSTALL_LOC=/srv/
@@ -72,7 +79,7 @@ if [ ! -d "SMQawa" ]; then
   echo "clean the virtual env before re-attempting install."
 fi
 # Source the call_host script again inside the container
-source SMQawa/call_host.zsh
+source lpc-scripts/call_host.sh
 
 # To get dasgoclient
 export PATH=\$PATH:/cvmfs/cms.cern.ch/common
@@ -161,7 +168,7 @@ if [ ! -d "SMQawa" ]; then
   echo "clean the virtual env before re-attempting install."
 fi
 # Source the call_host script again inside the container
-source SMQawa/call_host.sh
+source lpc-scripts/call_host.sh
 
 # To get dasgoclient
 export PATH=\$PATH:/cvmfs/cms.cern.ch/common
