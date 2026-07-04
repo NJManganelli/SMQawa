@@ -761,7 +761,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
         }
 
-    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None):
+    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None, variations=True):
         mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_BE = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta >= 1.5), False)
@@ -776,28 +776,30 @@ class wzinclusive_processor(processor.ProcessorABC):
         # Correctionlib path
         if clibhandler is not None and "trigger_sf" in clibhandler.keys():
             trigger_sf = clibhandler.getCorrectionSet("trigger_sf")
+            # Object-shift passes only read weights.weight() (nominal), so evaluate only
+            # the nominal set there (4 of 12 correctionlib evaluations). The nominal
+            # arithmetic and 'triggerSF' weight name are byte-for-byte unchanged.
+            systs = {"nominal": "nominal", "up": "up", "down": "down"} if variations else {"nominal": "nominal"}
+            sf = {}
             # Nominally we'd need to mask each input where invalid, but here we can mix "wrong" SFs in and take care of it in the where statement at the end
-            sf_mm_nom = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_me_nom = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_em_nom = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_ee_nom = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_nom = ak.where(mask_mm, sf_mm_nom, ak.where(mask_me, sf_me_nom, ak.where(mask_em, sf_em_nom, ak.where(mask_ee, sf_ee_nom, ak.ones_like(sf_ee_nom) ) ) ) )
-            sf_mm_up = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_me_up = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_em_up = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_ee_up = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_up = ak.where(mask_mm, sf_mm_up, ak.where(mask_me, sf_me_up, ak.where(mask_em, sf_em_up, ak.where(mask_ee, sf_ee_up, ak.ones_like(sf_ee_up) ) ) ) )
-            sf_mm_down = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_me_down = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_em_down = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_ee_down = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_down = ak.where(mask_mm, sf_mm_down, ak.where(mask_me, sf_me_down, ak.where(mask_em, sf_em_down, ak.where(mask_ee, sf_ee_down, ak.ones_like(sf_ee_down) ) ) ) )
-            weights.add(
-                'triggerSF',
-                sf_nom,
-                sf_up,
-                sf_down,
-            )
+            for name, syst in systs.items():
+                sf_mm = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_me = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_em = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_ee = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf[name] = ak.where(mask_mm, sf_mm, ak.where(mask_me, sf_me, ak.where(mask_em, sf_em, ak.where(mask_ee, sf_ee, ak.ones_like(sf_ee) ) ) ) )
+            if variations:
+                weights.add(
+                    'triggerSF',
+                    sf["nominal"],
+                    sf["up"],
+                    sf["down"],
+                )
+            else:
+                weights.add(
+                    'triggerSF',
+                    sf["nominal"],
+                )
 
         # Legacy code path
         else:
@@ -845,6 +847,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
         dataset = event.metadata['dataset']
         is_data = event.metadata.get("is_data")
+        # shift_name is None only in the nominal pass (both the data shortcut and the
+        # first entry of the object-shift list pass None); object-shift passes pass a
+        # concrete string. Hoisted to the top so the lepton SF evaluations below can
+        # skip their up/down computation in shift passes (only nominal is read there).
+        variations = shift_name is None
         selection = PackedSelection(dtype="uint64")
         weights = Weights(len(event), storeIndividual=True)
         
@@ -893,8 +900,8 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # Electrons and Muons and Taus
         # Adding scale factors to Muon and Electron fields, post-Scale/Smearing
-        muonSFs = self._leSF.muonSF(event.Muon)
-        elecSFs = self._leSF.electronSF(event.Electron)
+        muonSFs = self._leSF.muonSF(event.Muon, variations=variations)
+        elecSFs = self._leSF.electronSF(event.Electron, variations=variations)
         # keys: nominal, eff_m_(id|iso)(Up|Down) (Muon) or eff_e_(reco|id)(Up|Down) (Electron)
         for k, v in muonSFs.items():
             event["Muon", k] = v
@@ -1262,67 +1269,80 @@ class wzinclusive_processor(processor.ProcessorABC):
 
 
         # Now adding weights
+        # Object-shift passes (shift_name not None) only ever read the nominal
+        # weights.weight(); the up/down weight variations are filled and consumed in
+        # the nominal pass alone, so skip evaluating them there. Skipped weights whose
+        # nominal component is exactly all-ones (PS/PDF/QCDScale/kEW placeholder) are
+        # dropped entirely in shift passes: multiplying by 1.0 is a bitwise no-op.
+        # `variations` is hoisted to the top of process_shift.
         _ones = np.ones(len(weights.weight()))
         if not is_data:
             weights.add('genweight', event.genWeight)
             # self._btag.append_btag_sf(jets, weights)
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
-                self._jpSF.append_jetPU_sf(good_jets, weights)
-            else:
+                self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)
+            elif variations:
                 coffea_console.print("[red]JET PU ID SFs DISABLED[/red]")
-            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
+            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt, variations=variations) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
             self._tauID.append_tauID_multiwp_sf(had_taus, had_taus_tight, had_taus_loose,
                                                 tau_mask_vtight, tau_mask_tight, tau_mask_loose,
-                                                weights
+                                                weights, variations=variations
                                                 )
             # self._tauID.append_tauID_sf(had_taus, weights)
-            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler)
-            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights)
+            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler, variations=variations)
+            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights, variations=variations)
             if self.ewk_process_name:
                 self.ewk_corr.get_weight(
                         event.GenPart,
                         event.Generator.x1,
                         event.Generator.x2,
-                        weights
+                        weights,
+                        variations=variations
                 )
-            else:
+            elif variations:
                 weights.add("kEW", _ones, _ones, _ones)
 
-            if "PSWeight" in event.fields:
-                theory_ps_weight(weights, event.PSWeight)
-            else:
-                theory_ps_weight(weights, None)
-
-            if "LHEPdfWeight" in event.fields:
-                theory_pdf_weight(weights, event.LHEPdfWeight)
-            else:
-                theory_pdf_weight(weights, None)
-
-            if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
-                if len(event.LHEScaleWeight[0]) == 9:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
-                elif len(event.LHEScaleWeight[0]) == 8:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
-                elif len(event.LHEScaleWeight[0]) == 18:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+            if variations:
+                if "PSWeight" in event.fields:
+                    theory_ps_weight(weights, event.PSWeight)
                 else:
-                    coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
+                    theory_ps_weight(weights, None)
+
+                if "LHEPdfWeight" in event.fields:
+                    theory_pdf_weight(weights, event.LHEPdfWeight)
+                else:
+                    theory_pdf_weight(weights, None)
+
+                if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
+                    if len(event.LHEScaleWeight[0]) == 9:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
+                    elif len(event.LHEScaleWeight[0]) == 8:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
+                    elif len(event.LHEScaleWeight[0]) == 18:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+                    else:
+                        coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
 
             if 'LHEReweightingWeight' in event.fields and 'aQGC' in dataset:
+                # FIXME(known bug, kept in all passes for bit-identical output): these
+                # adds multiply the 1057 EFT weights into the nominal event weight
                 for i in range(1057):
                     weights.add(f"eft_{self._eftnames[i]}", event.LHEReweightingWeight[:, i])
 
             # 2017 Prefiring correction weight
             if 'L1PreFiringWeight' in event.fields:
                 # Doesn't appear to be calculated (by default) in Run3 v15 NanoAOD
-                weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
+                if variations:
+                    weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
+                else:
+                    weights.add("prefiring_weight", event.L1PreFiringWeight.Nom)
         else:
             # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
             weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
