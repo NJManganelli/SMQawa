@@ -339,13 +339,19 @@ class pileup_weights:
                 self.corrections['puWeight' if 'Nom' in var else f'puWeight{var}'] = pileup_corr
     
     
-    def append_pileup_weight(self, weights, pu):
-        weights.add(
-            'pileup_weight',
-            self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'    ](pu),
-            self.clib.evaluate(pu, 'up'     ) if self.clib else self.corrections['puWeightUp'  ](pu),
-            self.clib.evaluate(pu, 'down'   ) if self.clib else self.corrections['puWeightDown'](pu),
-        )
+    def append_pileup_weight(self, weights, pu, variations=True):
+        if variations:
+            weights.add(
+                'pileup_weight',
+                self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'    ](pu),
+                self.clib.evaluate(pu, 'up'     ) if self.clib else self.corrections['puWeightUp'  ](pu),
+                self.clib.evaluate(pu, 'down'   ) if self.clib else self.corrections['puWeightDown'](pu),
+            )
+        else:
+            weights.add(
+                'pileup_weight',
+                self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'    ](pu),
+            )
         return weights
     
 class LinearNDInterpolatorExt(object):
@@ -425,7 +431,7 @@ class ewk_corrector:
         ])
         
         
-    def get_weight(self, gen_coll, x1, x2, weights=None):
+    def get_weight(self, gen_coll, x1, x2, weights=None, variations=True):
         # float32 precision is insufficient and leads to infinities in calculations, replace key p4/Energy fields with float64 parameters
         x1 = x1 * np.float64([1.0])
         x2 = x2 * np.float64([1.0])
@@ -560,27 +566,30 @@ class ewk_corrector:
             )
             
         # Average QCD NLO k factors from arXiv:1105.0020
-        leptons = gen_coll[ 
-            ((gen_coll.statusFlags & 128)!=0) & 
-            (np.abs(gen_coll.pdgId) >= 11) & 
-            (np.abs(gen_coll.pdgId) <= 16)
-        ]
-        rhovv = leptons.sum().pt/ak.sum(leptons.pt, axis=1)
-        
-        qcd_kfactor = ak.zeros_like(rhovv)
-        if self.process == 'ZZ':
-            qcd_kfactor = 15.99/ 9.89 - ak.ones_like(rhovv)# ZZ from arXiv1105.0020
-        else:
-            qcd_kfactor = np.where(
-                (gen_coll.pdgId[:,2]*gen_coll.pdgId[:,3]) > 0, 
-                28.55 / 15.51 - ak.ones_like(rhovv), # W+Z
-                18.19 /  9.53 - ak.ones_like(rhovv), # W-Z
+        # These pieces feed exclusively the kEW up/down variations, so skip them
+        # when variations are not requested (shift passes only read the nominal).
+        if variations:
+            leptons = gen_coll[
+                ((gen_coll.statusFlags & 128)!=0) &
+                (np.abs(gen_coll.pdgId) >= 11) &
+                (np.abs(gen_coll.pdgId) <= 16)
+            ]
+            rhovv = leptons.sum().pt/ak.sum(leptons.pt, axis=1)
+
+            qcd_kfactor = ak.zeros_like(rhovv)
+            if self.process == 'ZZ':
+                qcd_kfactor = 15.99/ 9.89 - ak.ones_like(rhovv)# ZZ from arXiv1105.0020
+            else:
+                qcd_kfactor = np.where(
+                    (gen_coll.pdgId[:,2]*gen_coll.pdgId[:,3]) > 0,
+                    28.55 / 15.51 - ak.ones_like(rhovv), # W+Z
+                    18.19 /  9.53 - ak.ones_like(rhovv), # W-Z
+                )
+
+            ewk_uncert = np.where(
+                rhovv < 0.3, 1 + np.abs((weight-1.0)*(qcd_kfactor-1.0)), np.abs(weight)
             )
 
-        ewk_uncert = np.where(
-            rhovv < 0.3, 1 + np.abs((weight-1.0)*(qcd_kfactor-1.0)), np.abs(weight)
-        )
-        
         # WZ: gamma-induced contribution
         if self.process=='WZ':
             gamma_ind_corr = np.where(
@@ -592,7 +601,10 @@ class ewk_corrector:
             
         # filling the weights
         if weights is not None:
-            weights.add('kEW', weight, weight*ewk_uncert, weight/ewk_uncert)
+            if variations:
+                weights.add('kEW', weight, weight*ewk_uncert, weight/ewk_uncert)
+            else:
+                weights.add('kEW', weight)
             weights.add('kNNLO', knnlo)
             
 def propagate_shift_to_met(sink, events, met, shifted_collection, unc_type=None, is_correction=True):

@@ -271,16 +271,16 @@ class LeptonScaleFactors:
                 tag = f"ElectronReco{era}" if "Reco" in _fname else tag
                 self.maps_down[tag] = dense_lookup.dense_lookup(_herr_down,[ax.edges for ax in _hist.axes])
 
-    def muonSF(self, muons: ak.Array):
+    def muonSF(self, muons: ak.Array, variations=True):
         if self.clib_muons:
-            return self.muonSF_clib(muons)
+            return self.muonSF_clib(muons, variations=variations)
         else:
             # Hardcoded TightID and
             assert self.muonID == "Tight", "Legacy muonSF method is hardcoded for TightID [ID]"
             assert self.muonISO == "TightRelIso", "Legacy muonSF method is hardcoded for Tight RelIso [ISO]"
-            return self.muonSF_legacy(muons)
+            return self.muonSF_legacy(muons, variations=variations)
 
-    def muonSF_legacy(self, muons: ak.Array):
+    def muonSF_legacy(self, muons: ak.Array, variations=True):
         # sf_nom  = 1.0 # ak.ones_like(muons.pt)
         # sf_up   = 1.0 # ak.ones_like(muons.pt)
         # sf_down = 1.0 # ak.ones_like(muons.pt)
@@ -290,22 +290,38 @@ class LeptonScaleFactors:
         for n in self.maps_nom.keys():
             if 'Muon' not in n: continue
             _nom = self.maps_nom[n](muons.pt, np.abs(muons.eta))
-            _up = self.maps_up[n](muons.pt, np.abs(muons.eta))
-            _down = self.maps_down[n](muons.pt, np.abs(muons.eta))
+            if variations:
+                _up = self.maps_up[n](muons.pt, np.abs(muons.eta))
+                _down = self.maps_down[n](muons.pt, np.abs(muons.eta))
             if "Id" in n:
                 id_sfs["nominal"] = _nom
-                id_sfs["up"] = _up
-                id_sfs["down"] = _down
+                if variations:
+                    id_sfs["up"] = _up
+                    id_sfs["down"] = _down
             else:
                 iso_sfs["nominal"] = _nom
-                iso_sfs["up"] = _up
-                iso_sfs["down"] = _down
-            # sf_nom = sf_nom * _nom 
+                if variations:
+                    iso_sfs["up"] = _up
+                    iso_sfs["down"] = _down
+            # sf_nom = sf_nom * _nom
             # sf_up = sf_up * _up
             # sf_down = sf_down * _down
-            
+
         # return sf_nom, sf_up, sf_down
         _ones = ak.ones_like(muons.pt)
+        if not variations:
+            _nom = id_sfs["nominal"] * iso_sfs["nominal"]
+            # variation fields aliased to nominal (unused when variations=False)
+            return {"nominal":        _nom,
+                    "eff_m_idUp":     _nom,
+                    "eff_m_idDown":   _nom,
+                    "eff_m_isoUp":    _nom,
+                    "eff_m_isoDown":  _nom,
+                    "eff_e_recoUp":   _ones,
+                    "eff_e_recoDown": _ones,
+                    "eff_e_idUp":     _ones,
+                    "eff_e_idDown":   _ones,
+                    }
         return {"nominal":        id_sfs["nominal"] * iso_sfs["nominal"],
                 "eff_m_idUp":     id_sfs["up"]      * iso_sfs["nominal"],
                 "eff_m_idDown":   id_sfs["down"]    * iso_sfs["nominal"],
@@ -317,30 +333,45 @@ class LeptonScaleFactors:
                 "eff_e_idDown":   _ones,
                 }
 
-    def muonSF_clib(self, muons: ak.Array):
+    def muonSF_clib(self, muons: ak.Array, variations=True):
         maskEtaPt = (np.abs(muons.eta) <= 2.4) & (muons.pt >= self.mask_m_pt)
+        # restrict to the nominal systematic when up/down variations are not requested
+        _muon_systs = {"nominal": "nominal", "up": "systup", "down": "systdown"} if variations else {"nominal": "nominal"}
         # Alternative systematics are additive (i.e. must be added to nominal to bound it): "AltBkg", "AltSig","massBin","massRange","stat","syst","tagIso"
-        id_sfs = {sig2_name: ak.where(maskEtaPt, 
+        id_sfs = {sig2_name: ak.where(maskEtaPt,
                                       # correction
                                        self.clib_muons[self.cset_m_id_key].evaluate(ak.mask(muons.eta, maskEtaPt, valid_when=True),
                                                                                     ak.mask(muons.pt,  maskEtaPt, valid_when=True),
                                                                                     sig2_syst
                                                                                     ),
                                       ak.ones_like(muons.pt)
-                                      ) for sig2_name, sig2_syst in {"nominal": "nominal", "up": "systup", "down": "systdown"}.items()
+                                      ) for sig2_name, sig2_syst in _muon_systs.items()
                   }
         id_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in id_sfs.items()}
-        iso_sfs = {sig2_name: ak.where(maskEtaPt, 
+        iso_sfs = {sig2_name: ak.where(maskEtaPt,
                                        # correction
                                        self.clib_muons[self.cset_m_iso_key].evaluate(ak.mask(muons.eta, maskEtaPt, valid_when=True),
                                                                                      ak.mask(muons.pt,  maskEtaPt, valid_when=True),
                                                                                      sig2_syst
                                                                                      ),
                                        ak.ones_like(muons.pt)
-                                       ) for sig2_name, sig2_syst in {"nominal": "nominal", "up": "systup", "down": "systdown"}.items()
+                                       ) for sig2_name, sig2_syst in _muon_systs.items()
                   }
         iso_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in iso_sfs.items()}
         _ones = ak.ones_like(muons.pt)
+        if not variations:
+            _nom = id_sfs["nominal"] * iso_sfs["nominal"]
+            # variation fields aliased to nominal (unused when variations=False)
+            return {"nominal":        _nom,
+                    "eff_m_idUp":     _nom,
+                    "eff_m_idDown":   _nom,
+                    "eff_m_isoUp":    _nom,
+                    "eff_m_isoDown":  _nom,
+                    "eff_e_recoUp":   _ones,
+                    "eff_e_recoDown": _ones,
+                    "eff_e_idUp":     _ones,
+                    "eff_e_idDown":   _ones,
+                    }
         return {"nominal":        id_sfs["nominal"] * iso_sfs["nominal"],
                 "eff_m_idUp":     id_sfs["up"]      * iso_sfs["nominal"],
                 "eff_m_idDown":   id_sfs["down"]    * iso_sfs["nominal"],
@@ -352,14 +383,14 @@ class LeptonScaleFactors:
                 "eff_e_idDown":   _ones,
                 }
 
-    def electronSF(self, electrons: ak.Array):
+    def electronSF(self, electrons: ak.Array, variations=True):
         if self.clib_electrons:
-            return self.electronSF_clib(electrons)
+            return self.electronSF_clib(electrons, variations=variations)
         else:
             assert self.electronID == "wp90iso", "Legacy electronSF method is hardcoded for wp90iso [ID+ISO]"
-            return self.electronSF_legacy(electrons)
+            return self.electronSF_legacy(electrons, variations=variations)
 
-    def electronSF_legacy(self, electrons: ak.Array):
+    def electronSF_legacy(self, electrons: ak.Array, variations=True):
         # sf_nom  = 1.0 # ak.ones_like(muons.pt)
         # sf_up   = 1.0 # ak.ones_like(muons.pt)
         # sf_down = 1.0 # ak.ones_like(muons.pt)
@@ -369,25 +400,41 @@ class LeptonScaleFactors:
         for n in self.maps_nom.keys():
             if 'Electron' not in n: continue
             _nom = self.maps_nom[n](electrons.pt, np.abs(electrons.eta))
-            _up = self.maps_up[n](electrons.pt, np.abs(electrons.eta))
-            _down = self.maps_down[n](electrons.pt, np.abs(electrons.eta))
+            if variations:
+                _up = self.maps_up[n](electrons.pt, np.abs(electrons.eta))
+                _down = self.maps_down[n](electrons.pt, np.abs(electrons.eta))
             if "Reco" in n:
                 assert "nominal" not in reco_sfs.keys()
                 reco_sfs["nominal"] = _nom
-                reco_sfs["up"] = _up
-                reco_sfs["down"] = _down
+                if variations:
+                    reco_sfs["up"] = _up
+                    reco_sfs["down"] = _down
             else:
                 assert "nominal" not in id_sfs.keys()
                 # "Iso" means nothing in electron MVA IDs, it's a combination ID/ISO SF...
                 id_sfs["nominal"] = _nom
-                id_sfs["up"] = _up
-                id_sfs["down"] = _down
-            # sf_nom = sf_nom * _nom 
+                if variations:
+                    id_sfs["up"] = _up
+                    id_sfs["down"] = _down
+            # sf_nom = sf_nom * _nom
             # sf_up = sf_up * _up
             # sf_down = sf_down * _down
-            
+
         # return sf_nom, sf_up, sf_down
         _ones = ak.ones_like(electrons.pt)
+        if not variations:
+            _nom = reco_sfs["nominal"] * id_sfs["nominal"]
+            # variation fields aliased to nominal/ones (unused when variations=False)
+            return {"nominal":        _nom,
+                    "eff_m_idUp":     _ones,
+                    "eff_m_idDown":   _ones,
+                    "eff_m_isoUp":    _ones,
+                    "eff_m_isoDown":  _ones,
+                    "eff_e_recoUp":   _nom,
+                    "eff_e_recoDown": _nom,
+                    "eff_e_idUp":     _nom,
+                    "eff_e_idDown":   _nom,
+                    }
         return {"nominal":        reco_sfs["nominal"] * id_sfs["nominal"],
                 "eff_m_idUp":     _ones,
                 "eff_m_idDown":   _ones,
@@ -399,7 +446,7 @@ class LeptonScaleFactors:
                 "eff_e_idDown":   reco_sfs["nominal"] * id_sfs["down"],
                 }
 
-    def electronSF_clib(self, electrons: ak.Array):
+    def electronSF_clib(self, electrons: ak.Array, variations=True):
         # 0	{ name: "year", type: "string", description: "year/scenario: example, 2017, 2022FG etc" }
         # 1	{ name: "ValType", type: "string", description: "sf/ sfup / sfdown / effData / effMC / err_stat /err_statData / err_statMC / err_syst (sfup = sf + syst, sfdown = sf - syst) " }
         # 2	{ name: "WorkingPoint", type: "string", description: "Working Point of choice : Loose, Medium etc." }
@@ -412,6 +459,8 @@ class LeptonScaleFactors:
         # sig2 must vary between 3 Reco maps for reconstruction efficiency and a fixed WP for the ID itself: self.electronID
         sig3_electrons_sceta = electrons.eta + electrons.deltaEtaSC
         sig4_electrons_pt = electrons.pt
+        # restrict to the nominal systematic when up/down variations are not requested
+        _electron_systs = {"nominal": "sf", "up": "sfup", "down": "sfdown"} if variations else {"nominal": "sf"}
         maskAbove75 = sig4_electrons_pt >= 75.0
         mask20to75 = (sig4_electrons_pt >= 20.0) & (sig4_electrons_pt < 75.0)
         maskBelow20 = (sig4_electrons_pt >= 10.0) & (sig4_electrons_pt < 20.0)
@@ -443,7 +492,7 @@ class LeptonScaleFactors:
                                                           ak.ones_like(sig4_electrons_pt)
                                                           )
                                                  )
-                                        ) for sig1_name, sig1_syst in {"nominal": "sf", "up": "sfup", "down": "sfdown"}.items()
+                                        ) for sig1_name, sig1_syst in _electron_systs.items()
                     }
         reco_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in reco_sfs.items()}
         maskAbove10 = sig4_electrons_pt >= 10.0
@@ -457,10 +506,23 @@ class LeptonScaleFactors:
                                                                                     ),
                                       # fallback: 1.0
                                       ak.ones_like(sig4_electrons_pt)
-                                      ) for sig1_name, sig1_syst in {"nominal": "sf", "up": "sfup", "down": "sfdown"}.items()
+                                      ) for sig1_name, sig1_syst in _electron_systs.items()
                   }
         id_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in id_sfs.items()}
         _ones = ak.ones_like(electrons.pt)
+        if not variations:
+            _nom = reco_sfs["nominal"] * id_sfs["nominal"]
+            # variation fields aliased to nominal/ones (unused when variations=False)
+            return {"nominal":        _nom,
+                    "eff_m_idUp":     _ones,
+                    "eff_m_idDown":   _ones,
+                    "eff_m_isoUp":    _ones,
+                    "eff_m_isoDown":  _ones,
+                    "eff_e_recoUp":   _nom,
+                    "eff_e_recoDown": _nom,
+                    "eff_e_idUp":     _nom,
+                    "eff_e_idDown":   _nom,
+                    }
         return {"nominal":        reco_sfs["nominal"] * id_sfs["nominal"],
                 "eff_m_idUp":     _ones,
                 "eff_m_idDown":   _ones,
@@ -472,11 +534,22 @@ class LeptonScaleFactors:
                 "eff_e_idDown":   reco_sfs["nominal"] * id_sfs["down"],
                 }
 
-    def append_lepton_sf(self, lead_lep, subl_lep, weights):
+    def append_lepton_sf(self, lead_lep, subl_lep, weights, variations=True):
+        # FIXME: the same reco/id nominal SF (lead_lep.nominal*subl_lep.nominal) is
+        # added once per key, so the nominal weight is effectively raised to the 4th
+        # power. Preserved here bit-for-bit; a central application of the reco nominal
+        # SF (with all-ones nominals on the variation entries) is deferred to a future
+        # PR to keep this variations change bit-identical.
         for key in ["eff_m_id", "eff_m_iso", "eff_e_reco", "eff_e_id"]:
-            weights.add(
-                key,
-                lead_lep.nominal*subl_lep.nominal,
-                getattr(lead_lep, f"{key}Up") * getattr(subl_lep, f"{key}Up"),
-                getattr(lead_lep, f"{key}Down") * getattr(subl_lep, f"{key}Down"),
-            )
+            if variations:
+                weights.add(
+                    key,
+                    lead_lep.nominal*subl_lep.nominal,
+                    getattr(lead_lep, f"{key}Up") * getattr(subl_lep, f"{key}Up"),
+                    getattr(lead_lep, f"{key}Down") * getattr(subl_lep, f"{key}Down"),
+                )
+            else:
+                weights.add(
+                    key,
+                    lead_lep.nominal*subl_lep.nominal,
+                )

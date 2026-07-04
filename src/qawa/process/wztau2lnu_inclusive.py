@@ -37,6 +37,20 @@ from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, th
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
 
+# Fill-time optimization: accumulate all weight systematics of a process_shift pass
+# in a single MultiCell-storage fill per (channel, variable) and expand back to the
+# standard (channel, systematic, variable) Weight-storage histograms before
+# returning, so the output format seen by processor.accumulate, hist-merger, and
+# DCTools is unchanged. ~100x faster nominal-pass filling; measured in
+# benchmarks/bench_histogram_fill.py.
+# FIXME: MultiCell is deliberately kept transient (fill + immediate expansion)
+# because boost-histogram (1.7.1) MultiCell storage loses already-filled contents
+# when a growth axis resizes during fill (categories must be pre-declared), and
+# its compatibility with hist-serv is not yet established. Once it is stable and
+# for-sure hist-serv compatible, this can be refactored to keep MultiCell as the
+# native histogram format instead of expanding per process_shift pass.
+USE_MULTICELL_FILL = True
+
 
 
 def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-baseline", leptonIDs=None):
@@ -128,7 +142,10 @@ def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-base
 
     return tight_leptons, loose_leptons, non_iso_leptons
 
-def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse_wp="VTight", tauIDvsmu_wp="Tight"):
+def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wps=("VTight",), tauIDvse_wp="VTight", tauIDvsmu_wp="Tight"):
+    # Multiple VSjet working points are selected in a single pass: the kinematic cuts,
+    # VSe/VSmu sub-IDs, and the tau-lepton overlap metric_table are WP-independent,
+    # so they are computed once and only the VSjet threshold varies per WP.
     tau_e_branch = None
     tau_e_subid = None
     tau_mu_subid = None
@@ -160,33 +177,33 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         raise NotImplementedError
 
     if tauIDvse_wp not in tau_e_id_cuts:
-        raise ValueError(f"Available levels for tauIDvse_wp: {list(tauIDvse_wp.keys())}")
+        raise ValueError(f"Available levels for tauIDvse_wp: {list(tau_e_id_cuts.keys())}")
     else:
         tau_e_subid = (tau_e_branch >= tau_e_id_cuts[tauIDvse_wp])
     if tauIDvsmu_wp not in tau_mu_id_cuts:
-        raise ValueError(f"Available levels for tauIDvmu_wp: {list(tauIDvsmu_wp.keys())}")
+        raise ValueError(f"Available levels for tauIDvmu_wp: {list(tau_mu_id_cuts.keys())}")
     else:
         tau_mu_subid = (tau_mu_branch >= tau_mu_id_cuts[tauIDvsmu_wp])
-    if tauIDvsj_wp not in tau_j_id_cuts:
-        raise ValueError(f"Available levels for tauIDvj_wp: {list(tauIDvsj_wp.keys())}")
-    else:
-        tau_j_subid = (tau_j_branch >= tau_j_id_cuts[tauIDvsj_wp])
+    for tauIDvsj_wp in tauIDvsj_wps:
+        if tauIDvsj_wp not in tau_j_id_cuts:
+            raise ValueError(f"Available levels for tauIDvj_wp: {list(tau_j_id_cuts.keys())}")
 
     base_selection = (
-        (tau.pt         > 20 ) & 
+        (tau.pt         > 20 ) &
         (np.abs(tau.eta) < tau_max_eta ) &
         (np.abs(tau.dz)< 0.2 ) &
         (tau.decayMode != 5   ) &
         (tau.decayMode != 6   ) &
-        tau_e_subid & tau_mu_subid & tau_j_subid
+        tau_e_subid & tau_mu_subid
     )
 
     overlap_leptons = ak.any(
         tau.metric_table(lepton) <= 0.4,
         axis=2
     )
+    keep = base_selection & ~overlap_leptons
 
-    return tau[base_selection & ~overlap_leptons]
+    return {wp: tau[keep & (tau_j_branch >= tau_j_id_cuts[wp])] for wp in tauIDvsj_wps}
 
 def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9"):
 
@@ -744,7 +761,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
         }
 
-    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None):
+    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None, variations=True):
         mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_BE = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta >= 1.5), False)
@@ -759,28 +776,30 @@ class wzinclusive_processor(processor.ProcessorABC):
         # Correctionlib path
         if clibhandler is not None and "trigger_sf" in clibhandler.keys():
             trigger_sf = clibhandler.getCorrectionSet("trigger_sf")
+            # Object-shift passes only read weights.weight() (nominal), so evaluate only
+            # the nominal set there (4 of 12 correctionlib evaluations). The nominal
+            # arithmetic and 'triggerSF' weight name are byte-for-byte unchanged.
+            systs = {"nominal": "nominal", "up": "up", "down": "down"} if variations else {"nominal": "nominal"}
+            sf = {}
             # Nominally we'd need to mask each input where invalid, but here we can mix "wrong" SFs in and take care of it in the where statement at the end
-            sf_mm_nom = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_me_nom = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_em_nom = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_ee_nom = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_nom = ak.where(mask_mm, sf_mm_nom, ak.where(mask_me, sf_me_nom, ak.where(mask_em, sf_em_nom, ak.where(mask_ee, sf_ee_nom, ak.ones_like(sf_ee_nom) ) ) ) )
-            sf_mm_up = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_me_up = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_em_up = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_ee_up = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_up = ak.where(mask_mm, sf_mm_up, ak.where(mask_me, sf_me_up, ak.where(mask_em, sf_em_up, ak.where(mask_ee, sf_ee_up, ak.ones_like(sf_ee_up) ) ) ) )
-            sf_mm_down = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_me_down = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_em_down = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_ee_down = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_down = ak.where(mask_mm, sf_mm_down, ak.where(mask_me, sf_me_down, ak.where(mask_em, sf_em_down, ak.where(mask_ee, sf_ee_down, ak.ones_like(sf_ee_down) ) ) ) )
-            weights.add(
-                'triggerSF',
-                sf_nom,
-                sf_up,
-                sf_down,
-            )
+            for name, syst in systs.items():
+                sf_mm = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_me = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_em = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf_ee = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, syst)
+                sf[name] = ak.where(mask_mm, sf_mm, ak.where(mask_me, sf_me, ak.where(mask_em, sf_em, ak.where(mask_ee, sf_ee, ak.ones_like(sf_ee) ) ) ) )
+            if variations:
+                weights.add(
+                    'triggerSF',
+                    sf["nominal"],
+                    sf["up"],
+                    sf["down"],
+                )
+            else:
+                weights.add(
+                    'triggerSF',
+                    sf["nominal"],
+                )
 
         # Legacy code path
         else:
@@ -824,14 +843,25 @@ class wzinclusive_processor(processor.ProcessorABC):
             )
 
 
-    def process_shift(self, event, shift_name:str=''):
+    def process_shift(self, event, shift_name:str='', sink=None, planned_shift_systematics=None):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
         dataset = event.metadata['dataset']
         is_data = event.metadata.get("is_data")
+        # shift_name is None only in the nominal pass (both the data shortcut and the
+        # first entry of the object-shift list pass None); object-shift passes pass a
+        # concrete string. Hoisted to the top so the lepton SF evaluations below can
+        # skip their up/down computation in shift passes (only nominal is read there).
+        variations = shift_name is None
+        # Labels of the object-shift systematics that later passes will deposit into the
+        # shared sink; pre-declared on the nominal pass's systematic axis so the growth
+        # axis never resizes mid-fill (the MultiCell growth-bug workaround).
+        planned = planned_shift_systematics if planned_shift_systematics is not None else []
         selection = PackedSelection(dtype="uint64")
         weights = Weights(len(event), storeIndividual=True)
-        
-        histos = self.build_histos()
+
+        # Nominal pass (sink is None) builds the shared histogram set; object-shift
+        # passes accumulate in place into the sink handed back by the nominal pass.
+        histos = self.build_histos() if sink is None else sink
         
         if is_data:
             selection.add('lumimask', self._lumimask(event.run, event.luminosityBlock))
@@ -876,8 +906,8 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # Electrons and Muons and Taus
         # Adding scale factors to Muon and Electron fields, post-Scale/Smearing
-        muonSFs = self._leSF.muonSF(event.Muon)
-        elecSFs = self._leSF.electronSF(event.Electron)
+        muonSFs = self._leSF.muonSF(event.Muon, variations=variations)
+        elecSFs = self._leSF.electronSF(event.Electron, variations=variations)
         # keys: nominal, eff_m_(id|iso)(Up|Down) (Muon) or eff_e_(reco|id)(Up|Down) (Electron)
         for k, v in muonSFs.items():
             event["Muon", k] = v
@@ -896,9 +926,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         nloose_lep = ak.num(loose_lep)
 
         
-        had_taus = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="VTight", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
-        had_taus_tight = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="Tight", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
-        had_taus_loose = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="Loose", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
+        htaus_by_wp = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wps=("VTight", "Tight", "Loose"),
+                                  tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
+        had_taus = htaus_by_wp["VTight"]
+        had_taus_tight = htaus_by_wp["Tight"]
+        had_taus_loose = htaus_by_wp["Loose"]
 
         # sort tau collections
         vtight_tau_sorter = ak.argsort(had_taus.pt, axis=1, ascending=False)
@@ -1014,9 +1046,6 @@ class wzinclusive_processor(processor.ProcessorABC):
         ngood_jets  = ak.num(good_jets)
         ngood_bjets = ak.num(good_bjets)
 
-        event['ngood_bjets'] = ngood_bjets
-        event['ngood_jets']  = ngood_jets
-
         # lepton quantities
         def z_lepton_pair(leptons):
             pair = ak.combinations(leptons, 2, axis=1, fields=['l1', 'l2'])
@@ -1073,13 +1102,13 @@ class wzinclusive_processor(processor.ProcessorABC):
         dilep_deta = np.abs(lead_lep.eta - subl_lep.eta)
         dilep_dR   = lead_lep.delta_r(subl_lep)
 
-        delta_R = ak.where(ntight_lep==2, dilep_p4.delta_r(lead_tau_vtight), dilep_p4.delta_r(lead_tau_vtight))
+        delta_R = dilep_p4.delta_r(lead_tau_vtight)
         dilep_dphi_met  = ak.where(ntight_lep==2, dilep_p4.delta_phi(p4_met), dilep_p4.delta_phi(emu_met))
         #scalar_balance = ak.where(ntight_lep==3, emu_met.pt/dilep_p4.pt, p4_met.pt/dilep_p4.pt)
         delta_tau_met_phi = ak.where(ntight_lep==2, lead_tau_vtight.delta_phi(p4_met), lead_tau_vtight.delta_phi(emu_met))
-        dilep_dphi_tau = ak.where(ntight_lep==2, dilep_p4.delta_phi(lead_tau_vtight), dilep_p4.delta_phi(lead_tau_vtight))
+        dilep_dphi_tau = dilep_p4.delta_phi(lead_tau_vtight)
         delta_tau_loose_met_phi = ak.where(ntight_lep==2, lead_tau_loose.delta_phi(p4_met), lead_tau_loose.delta_phi(emu_met))
-        dilep_dphi_tau_loose = ak.where(ntight_lep==2, dilep_p4.delta_phi(lead_tau_loose), dilep_p4.delta_phi(lead_tau_loose))
+        dilep_dphi_tau_loose = dilep_p4.delta_phi(lead_tau_loose)
 
 
 
@@ -1113,23 +1142,20 @@ class wzinclusive_processor(processor.ProcessorABC):
         lead_jet = ak.firsts(good_jets)
         subl_jet = ak.firsts(good_jets[lead_jet.delta_r(good_jets)>0.01])
         third_jet = ak.firsts(good_jets[(lead_jet.delta_r(good_jets)>0.01) & (subl_jet.delta_r(good_jets)>0.01)])
-        delta_R_jet_dilep = ak.where(ntight_lep==2, dilep_p4.delta_r(lead_jet), dilep_p4.delta_r(lead_jet))
-        delta_R_jet_tau = ak.where(ntight_lep==2, lead_tau_vtight.delta_r(lead_jet), lead_tau_vtight.delta_r(lead_jet))
+        delta_R_jet_dilep = dilep_p4.delta_r(lead_jet)
+        delta_R_jet_tau = lead_tau_vtight.delta_r(lead_jet)
         dphi_jet_met = ak.where(ntight_lep==2, lead_jet.delta_phi(p4_met), lead_jet.delta_phi(emu_met))
 
         dijet_mass = (lead_jet + subl_jet).mass
         dijet_deta = np.abs(lead_jet.eta - subl_jet.eta)
-        event['dijet_mass'] = dijet_mass
-        event['dijet_deta'] = dijet_deta 
 
         min_dphi_met_j = ak.min(np.abs(
             ak.where(
-                ntight_lep==3, 
-                good_jets.delta_phi(emu_met), 
+                ntight_lep==3,
+                good_jets.delta_phi(emu_met),
                 good_jets.delta_phi(p4_met)
             )
         ), axis=1)
-        event['min_dphi_met_j'] = min_dphi_met_j
 
         # define basic selection
         selection.add(
@@ -1190,123 +1216,139 @@ class wzinclusive_processor(processor.ProcessorABC):
         # selection.add('1nhtaus_loose_minus', nhtaus_loose_minus == 1)
 
 
-        # Define all variables for the BDT
-        event['met_pt'  ] = ak.fill_none(reco_met_pt,-99)
-        event['met_phi'  ] = ak.fill_none(reco_met_phi,-99)
-        event['mT_W'  ] = ak.fill_none(mT_W,-99)
-        event['mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
-        event['inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
-        event['dilep_tau_loose_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
-        event['met_phi' ] = ak.fill_none(reco_met_phi,-99)
-        event['dilep_mt_llnunu'] = ak.fill_none(dilep_mt_llnunu,-99)
-        event['dilep_m'] = ak.fill_none(dilep_m,-99)
-        event['dilep_pt'] = ak.fill_none(dilep_pt,-99)
-        event['HTl'] = ak.fill_none(HTl,-99)
-        event['ST'] = ak.fill_none(ST,-99)
-        event['dilep_dphi'] = ak.fill_none(dilep_dphi,-99)
-        event['njets'   ] = ak.fill_none(ngood_jets,-99)
-        # event['nbjets'   ] = ak.fill_none(ngood_bjets,-99)
-        event['nhtaus_vtight'   ] = ak.fill_none(nhtaus_lep_vtight,-99)
-        event['nhtaus_tight'   ] = ak.fill_none(nhtaus_lep_tight,-99)
-        event['nhtaus_loose'   ] = ak.fill_none(nhtaus_lep_loose,-99)
-        event['dphi_met_ll'] = ak.fill_none(dilep_dphi_met,-99)
-        event['dilep_dphi_tau'] = ak.fill_none(dilep_dphi_tau,-99)
-        event['dijet_mass'] = ak.fill_none(dijet_mass,-99)
-        event['dijet_deta'] = ak.fill_none(dijet_deta,-99)
-        event['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
-        event['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
-        event['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
-        event['taus_phi'] = ak.fill_none(taus_phi,-99)
-        event['taus_eta'] = ak.fill_none(taus_eta,-99)
-        event['delta_R'] = ak.fill_none(delta_R,-99)
-        event['dilep_dR'] = ak.fill_none(dilep_dR,-99)
-        event['dilep_deta'] = ak.fill_none(dilep_deta,-99)
-        event['delta_tau_met_phi'] = ak.fill_none(delta_tau_met_phi,-99)
-        event['tau_pt_loose'] = ak.fill_none(tau_pt_loose,-99)
-        event['taus_phi_loose'] = ak.fill_none(taus_phi_loose,-99)
-        event['taus_eta_loose'] = ak.fill_none(taus_eta_loose,-99)
-        event['leading_lep_pt'  ] = ak.fill_none(lead_lep.pt,-99)
-        event['leading_lep_eta' ] = ak.fill_none(lead_lep.eta,-99)
-        event['leading_lep_phi' ] = ak.fill_none(lead_lep.phi,-99)
-        event['trailing_lep_pt' ] = ak.fill_none(subl_lep.pt,-99)
-        event['trailing_lep_eta'] = ak.fill_none(subl_lep.eta,-99)
-        event['trailing_lep_phi'] = ak.fill_none(subl_lep.phi,-99)       
-        event['lead_jet_pt'  ] = ak.fill_none(lead_jet.pt,-99)
-        event['lead_jet_eta' ] = ak.fill_none(lead_jet.eta,-99)
-        event['lead_jet_phi' ] = ak.fill_none(lead_jet.phi,-99)
-        event['delta_R_jet_tau'] = ak.fill_none(delta_R_jet_tau,-99)
-        event['delta_R_jet_dilep'] = ak.fill_none(delta_R_jet_dilep,-99)
-        event['dphi_jet_met'] = ak.fill_none(dphi_jet_met,-99)
-        event['deep_tau_e'] = ak.fill_none(deep_tau_e,-99)
-        event['deep_tau_mu'] = ak.fill_none(deep_tau_mu,-99)
-        event['deep_tau_jet'] = ak.fill_none(deep_tau_jet,-99)
-        event['delta_R_non_iso_lep_loose_tau'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
-        event['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
-        event['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
+        # Define all variables for the BDT and histogramming in a plain dict: the fill
+        # loop consumes these directly (it converts to numpy anyway), and the single
+        # ak.zip/embed below replaces ~55 per-variable event[...] record rebuilds.
+        ntuple = {}
+        ntuple['met_pt'  ] = ak.fill_none(reco_met_pt,-99)
+        ntuple['met_phi' ] = ak.fill_none(reco_met_phi,-99)
+        ntuple['mT_W'  ] = ak.fill_none(mT_W,-99)
+        ntuple['mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
+        ntuple['inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
+        ntuple['dilep_tau_loose_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
+        ntuple['dilep_mt_llnunu'] = ak.fill_none(dilep_mt_llnunu,-99)
+        ntuple['dilep_m'] = ak.fill_none(dilep_m,-99)
+        ntuple['dilep_pt'] = ak.fill_none(dilep_pt,-99)
+        ntuple['HTl'] = ak.fill_none(HTl,-99)
+        ntuple['ST'] = ak.fill_none(ST,-99)
+        ntuple['dilep_dphi'] = ak.fill_none(dilep_dphi,-99)
+        ntuple['njets'   ] = ak.fill_none(ngood_jets,-99)
+        # ntuple['nbjets'   ] = ak.fill_none(ngood_bjets,-99)
+        ntuple['nhtaus_vtight'   ] = ak.fill_none(nhtaus_lep_vtight,-99)
+        ntuple['nhtaus_tight'   ] = ak.fill_none(nhtaus_lep_tight,-99)
+        ntuple['nhtaus_loose'   ] = ak.fill_none(nhtaus_lep_loose,-99)
+        ntuple['dphi_met_ll'] = ak.fill_none(dilep_dphi_met,-99)
+        ntuple['dilep_dphi_tau'] = ak.fill_none(dilep_dphi_tau,-99)
+        ntuple['dijet_mass'] = ak.fill_none(dijet_mass,-99)
+        ntuple['dijet_deta'] = ak.fill_none(dijet_deta,-99)
+        ntuple['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
+        ntuple['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
+        ntuple['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
+        ntuple['taus_phi'] = ak.fill_none(taus_phi,-99)
+        ntuple['taus_eta'] = ak.fill_none(taus_eta,-99)
+        ntuple['delta_R'] = ak.fill_none(delta_R,-99)
+        ntuple['dilep_dR'] = ak.fill_none(dilep_dR,-99)
+        ntuple['dilep_deta'] = ak.fill_none(dilep_deta,-99)
+        ntuple['delta_tau_met_phi'] = ak.fill_none(delta_tau_met_phi,-99)
+        ntuple['tau_pt_loose'] = ak.fill_none(tau_pt_loose,-99)
+        ntuple['taus_phi_loose'] = ak.fill_none(taus_phi_loose,-99)
+        ntuple['taus_eta_loose'] = ak.fill_none(taus_eta_loose,-99)
+        ntuple['leading_lep_pt'  ] = ak.fill_none(lead_lep.pt,-99)
+        ntuple['leading_lep_eta' ] = ak.fill_none(lead_lep.eta,-99)
+        ntuple['leading_lep_phi' ] = ak.fill_none(lead_lep.phi,-99)
+        ntuple['trailing_lep_pt' ] = ak.fill_none(subl_lep.pt,-99)
+        ntuple['trailing_lep_eta'] = ak.fill_none(subl_lep.eta,-99)
+        ntuple['trailing_lep_phi'] = ak.fill_none(subl_lep.phi,-99)
+        ntuple['lead_jet_pt'  ] = ak.fill_none(lead_jet.pt,-99)
+        ntuple['lead_jet_eta' ] = ak.fill_none(lead_jet.eta,-99)
+        ntuple['lead_jet_phi' ] = ak.fill_none(lead_jet.phi,-99)
+        ntuple['delta_R_jet_tau'] = ak.fill_none(delta_R_jet_tau,-99)
+        ntuple['delta_R_jet_dilep'] = ak.fill_none(delta_R_jet_dilep,-99)
+        ntuple['dphi_jet_met'] = ak.fill_none(dphi_jet_met,-99)
+        ntuple['deep_tau_e'] = ak.fill_none(deep_tau_e,-99)
+        ntuple['deep_tau_mu'] = ak.fill_none(deep_tau_mu,-99)
+        ntuple['deep_tau_jet'] = ak.fill_none(deep_tau_jet,-99)
+        ntuple['delta_R_non_iso_lep_loose_tau'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
+        ntuple['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
+        ntuple['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
+        event['NTuple'] = ak.zip(ntuple, depth_limit=1)
 
 
         # Now adding weights
+        # Object-shift passes (shift_name not None) only ever read the nominal
+        # weights.weight(); the up/down weight variations are filled and consumed in
+        # the nominal pass alone, so skip evaluating them there. Skipped weights whose
+        # nominal component is exactly all-ones (PS/PDF/QCDScale/kEW placeholder) are
+        # dropped entirely in shift passes: multiplying by 1.0 is a bitwise no-op.
+        # `variations` is hoisted to the top of process_shift.
         _ones = np.ones(len(weights.weight()))
         if not is_data:
             weights.add('genweight', event.genWeight)
             # self._btag.append_btag_sf(jets, weights)
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
-                self._jpSF.append_jetPU_sf(good_jets, weights)
-            else:
+                self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)
+            elif variations:
                 coffea_console.print("[red]JET PU ID SFs DISABLED[/red]")
-            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
+            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt, variations=variations) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
             self._tauID.append_tauID_multiwp_sf(had_taus, had_taus_tight, had_taus_loose,
                                                 tau_mask_vtight, tau_mask_tight, tau_mask_loose,
-                                                weights
+                                                weights, variations=variations
                                                 )
             # self._tauID.append_tauID_sf(had_taus, weights)
-            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler)
-            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights)
+            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler, variations=variations)
+            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights, variations=variations)
             if self.ewk_process_name:
                 self.ewk_corr.get_weight(
                         event.GenPart,
                         event.Generator.x1,
                         event.Generator.x2,
-                        weights
+                        weights,
+                        variations=variations
                 )
-            else:
+            elif variations:
                 weights.add("kEW", _ones, _ones, _ones)
 
-            if "PSWeight" in event.fields:
-                theory_ps_weight(weights, event.PSWeight)
-            else:
-                theory_ps_weight(weights, None)
-
-            if "LHEPdfWeight" in event.fields:
-                theory_pdf_weight(weights, event.LHEPdfWeight)
-            else:
-                theory_pdf_weight(weights, None)
-
-            if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
-                if len(event.LHEScaleWeight[0]) == 9:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
-                elif len(event.LHEScaleWeight[0]) == 8:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
-                elif len(event.LHEScaleWeight[0]) == 18:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+            if variations:
+                if "PSWeight" in event.fields:
+                    theory_ps_weight(weights, event.PSWeight)
                 else:
-                    coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
+                    theory_ps_weight(weights, None)
+
+                if "LHEPdfWeight" in event.fields:
+                    theory_pdf_weight(weights, event.LHEPdfWeight)
+                else:
+                    theory_pdf_weight(weights, None)
+
+                if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
+                    if len(event.LHEScaleWeight[0]) == 9:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
+                    elif len(event.LHEScaleWeight[0]) == 8:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
+                    elif len(event.LHEScaleWeight[0]) == 18:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+                    else:
+                        coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
 
             if 'LHEReweightingWeight' in event.fields and 'aQGC' in dataset:
+                # FIXME(known bug, kept in all passes for bit-identical output): these
+                # adds multiply the 1057 EFT weights into the nominal event weight
                 for i in range(1057):
                     weights.add(f"eft_{self._eftnames[i]}", event.LHEReweightingWeight[:, i])
 
             # 2017 Prefiring correction weight
             if 'L1PreFiringWeight' in event.fields:
                 # Doesn't appear to be calculated (by default) in Run3 v15 NanoAOD
-                weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
+                if variations:
+                    weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
+                else:
+                    weights.add("prefiring_weight", event.L1PreFiringWeight.Nom)
         else:
             # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
             weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
@@ -1426,60 +1468,16 @@ class wzinclusive_processor(processor.ProcessorABC):
         def _format_variable(variable, cut):
             if cut is None:
                 vv = ak.to_numpy(ak.fill_none(variable, np.nan))
-                if np.isnan(np.any(vv)):
-                    coffea_console.print(" - vv with nan:", vv)
-                return ak.to_numpy(ak.fill_none(variable, np.nan))
             else:
                 vv = ak.to_numpy(ak.fill_none(variable[cut], np.nan))
-                if np.isnan(np.any(vv)):
-                    coffea_console.print(" - vv with nan:", vv)
-                return ak.to_numpy(ak.fill_none(variable[cut], np.nan))
+            if np.any(np.isnan(vv)):
+                coffea_console.print(" - vv with nan:", vv)
+            return vv
 
         def collection_printer(collection):
             longest_field = max([len(field) for field in collection.fields])
             for field in collection.fields:
                 coffea_console.print(f"\t{field:<{longest_field}}={getattr(collection, field)}")
-
-        def _histogram_filler(ch, syst, var, _weight=None):
-            sel_ = channels[ch]
-            sel_args_ = {
-                s.replace('~',''): (False if '~' in s else True) for s in sel_ if var not in s
-            }
-            cut =  selection.require(**sel_args_)
-            # if syst == "nominal
-            # print("ch syst var nselected", ch, syst, var
-            # print(f"ch={ch} var={var}")
-            # selection.cutflow(*sel_args_.keys(), weights=weights, weightsmodifier=None).print()
-            systname = 'nominal' if syst is None else syst
-
-            if _weight is None: 
-                if syst in weights.variations:
-                    weight = weights.weight(modifier=syst)[cut]
-                else:
-                    weight = weights.weight()[cut]
-            else:
-                weight = weights.weight()[cut] * _weight[cut]
-
-            vv = ak.to_numpy(ak.fill_none(weight, np.nan))
-            if np.isnan(np.any(vv)):
-                coffea_console.print(f" - {syst} weight contains invalid values:", vv[np.isnan(vv)], vv[np.isinf(vv)])
-
-            # if ch in ['inc-SR1', 'inc-DY1']:
-            #     if var in ["met_pt", "mT_WZ", "lead_jet_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_dphi", "met_phi", "lead_jet_phi", "dilep_loose_tau_phi"] :
-            #         if systname in ['nominal', 'JESUp', 'JESDown']:
-            #             coffea_console.print(ch, var, systname, _format_variable(event[var], cut)[:2], event.event[cut][:2])
-            #             if ch=='inc-SR1' and var=="mT_WZ" :
-            #                 collection_printer(event.Tau[:2])
-
-
-            histos[var].fill(
-                **{
-                    "channel": ch, 
-                    "systematic": systname, 
-                    var: _format_variable(event[var], cut), 
-                    "weight": ak.nan_to_num(weight,nan=1.0, posinf=1.0, neginf=1.0)
-                }
-            )
 
         def _histogram_filler2D(ch, syst, var1, var2, _weight=None):
             sel_ = channels[ch]
@@ -1499,7 +1497,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 weight = weights.weight()[cut] * _weight[cut]
 
             vv = ak.to_numpy(ak.fill_none(weight, np.nan))
-            if np.isnan(np.any(vv)):
+            if np.any(np.isnan(vv)) or np.any(np.isinf(vv)):
                 coffea_console.print(f" - {syst} weight contains invalid values:", vv[np.isnan(vv)], vv[np.isinf(vv)])
 
             histos[var1+"_2D_"+var2].fill(
@@ -1515,57 +1513,127 @@ class wzinclusive_processor(processor.ProcessorABC):
             systematics = [None] + list(weights.variations)
         else:
             systematics = [shift_name]
+        systnames = ['nominal' if s is None else s for s in systematics]
 
+        histogram_variables = [
+            'leading_lep_pt', 'leading_lep_phi', 'leading_lep_eta',
+            'trailing_lep_pt', 'trailing_lep_phi', 'trailing_lep_eta',
+            'met_pt', 'met_phi',
+            'tau_pt_vtight', 'tau_pt_tight', 'taus_phi', 'taus_eta',
+            'tau_pt_loose', 'taus_phi_loose', 'taus_eta_loose',
+            'lead_jet_pt', 'lead_jet_phi', 'lead_jet_eta',
+            'njets',
+            # 'nbjets',
+            'nhtaus_loose', 'nhtaus_tight', 'nhtaus_vtight',
+            'dilep_pt', 'dilep_dphi', 'dilep_deta', 'dilep_m', 'dilep_dR',
+            'delta_R', 'delta_R_jet_tau', 'delta_R_jet_dilep',
+            'dphi_met_ll', 'dilep_dphi_tau', 'dphi_jet_met', 'delta_tau_met_phi',
+            'mT_W', 'mT_WZ', 'inv_m_WZ', 'dilep_tau_loose_met_hadron_mt', 'dilep_mt_llnunu',
+            'HTl', 'ST',
+            'deep_tau_e', 'deep_tau_mu', 'deep_tau_jet',
+            'delta_R_non_iso_lep_loose_tau', 'delta_R_non_iso_lep_tight_tau', 'delta_R_non_iso_lep_vtight_tau',
+        ]
+
+        # The per-systematic event weights are independent of channel and variable,
+        # so compute (and sanitize) each full-length weight vector exactly once.
+        weight_by_syst = {}
+        for syst in systematics:
+            if syst in weights.variations:
+                w = weights.weight(modifier=syst)
+            else:
+                w = weights.weight()
+            if np.any(np.isnan(w)) or np.any(np.isinf(w)):
+                coffea_console.print(f" - {syst} weight contains invalid values:", w[np.isnan(w)], w[np.isinf(w)])
+            weight_by_syst[syst] = np.nan_to_num(w, nan=1.0, posinf=1.0, neginf=1.0)
+
+        if USE_MULTICELL_FILL:
+            n_syst = len(systematics)
+            weight_matrix = np.stack([weight_by_syst[syst] for syst in systematics], axis=1)
+            # NOTE: the channel categories MUST be pre-declared here: boost-histogram
+            # (1.7.1) MultiCell storage loses already-filled contents when a growth
+            # axis resizes during a later fill.
+            multicell_histos = {
+                var: hist.Hist(
+                    hist.axis.StrCategory(list(channels), name="channel", growth=True),
+                    histos[var].axes[-1],
+                    storage=hist.storage.MultiCell(2 * n_syst),
+                ) for var in histogram_variables
+            }
+
+        cut_cache = {}
         for ch in channels:
-            for sys in systematics:
-                _histogram_filler(ch, sys, 'leading_lep_pt')
-                _histogram_filler(ch, sys, 'leading_lep_phi')
-                _histogram_filler(ch, sys, 'leading_lep_eta')
-                _histogram_filler(ch, sys, 'trailing_lep_pt')
-                _histogram_filler(ch, sys, 'trailing_lep_phi')
-                _histogram_filler(ch, sys, 'trailing_lep_eta')
-                _histogram_filler(ch, sys, 'met_pt')
-                _histogram_filler(ch, sys, 'met_phi')
-                _histogram_filler(ch, sys, 'tau_pt_vtight')
-                _histogram_filler(ch, sys, 'tau_pt_tight')
-                _histogram_filler(ch, sys, 'taus_phi')
-                _histogram_filler(ch, sys, 'taus_eta')
-                _histogram_filler(ch, sys, 'tau_pt_loose')
-                _histogram_filler(ch, sys, 'taus_phi_loose')
-                _histogram_filler(ch, sys, 'taus_eta_loose')
-                _histogram_filler(ch, sys, 'lead_jet_pt')
-                _histogram_filler(ch, sys, 'lead_jet_phi')
-                _histogram_filler(ch, sys, 'lead_jet_eta')
-                _histogram_filler(ch, sys, 'njets')
-                # _histogram_filler(ch, sys, 'nbjets')
-                _histogram_filler(ch, sys, 'nhtaus_loose')
-                _histogram_filler(ch, sys, 'nhtaus_tight')
-                _histogram_filler(ch, sys, 'nhtaus_vtight')
-                _histogram_filler(ch, sys, 'dilep_pt')
-                _histogram_filler(ch, sys, 'dilep_dphi')
-                _histogram_filler(ch, sys, 'dilep_deta')
-                _histogram_filler(ch, sys, 'dilep_m')
-                _histogram_filler(ch, sys, 'dilep_dR')
-                _histogram_filler(ch, sys, 'delta_R')
-                _histogram_filler(ch, sys, 'delta_R_jet_tau')
-                _histogram_filler(ch, sys, 'delta_R_jet_dilep')
-                _histogram_filler(ch, sys, 'dphi_met_ll')
-                _histogram_filler(ch, sys, 'dilep_dphi_tau')
-                _histogram_filler(ch, sys, 'dphi_jet_met')
-                _histogram_filler(ch, sys, 'delta_tau_met_phi')
-                _histogram_filler(ch, sys, 'mT_W')
-                _histogram_filler(ch, sys, 'mT_WZ')
-                _histogram_filler(ch, sys, 'inv_m_WZ')
-                _histogram_filler(ch, sys, 'dilep_tau_loose_met_hadron_mt')
-                _histogram_filler(ch, sys, 'dilep_mt_llnunu')
-                _histogram_filler(ch, sys, 'HTl')
-                _histogram_filler(ch, sys, 'ST')
-                _histogram_filler(ch, sys, 'deep_tau_e')
-                _histogram_filler(ch, sys, 'deep_tau_mu')
-                _histogram_filler(ch, sys, 'deep_tau_jet')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_loose_tau')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_tight_tau')
-                _histogram_filler(ch, sys, 'delta_R_non_iso_lep_vtight_tau')
+            # Group the variables by their N-1 selection (same substring-based cut
+            # removal the per-variable filler applied), so each distinct cut and the
+            # weights gathered with it are computed once per channel rather than
+            # once per (variable, systematic) fill.
+            var_groups = {}
+            for var in histogram_variables:
+                sel_args_ = {
+                    s.replace('~', ''): (False if '~' in s else True) for s in channels[ch] if var not in s
+                }
+                var_groups.setdefault(tuple(sorted(sel_args_.items())), []).append(var)
+            for sel_key, group_vars in var_groups.items():
+                cut = cut_cache.get(sel_key)
+                if cut is None:
+                    cut = selection.require(**dict(sel_key))
+                    cut_cache[sel_key] = cut
+                if USE_MULTICELL_FILL:
+                    # One fill per variable deposits all systematics at once: the
+                    # slots hold [w_0..w_S, w_0^2..w_S^2], the squares accumulating
+                    # the per-systematic variances that Weight storage would track.
+                    w_sel = weight_matrix[cut]
+                    w_slots = np.concatenate([w_sel, w_sel * w_sel], axis=1)
+                    for var in group_vars:
+                        vv = _format_variable(ntuple[var], cut)
+                        multicell_histos[var].fill(**{"channel": ch, var: vv}, weight=w_slots)
+                else:
+                    w_sel = [weight_by_syst[syst][cut] for syst in systematics]
+                    for var in group_vars:
+                        vv = _format_variable(ntuple[var], cut)
+                        h = histos[var]
+                        for systname, w in zip(systnames, w_sel):
+                            h.fill(**{"channel": ch, "systematic": systname, var: vv, "weight": w})
+
+        if USE_MULTICELL_FILL:
+            # Expand the MultiCell slots back into the standard
+            # (channel, systematic, variable) Weight-storage histograms so everything
+            # downstream (processor.accumulate, hist-merger, DCTools) sees an
+            # unchanged format. Unlike growth-axis fills, channels that selected zero
+            # events in this chunk remain present (all-zero) on the channel axis;
+            # label-aligned growth-axis addition merges both cases identically.
+            for var in histogram_variables:
+                hmc = multicell_histos[var]
+                view_mc = hmc.view(flow=True)  # (2 * n_syst, n_channel, n_bins + flow)
+                if sink is None:
+                    # Nominal pass: build the shared output hist ONCE with the FULL
+                    # systematic label set pre-declared (this pass's weight-based
+                    # systematics first, then the object-shift labels later passes will
+                    # fill). Pre-declaring extends the MultiCell growth-bug workaround to
+                    # the systematic axis so shift passes never resize it. This pass's
+                    # systematics occupy the leading n_syst positions (same order as
+                    # `systematics`/`view_mc`), so a positional slice write suffices.
+                    h = hist.Hist(
+                        hist.axis.StrCategory(list(hmc.axes[0]), name="channel", growth=True),
+                        hist.axis.StrCategory(systnames + planned, name="systematic", growth=True),
+                        hmc.axes[-1],
+                        hist.storage.Weight(),
+                    )
+                    view = h.view(flow=True)   # (n_channel, n_full_syst, n_bins + flow)
+                    view["value"][:, :n_syst, :] = np.moveaxis(view_mc[:n_syst], 0, 1)
+                    view["variance"][:, :n_syst, :] = np.moveaxis(view_mc[n_syst:], 0, 1)
+                    histos[var] = h
+                else:
+                    # Object-shift pass: accumulate in place into the shared sink at the
+                    # channel/systematic label positions (this pass owns a single, unique
+                    # systematic label, so no cell it writes was written by another pass).
+                    # Mirror the nominal moveaxis exactly, switching to += with label-
+                    # located indices.
+                    h = histos[var]
+                    view = h.view(flow=True)   # (n_channel, n_full_syst, n_bins + flow)
+                    ch_idx = np.array([h.axes["channel"].index(c) for c in list(hmc.axes[0])])
+                    s_idx = np.array([h.axes["systematic"].index(s) for s in systnames])
+                    view["value"][np.ix_(ch_idx, s_idx)] += np.moveaxis(view_mc[:n_syst], 0, 1)
+                    view["variance"][np.ix_(ch_idx, s_idx)] += np.moveaxis(view_mc[n_syst:], 0, 1)
 
         return {dataset: histos}
 
@@ -1785,13 +1853,26 @@ class wzinclusive_processor(processor.ProcessorABC):
             shifts.append(({"Jet": hem_jets, "MET": hem_met}, "HEMDown"))
             shifts.append(({"Jet": event.Jet, "MET": event.MET}, "HEMUp"))
 
-        shifts = [
-            self.process_shift(
-                update_collection(event, collections), 
-                name
-            ) for collections, name in shifts
-        ]
-        return processor.accumulate(shifts)
+        # Sequential shared-sink fill: the nominal pass (first entry, name is None)
+        # builds the histogram set with the full systematic axis pre-declared, and every
+        # object-shift pass accumulates in place into that same sink. This replaces
+        # processor.accumulate over ~37 independently-built histogram sets. The only
+        # accumulables process_shift returns are the (channel, systematic, variable)
+        # histograms; each (channel, systematic) cell is written by exactly one pass
+        # (nominal writes nominal + weight-variation labels; each shift writes only its
+        # own label), so the in-place sink reproduces the accumulated result exactly.
+        planned_shift_systematics = [name for _, name in shifts if name is not None]
+        result = None
+        for collections, name in shifts:
+            out = self.process_shift(
+                update_collection(event, collections),
+                name,
+                sink=(None if result is None else result[dataset_name]),
+                planned_shift_systematics=planned_shift_systematics,
+            )
+            if result is None:
+                result = out
+        return result
 
 
 
