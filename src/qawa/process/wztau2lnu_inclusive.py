@@ -843,7 +843,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             )
 
 
-    def process_shift(self, event, shift_name:str=''):
+    def process_shift(self, event, shift_name:str='', sink=None, planned_shift_systematics=None):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
         dataset = event.metadata['dataset']
         is_data = event.metadata.get("is_data")
@@ -852,10 +852,16 @@ class wzinclusive_processor(processor.ProcessorABC):
         # concrete string. Hoisted to the top so the lepton SF evaluations below can
         # skip their up/down computation in shift passes (only nominal is read there).
         variations = shift_name is None
+        # Labels of the object-shift systematics that later passes will deposit into the
+        # shared sink; pre-declared on the nominal pass's systematic axis so the growth
+        # axis never resizes mid-fill (the MultiCell growth-bug workaround).
+        planned = planned_shift_systematics if planned_shift_systematics is not None else []
         selection = PackedSelection(dtype="uint64")
         weights = Weights(len(event), storeIndividual=True)
-        
-        histos = self.build_histos()
+
+        # Nominal pass (sink is None) builds the shared histogram set; object-shift
+        # passes accumulate in place into the sink handed back by the nominal pass.
+        histos = self.build_histos() if sink is None else sink
         
         if is_data:
             selection.add('lumimask', self._lumimask(event.run, event.luminosityBlock))
@@ -1597,17 +1603,37 @@ class wzinclusive_processor(processor.ProcessorABC):
             # label-aligned growth-axis addition merges both cases identically.
             for var in histogram_variables:
                 hmc = multicell_histos[var]
-                h = hist.Hist(
-                    hist.axis.StrCategory(list(hmc.axes[0]), name="channel", growth=True),
-                    hist.axis.StrCategory(systnames, name="systematic", growth=True),
-                    hmc.axes[-1],
-                    hist.storage.Weight(),
-                )
-                view = h.view(flow=True)       # (n_channel, n_syst, n_bins + flow)
                 view_mc = hmc.view(flow=True)  # (2 * n_syst, n_channel, n_bins + flow)
-                view["value"] = np.moveaxis(view_mc[:n_syst], 0, 1)
-                view["variance"] = np.moveaxis(view_mc[n_syst:], 0, 1)
-                histos[var] = h
+                if sink is None:
+                    # Nominal pass: build the shared output hist ONCE with the FULL
+                    # systematic label set pre-declared (this pass's weight-based
+                    # systematics first, then the object-shift labels later passes will
+                    # fill). Pre-declaring extends the MultiCell growth-bug workaround to
+                    # the systematic axis so shift passes never resize it. This pass's
+                    # systematics occupy the leading n_syst positions (same order as
+                    # `systematics`/`view_mc`), so a positional slice write suffices.
+                    h = hist.Hist(
+                        hist.axis.StrCategory(list(hmc.axes[0]), name="channel", growth=True),
+                        hist.axis.StrCategory(systnames + planned, name="systematic", growth=True),
+                        hmc.axes[-1],
+                        hist.storage.Weight(),
+                    )
+                    view = h.view(flow=True)   # (n_channel, n_full_syst, n_bins + flow)
+                    view["value"][:, :n_syst, :] = np.moveaxis(view_mc[:n_syst], 0, 1)
+                    view["variance"][:, :n_syst, :] = np.moveaxis(view_mc[n_syst:], 0, 1)
+                    histos[var] = h
+                else:
+                    # Object-shift pass: accumulate in place into the shared sink at the
+                    # channel/systematic label positions (this pass owns a single, unique
+                    # systematic label, so no cell it writes was written by another pass).
+                    # Mirror the nominal moveaxis exactly, switching to += with label-
+                    # located indices.
+                    h = histos[var]
+                    view = h.view(flow=True)   # (n_channel, n_full_syst, n_bins + flow)
+                    ch_idx = np.array([h.axes["channel"].index(c) for c in list(hmc.axes[0])])
+                    s_idx = np.array([h.axes["systematic"].index(s) for s in systnames])
+                    view["value"][np.ix_(ch_idx, s_idx)] += np.moveaxis(view_mc[:n_syst], 0, 1)
+                    view["variance"][np.ix_(ch_idx, s_idx)] += np.moveaxis(view_mc[n_syst:], 0, 1)
 
         return {dataset: histos}
 
@@ -1827,13 +1853,26 @@ class wzinclusive_processor(processor.ProcessorABC):
             shifts.append(({"Jet": hem_jets, "MET": hem_met}, "HEMDown"))
             shifts.append(({"Jet": event.Jet, "MET": event.MET}, "HEMUp"))
 
-        shifts = [
-            self.process_shift(
-                update_collection(event, collections), 
-                name
-            ) for collections, name in shifts
-        ]
-        return processor.accumulate(shifts)
+        # Sequential shared-sink fill: the nominal pass (first entry, name is None)
+        # builds the histogram set with the full systematic axis pre-declared, and every
+        # object-shift pass accumulates in place into that same sink. This replaces
+        # processor.accumulate over ~37 independently-built histogram sets. The only
+        # accumulables process_shift returns are the (channel, systematic, variable)
+        # histograms; each (channel, systematic) cell is written by exactly one pass
+        # (nominal writes nominal + weight-variation labels; each shift writes only its
+        # own label), so the in-place sink reproduces the accumulated result exactly.
+        planned_shift_systematics = [name for _, name in shifts if name is not None]
+        result = None
+        for collections, name in shifts:
+            out = self.process_shift(
+                update_collection(event, collections),
+                name,
+                sink=(None if result is None else result[dataset_name]),
+                planned_shift_systematics=planned_shift_systematics,
+            )
+            if result is None:
+                result = out
+        return result
 
 
 
