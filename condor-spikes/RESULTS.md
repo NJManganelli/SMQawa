@@ -42,6 +42,27 @@ designated submitter and the schedd auto-adds its user record on first submit.
 | S0.4 | condor_chirp `HistServAddress` from a worker | pending |
 | **S0.5** | **histserv durability + double-fill primitives** | **DONE — see below** |
 
+## Phase 1 acceptance (local pool portion) — PASS
+
+`../condor-docker/probe_itemdata.py` exercises the real Phase-1 code on the running
+v25 pool (run as `submituser`, `PYTHONPATH=/smqawa/src`):
+
+* **(A) preserved-knob parity** — `build_worker_submit()` reproduces every knob from
+  the old `condor_TEMPLATE`: `request_disk=10000000`, `max_retries=3`,
+  `requirements = Machine =!= LastRemoteHost`, `MY.SingularityImage` (cvmfs),
+  `arguments = $(ProcId) $(jobfn)`, `on_exit_remove ... ExitCode==0`,
+  `should_transfer_files=YES`, `WhenToTransferOutput=ON_EXIT_OR_EVICT`. The
+  `for_dag=True` variant correctly drops `max_retries` (DAGMan RETRY owns it) and
+  uses `$(jobid)` VARS. PASS.
+* **(B) itemdata + manifest** — `submit_sample()` submitted 3 files -> 3 jobs via
+  itemdata; all completed across the 3 workers; `manifest.json` written with the
+  cluster id, `n_jobs=3`, and the procid->infile map. PASS.
+
+Still requires the LPC/lxplus AP (not reproducible locally): the full dataset
+parity test — old vs new submitter producing identical `histogram_<N>.pkl.gz`
+sets — because it needs dasgoclient, real NanoAOD, the CVMFS SingularityImage, and
+the coffea payload venv.
+
 ## S0.5 — histserv double-fill / hash-checking (DONE, v0.1.9)
 
 **Question the user asked: does histserv implement the right hash-checking to avoid
