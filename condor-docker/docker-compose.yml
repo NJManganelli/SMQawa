@@ -1,0 +1,100 @@
+# Local HTCondor v25 pool for SMQawa condor-bindings / DAGMan development.
+#
+# Roles (the "appropriate other nodes" of a real pool):
+#   cm       -> central manager   : COLLECTOR + NEGOTIATOR
+#   submit   -> access point (AP) : SCHEDD  (this is where htcondor2.Schedd().submit runs,
+#                                    and where a DAGMan universe=local SERVICE node lives)
+#   execute  -> worker nodes       : STARTD  (scaled to 3 replicas by default)
+#   histserv -> long-running hist server SERVICE-node stand-in (profile: histserv)
+#
+# Auth: shared HTCondor pool password over a private docker bridge. The password
+# blob is created once by setup-condor-docker.sh into the `secrets` named volume.
+#
+# Usage:  ./setup-condor-docker.sh            (brings up cm + submit + 3 workers)
+#         ./setup-condor-docker.sh --histserv (also starts the histserv service node)
+#         ./teardown-condor-docker.sh
+#
+# Override the image version with CONDOR_VERSION (must be >= 25):
+#         CONDOR_VERSION=25.0-el9 ./setup-condor-docker.sh
+
+name: qawa-condor
+
+# Our fragments are bind-mounted as individual files INTO the image's own
+# /etc/condor/config.d so the role drop-ins the images ship are preserved.
+# config.d files are read lexically; ours are numbered 90+ so they win.
+x-condor-config: &condor-config
+  - ./config/90-qawa-common.conf:/etc/condor/config.d/90-qawa-common.conf:ro
+  - ./config/95-qawa-security.conf:/etc/condor/config.d/95-qawa-security.conf:ro
+  - ./config/96-qawa-execute.conf:/etc/condor/config.d/96-qawa-execute.conf:ro
+  - secrets:/etc/condor/secrets
+
+x-condor-node: &condor-node
+  environment:
+    CONDOR_HOST: cm
+  networks:
+    - pool
+
+services:
+  cm:
+    <<: *condor-node
+    image: htcondor/cm:${CONDOR_VERSION:-25.0-el9}
+    hostname: cm
+    container_name: qawa-condor-cm
+    volumes: *condor-config
+
+  submit:
+    <<: *condor-node
+    image: htcondor/submit:${CONDOR_VERSION:-25.0-el9}
+    hostname: submit
+    container_name: qawa-condor-submit
+    depends_on:
+      - cm
+    volumes:
+      - ./config/90-qawa-common.conf:/etc/condor/config.d/90-qawa-common.conf:ro
+      - ./config/95-qawa-security.conf:/etc/condor/config.d/95-qawa-security.conf:ro
+      - ./config/96-qawa-execute.conf:/etc/condor/config.d/96-qawa-execute.conf:ro
+      - secrets:/etc/condor/secrets
+      # Repo mounted read-only so Phase-0 probes / brewer-htcondor2 run from the AP.
+      - ..:/smqawa:ro
+
+  execute:
+    <<: *condor-node
+    image: htcondor/execute:${CONDOR_VERSION:-25.0-el9}
+    depends_on:
+      - cm
+    deploy:
+      replicas: 3
+    volumes: *condor-config
+    # No fixed hostname/container_name so replicas get unique names
+    # (qawa-condor-execute-1 .. -3).
+
+  # --- DAGMan SERVICE-node stand-in --------------------------------------------
+  # In production this becomes a DAGMan `SERVICE histserv histserv.sub` node that
+  # comes up BEFORE the workers and stays until every worker has shipped its data
+  # (see HTCONDOR_PYTHON_PLAN.md 7.2 and condor-spikes/RESULTS.md). Here it is a
+  # plain long-running container so the wiring can be exercised locally.
+  #
+  # DOUBLE-FILL HOOK (must be wired before this is used for real, see RESULTS.md):
+  #   histserv has native idempotency via RemoteHist.fill(unique_id=...); the
+  #   worker fill path must pass a deterministic (dataset, jobid, var, chunk) key.
+  histserv:
+    profiles: ["histserv"]
+    image: htcondor/execute:${CONDOR_VERSION:-25.0-el9}
+    hostname: histserv
+    container_name: qawa-condor-histserv
+    networks:
+      - pool
+    volumes:
+      - ..:/smqawa:ro
+      - histserv_ckpt:/checkpoints
+    # Placeholder command; replaced by histserv_service.sh in Phase 3.
+    # Needs a venv with `histserv` installed (not in the stock image) — see RESULTS.md.
+    command: ["sleep", "infinity"]
+
+networks:
+  pool:
+    driver: bridge
+
+volumes:
+  secrets:
+  histserv_ckpt:

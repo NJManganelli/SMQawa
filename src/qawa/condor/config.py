@@ -1,0 +1,96 @@
+"""Submission configuration and the INSTALL_LOC -> INSTALL_LOC_EXTERNAL helper.
+
+The analysis runs inside an Apptainer container. Paths *inside* a condor submit
+description (executable, transfer_input_files, initialdir) must be spelled in the
+*host* filesystem namespace (``INSTALL_LOC_EXTERNAL``), because the submit host /
+worker see the host mount, not the container mount (``INSTALL_LOC``). With the
+v2 bindings we submit from wherever Python runs, so only paths that end up *in the
+submit ad* need translation -- everything else uses the in-container path.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+
+
+def to_external_path(path: str, *, install_loc: str | None = None,
+                     install_loc_external: str | None = None) -> str:
+    """Translate an in-container path under ``INSTALL_LOC`` to its host spelling.
+
+    Mirrors the old brewer's ``jobs_dir_external`` computation but as a reusable,
+    unit-testable helper (plan Phase 1, step 5). Paths not under ``INSTALL_LOC``
+    are returned unchanged.
+    """
+    install_loc = install_loc if install_loc is not None else os.environ.get("INSTALL_LOC")
+    install_loc_external = (
+        install_loc_external if install_loc_external is not None
+        else os.environ.get("INSTALL_LOC_EXTERNAL")
+    )
+    if not install_loc or not install_loc_external:
+        # Nothing to translate against; assume the path is already correct.
+        return os.path.normpath(path)
+
+    abspath = os.path.normpath(os.path.abspath(path))
+    install_loc = os.path.normpath(os.path.abspath(install_loc))
+    rel = os.path.relpath(abspath, install_loc)
+    if rel.startswith(os.pardir):
+        # Not under INSTALL_LOC -> leave it alone.
+        return abspath
+    return os.path.normpath(os.path.join(install_loc_external, rel))
+
+
+@dataclass
+class SubmissionConfig:
+    """Everything the submitter needs, resolved once from CLI + environment.
+
+    Fields marked "(env)" default to the container environment set up by the
+    SMQawa bootstrap (``COFFEA_IMAGE``, ``FULL_IMAGE``, ``INSTALL_LOC*``).
+    """
+
+    analysis: str
+    tag: str
+    era: str
+    isMC: int = 1
+    zzdd: str = "onlySR"
+    split_by_charge: bool = False
+    queue: str = "longlunch"
+    executor: str = "FuturesExecutor"
+
+    # Filled from the environment by ``from_env`` unless overridden.
+    coffea_image: str = ""
+    full_image: str = ""
+    install_loc: str = ""
+    install_loc_external: str = ""
+    proxy_path: str = ""
+
+    # Submission knobs preserved verbatim from the old condor_TEMPLATE.
+    request_disk: str = "10000000"
+    max_retries: int = 3
+    cvmfs_image_prefix: str = "/cvmfs/unpacked.cern.ch/registry.hub.docker.com"
+
+    extra: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_env(cls, **kwargs) -> "SubmissionConfig":
+        env = os.environ
+        defaults = dict(
+            coffea_image=env.get("COFFEA_IMAGE", ""),
+            full_image=env.get("FULL_IMAGE", ""),
+            install_loc=env.get("INSTALL_LOC", ""),
+            install_loc_external=env.get("INSTALL_LOC_EXTERNAL", ""),
+        )
+        defaults.update({k: v for k, v in kwargs.items() if v is not None})
+        return cls(**defaults)
+
+    @property
+    def singularity_image(self) -> str:
+        """Full +SingularityImage value (without the enclosing quotes)."""
+        return f"{self.cvmfs_image_prefix}/{self.coffea_image}"
+
+    def external(self, path: str) -> str:
+        """Convenience wrapper around :func:`to_external_path` bound to this config."""
+        return to_external_path(
+            path,
+            install_loc=self.install_loc or None,
+            install_loc_external=self.install_loc_external or None,
+        )
