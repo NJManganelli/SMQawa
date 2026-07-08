@@ -50,8 +50,12 @@ def build_worker_submit(cfg: SubmissionConfig, jobdir: str, *, transfer_files: l
     """Return an ``htcondor2.Submit`` mirroring the old condor_TEMPLATE exactly.
 
     ``+X`` submit-file spellings become ``MY.X`` dict keys. When ``for_dag`` is
-    True, ``max_retries`` is omitted (DAGMan owns retry via ``RETRY`` -- plan 6.1)
-    and ``arguments`` use ``$(jobid)`` VARS instead of ``$(ProcId)``.
+    True, ``max_retries`` AND ``on_exit_remove`` are omitted (DAGMan owns retry via
+    ``RETRY`` -- plan 6.1) and ``arguments`` use ``$(jobid)`` VARS instead of
+    ``$(ProcId)``. Dropping ``on_exit_remove`` in DAG mode is essential, not
+    cosmetic: with the old expression a nonzero exit re-queues the job at the
+    schedd forever, so DAGMan never observes the node failure and RETRY/rescue
+    never trigger (observed on the local v25 pool).
     """
     import htcondor2  # lazy: only needed at actual submit/build time
 
@@ -70,12 +74,14 @@ def build_worker_submit(cfg: SubmissionConfig, jobdir: str, *, transfer_files: l
         "output": "$(ClusterId).$(ProcId).out",
         "error": "$(ClusterId).$(ProcId).err",
         "log": os.path.join(jobdir_ext, "cluster.log"),
-        "on_exit_remove": "(ExitBySignal == False) && (ExitCode == 0)",
         "requirements": "Machine =!= LastRemoteHost",
         "MY.SingularityImage": f'"{cfg.singularity_image}"',
         "MY.JobFlavour": f'"{cfg.queue}"',
     }
     if not for_dag:
+        # Schedd-level retry (non-DAG mode only): nonzero exit re-queues the job
+        # up to max_retries. In DAG mode both knobs move to DAGMan's RETRY.
+        desc["on_exit_remove"] = "(ExitBySignal == False) && (ExitCode == 0)"
         desc["max_retries"] = str(cfg.max_retries)
 
     return htcondor2.Submit(desc)
