@@ -63,6 +63,45 @@ parity test — old vs new submitter producing identical `histogram_<N>.pkl.gz`
 sets — because it needs dasgoclient, real NanoAOD, the CVMFS SingularityImage, and
 the coffea payload venv.
 
+## Phase 2 acceptance (local pool portion) — PASS
+
+`../condor-docker/probe_dag.py` exercises the real `WorkflowDAG` code (build +
+`Submit.from_dag` + resume) on the v25 pool with synthetic worker/merge payloads
+(run as `submituser`, `PYTHONPATH=/smqawa/src`, DAG root under
+`/home/submituser` — see the /tmp gotcha below). Three scenarios, all PASS:
+
+1. **Fresh submit** — 2 samples x 3 files -> 6 worker nodes + FINAL merge; all ran,
+   per-sample merged outputs produced, `manifest.json` records the DAGMan cluster,
+   `dag.status` NODE_STATUS_FILE shows every node `STATUS_DONE`.
+2. **Kill a worker mid-run** — `condor_rm` of a running node job -> DAGMan logged
+   the retry, node reran, DAG completed, both samples merged.
+3. **Exhaust retries -> rescue -> resume** — always-failing payload exhausted
+   `RETRY 3` -> DAG failed, `workflow.dag.rescue001` written (3 nodes premarked
+   DONE, 3 failed), FINAL merge still ran and wrote `MERGE_INCOMPLETE`; after
+   fixing the payload, `submit(resume=True)` (`Submit.from_dag` WITHOUT `force`)
+   picked up the rescue ("Number of pre-completed nodes: 3"), reran ONLY the
+   failed nodes + FINAL, exited 0, and the merge wrapper cleared the stale
+   `MERGE_INCOMPLETE` marker.
+
+Recorded Phase-2 findings (they shaped the implementation):
+
+* **DAGMan submitted via `Submit.from_dag` + `Schedd().submit` does NOT chdir into
+  the DAG's directory** (unlike `condor_submit_dag`): relative `JOB <node> worker.sub`
+  and `NODE_STATUS_FILE dag.status` paths resolve against the *submit-time cwd* and
+  fail/land elsewhere. All paths inside the generated DAG are therefore absolute.
+* **`on_exit_remove` must be dropped in DAG mode** (now done by
+  `build_worker_submit(for_dag=True)`): with the old
+  `(ExitBySignal==False)&&(ExitCode==0)` expression a nonzero-exit job is re-queued
+  by the schedd forever (observed as endless ULOG_JOB_EVICTED/idle cycles), so
+  DAGMan never sees the node fail and RETRY/rescue never trigger. In DAG mode retry
+  ownership lives exclusively in DAGMan's `RETRY`.
+* **DAGMAN_USE_STRICT gotcha:** a DAG whose node log lands in `/tmp` is a *fatal*
+  warning under the default strict setting — keep DAG dirs out of `/tmp`.
+
+Still requires the LPC/lxplus AP: the real coffea payload end-to-end (dasgoclient,
+CVMFS image, venv) and confirming `universe=local` FINAL-merge behavior on a real
+AP where the schedd runs outside the analysis container.
+
 ## S0.5 — histserv double-fill / hash-checking (DONE, v0.1.9)
 
 **Question the user asked: does histserv implement the right hash-checking to avoid

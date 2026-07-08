@@ -61,8 +61,10 @@ def check_offline() -> None:
     # for_dag variant: DAGMan owns retry, jobid VARS instead of ProcId
     sub_dag = submitmod.build_worker_submit(cfg, jobdir, transfer_files=["/srv/x.py"], for_dag=True)
     assert sub_dag.get("max_retries", "") == "", "for_dag must drop max_retries (DAGMan RETRY owns it)"
+    assert sub_dag.get("on_exit_remove", "") == "", \
+        "for_dag must drop on_exit_remove (else failed jobs re-queue forever and DAGMan never sees the failure)"
     assert sub_dag.get("arguments") == "$(jobid) $(jobfn)", "for_dag must use $(jobid) VARS"
-    print("  [OK] for_dag variant drops max_retries and uses $(jobid)")
+    print("  [OK] for_dag variant drops max_retries/on_exit_remove and uses $(jobid)")
     print("== (A) PASS ==\n")
 
 
