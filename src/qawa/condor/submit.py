@@ -96,16 +96,41 @@ class SubmitResult:
 
 
 def locate_schedd():
-    """Return an ``htcondor2.Schedd``, honoring ``SCHEDD_HOST``.
+    """Return an ``htcondor2.Schedd``, honoring SCHEDD_ADDRESS_FILE / SCHEDD_HOST.
 
     ``htcondor2.Schedd()`` with no location strictly locates a *local* schedd
     (daemon address file). Remote-schedd sites (lxplus: myschedd assigns a
-    bigbird host, advertised via SCHEDD_HOST) have no local daemon, so the
-    schedd must be located by name through the collector instead.
+    bigbird host, advertised via SCHEDD_HOST) have no local daemon. Preference
+    order:
+
+    1. ``SCHEDD_ADDRESS_FILE`` -- a sinful address captured on the *host* by
+       the bootstrap shell wrapper; no collector round-trip needed (the
+       in-container collector query can fail on auth even when the schedd
+       address is perfectly usable).
+    2. ``SCHEDD_HOST`` -- locate that schedd by name through the collector.
+    3. local daemon, converting a locate failure into an actionable error.
     """
     import htcondor2
 
     name = htcondor2.param.get("SCHEDD_HOST")
+
+    addr_file = htcondor2.param.get("SCHEDD_ADDRESS_FILE")
+    if addr_file and os.path.isfile(addr_file):
+        import classad2
+        with open(addr_file) as fh:
+            sinful = fh.readline().strip()
+            version = fh.readline().strip()
+        if sinful.startswith("<") and version:
+            loc = classad2.ClassAd({
+                "MyAddress": sinful,
+                "CondorVersion": version,
+                "Name": name or "schedd",
+                "MyType": "Scheduler",
+            })
+            return htcondor2.Schedd(loc)
+        logger.warning("SCHEDD_ADDRESS_FILE %s malformed (need sinful + version "
+                       "lines); falling back to collector locate", addr_file)
+
     if name:
         coll = htcondor2.Collector()
         return htcondor2.Schedd(coll.locate(htcondor2.DaemonType.Schedd, name))

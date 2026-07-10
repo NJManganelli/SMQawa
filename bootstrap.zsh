@@ -42,11 +42,32 @@ else
 # LOCAL_CONFIG_* are filtered so the container doesn't re-read host-only paths.
 condor_config_val -dump 2>/dev/null | grep -Ev '^(LOCAL_CONFIG_FILE|LOCAL_CONFIG_DIR|REQUIRE_LOCAL_CONFIG_FILE)\b' > .condor_config
 echo 'REQUIRE_LOCAL_CONFIG_FILE = false' >> .condor_config
+
+# Capture the myschedd-assigned schedd's contact address ON THE HOST (in-container
+# collector queries can fail on auth even when the schedd itself is reachable);
+# qawa.condor locate_schedd() prefers this address file over a collector round-trip.
+SCHEDD_NAME=\$(condor_config_val SCHEDD_HOST 2>/dev/null)
+if [ -n "\$SCHEDD_NAME" ]; then
+  condor_status -schedd "\$SCHEDD_NAME" -af MyAddress 2>/dev/null | head -1 > .schedd_address
+  condor_status -schedd "\$SCHEDD_NAME" -af CondorVersion 2>/dev/null | head -1 >> .schedd_address
+  if [ -s .schedd_address ]; then
+    echo "SCHEDD_ADDRESS_FILE = \${INSTALL_LOC}.schedd_address" >> .condor_config
+  fi
+fi
+
 export CONDOR_CONFIG=\$INSTALL_LOC.condor_config
 export APPTAINERENV_CONDOR_CONFIG=\$CONDOR_CONFIG
 
-# Need all our bind addresses
-export APPTAINER_BINDPATH=/cvmfs,/cvmfs/grid.cern.ch/etc/grid-security:/etc/grid-security,/eos,/etc/pki/ca-trust,/etc/tnsnames.ora,/run/user,/var/run/user,\$(readlink -f \$PWD)
+# HTCondor auth at CERN is Kerberos, and KEYRING ccaches (lxplus default) are
+# invisible inside user-namespace containers -> kinit into a FILE ccache in the
+# bound workdir so the bindings can authenticate to collector/schedd.
+export KRB5CCNAME=FILE:\$(readlink -f \$PWD)/.krb5cc
+export APPTAINERENV_KRB5CCNAME=\$KRB5CCNAME
+echo "kinit: file-based Kerberos ccache for in-container HTCondor auth"
+kinit \$USER@CERN.CH
+
+# Need all our bind addresses (/etc/krb5.conf: CERN realm config for condor auth in-container)
+export APPTAINER_BINDPATH=/cvmfs,/cvmfs/grid.cern.ch/etc/grid-security:/etc/grid-security,/eos,/etc/pki/ca-trust,/etc/tnsnames.ora,/etc/krb5.conf,/run/user,/var/run/user,\$(readlink -f \$PWD)
 
 EOF
 fi
