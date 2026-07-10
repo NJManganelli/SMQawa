@@ -27,6 +27,7 @@ if [[ "$2" == "lpc" ]]; then
     cat <<EOF >> shell
 # Needed to setup cluster for LPC
 export CONDOR_CONFIG=\$INSTALL_LOC.condor_config
+export APPTAINERENV_CONDOR_CONFIG=\$CONDOR_CONFIG
 grep -v '^include' /etc/condor/config.d/01_cmslpc_interactive > .condor_config
 
 # Need all our bind addresses
@@ -35,6 +36,15 @@ export APPTAINER_BINDPATH=/uscmst1b_scratch,/cvmfs,/cvmfs/grid.cern.ch/etc/grid-
 EOF
 else
     cat <<EOF >> shell
+# Needed for the HTCondor python bindings inside the container (lxplus):
+# snapshot the host's fully-resolved condor config (includes and the
+# myschedd-assigned SCHEDD_HOST already baked in) into the bound workdir.
+# LOCAL_CONFIG_* are filtered so the container doesn't re-read host-only paths.
+condor_config_val -dump 2>/dev/null | grep -Ev '^(LOCAL_CONFIG_FILE|LOCAL_CONFIG_DIR|REQUIRE_LOCAL_CONFIG_FILE)\b' > .condor_config
+echo 'REQUIRE_LOCAL_CONFIG_FILE = false' >> .condor_config
+export CONDOR_CONFIG=\$INSTALL_LOC.condor_config
+export APPTAINERENV_CONDOR_CONFIG=\$CONDOR_CONFIG
+
 # Need all our bind addresses
 export APPTAINER_BINDPATH=/cvmfs,/cvmfs/grid.cern.ch/etc/grid-security:/etc/grid-security,/eos,/etc/pki/ca-trust,/etc/tnsnames.ora,/run/user,/var/run/user,\$(readlink -f \$PWD)
 

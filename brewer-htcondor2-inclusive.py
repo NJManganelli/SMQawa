@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 
+from qawa.condor import config as cfgmod
 from qawa.condor.config import SubmissionConfig
 from qawa.condor import datasets as ds
 from qawa.condor import proxy as proxymod
@@ -55,6 +56,7 @@ def main():
 
     schedd = None
     if opts.submit_via == "bindings" and not opts.dryrun:
+        cfgmod.ensure_condor_config()
         import htcondor2
         schedd = htcondor2.Schedd()
 

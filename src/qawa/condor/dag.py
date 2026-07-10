@@ -313,6 +313,8 @@ class WorkflowDAG:
         failed nodes (``force`` would delete the rescue files). Records the DAGMan
         cluster in the dagdir manifest. Returns the DAGMan cluster id.
         """
+        from .config import ensure_condor_config
+        ensure_condor_config()
         import htcondor2
 
         opts = {"maxidle": str(maxidle)}
