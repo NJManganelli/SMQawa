@@ -57,8 +57,7 @@ def main():
     schedd = None
     if opts.submit_via == "bindings" and not opts.dryrun:
         cfgmod.ensure_condor_config()
-        import htcondor2
-        schedd = htcondor2.Schedd()
+        schedd = submitmod.locate_schedd()
 
     with open(opts.input) as stream:
         lines = stream.read().split("\n")

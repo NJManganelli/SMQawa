@@ -95,6 +95,31 @@ class SubmitResult:
     manifest_path: str
 
 
+def locate_schedd():
+    """Return an ``htcondor2.Schedd``, honoring ``SCHEDD_HOST``.
+
+    ``htcondor2.Schedd()`` with no location strictly locates a *local* schedd
+    (daemon address file). Remote-schedd sites (lxplus: myschedd assigns a
+    bigbird host, advertised via SCHEDD_HOST) have no local daemon, so the
+    schedd must be located by name through the collector instead.
+    """
+    import htcondor2
+
+    name = htcondor2.param.get("SCHEDD_HOST")
+    if name:
+        coll = htcondor2.Collector()
+        return htcondor2.Schedd(coll.locate(htcondor2.DaemonType.Schedd, name))
+    try:
+        return htcondor2.Schedd()
+    except Exception as exc:
+        raise SystemExit(
+            "Could not locate a schedd: no local daemon and SCHEDD_HOST is not "
+            f"set in the condor config ({exc}). On lxplus: check `myschedd show` "
+            "on the host, regenerate .condor_config by re-running ./zsh-shell, or "
+            "export _CONDOR_SCHEDD_HOST=<bigbirdNN.cern.ch> inside the container."
+        )
+
+
 def submit_sample(sub, files: list[str], jobdir: str, cfg: SubmissionConfig, *,
                   schedd=None) -> SubmitResult:
     """Submit one sample's jobs via itemdata (one job per input file).

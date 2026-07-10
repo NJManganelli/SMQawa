@@ -321,7 +321,9 @@ class WorkflowDAG:
         if not resume:
             opts["force"] = True
         sub = htcondor2.Submit.from_dag(self.dag_path(), opts)
-        schedd = schedd if schedd is not None else htcondor2.Schedd()
+        if schedd is None:
+            from .submit import locate_schedd
+            schedd = locate_schedd()
         result = schedd.submit(sub)
         cluster = result.cluster()
         self.write_manifest(cluster, resume=resume)
