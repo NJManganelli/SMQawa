@@ -88,6 +88,15 @@ source SMQawa/call_host.zsh
 export PATH=\$PATH:/cvmfs/cms.cern.ch/common
 export PYTHONPATH=\$INSTALL_LOC.env/bin
 
+# ssh inside the container chokes on the image's /etc/ssh/ssh_config.d
+# ("Bad owner or permissions" under user namespaces) -> skip the system-wide
+# ssh config for git; user keys/agent and ~/.ssh/config still apply.
+if [ -f \$HOME/.ssh/config ]; then
+  export GIT_SSH_COMMAND="ssh -F \$HOME/.ssh/config"
+else
+  export GIT_SSH_COMMAND="ssh -F /dev/null"
+fi
+
 export XRDPARALLELEVTLOOP=16 #This might only work in development environments, but should increase the throughput...
 # export INSTALL_LOC=\$PWD/ #this could potentially be VIRTUAL_ENV, but creating that prior to activation may cause unforeseen problems... note TRAILING slash
 if [[ -z "\$INSTALL_LOC" ]]; then
@@ -176,6 +185,15 @@ source SMQawa/call_host.sh
 # To get dasgoclient
 export PATH=\$PATH:/cvmfs/cms.cern.ch/common
 export PYTHONPATH=\$INSTALL_LOC.env/bin
+
+# ssh inside the container chokes on the image's /etc/ssh/ssh_config.d
+# ("Bad owner or permissions" under user namespaces) -> skip the system-wide
+# ssh config for git; user keys/agent and ~/.ssh/config still apply.
+if [ -f \$HOME/.ssh/config ]; then
+  export GIT_SSH_COMMAND="ssh -F \$HOME/.ssh/config"
+else
+  export GIT_SSH_COMMAND="ssh -F /dev/null"
+fi
 
 export XRDPARALLELEVTLOOP=16 #This might only work in development environments, but should increase the throughput...
 # export INSTALL_LOC=\$PWD/ #this could potentially be VIRTUAL_ENV, but creating that prior to activation may cause unforeseen problems... note TRAILING slash
