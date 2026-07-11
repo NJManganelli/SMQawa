@@ -26,7 +26,8 @@ fi
 if [[ "$2" == "lpc" ]]; then
     cat <<EOF >> shell
 # Needed to setup cluster for LPC
-export CONDOR_CONFIG=\$INSTALL_LOC.condor_config
+# Real absolute path (valid host-side and in-container), not /srv -- see lxplus branch.
+export CONDOR_CONFIG=\$(readlink -f \$PWD)/.condor_config
 export APPTAINERENV_CONDOR_CONFIG=\$CONDOR_CONFIG
 grep -v '^include' /etc/condor/config.d/01_cmslpc_interactive > .condor_config
 
@@ -51,11 +52,14 @@ if [ -n "\$SCHEDD_NAME" ]; then
   condor_status -schedd "\$SCHEDD_NAME" -af MyAddress 2>/dev/null | head -1 > .schedd_address
   condor_status -schedd "\$SCHEDD_NAME" -af CondorVersion 2>/dev/null | head -1 >> .schedd_address
   if [ -s .schedd_address ]; then
-    echo "SCHEDD_ADDRESS_FILE = \${INSTALL_LOC}.schedd_address" >> .condor_config
+    echo "SCHEDD_ADDRESS_FILE = \$(readlink -f \$PWD)/.schedd_address" >> .condor_config
   fi
 fi
 
-export CONDOR_CONFIG=\$INSTALL_LOC.condor_config
+# Use the real absolute path, NOT \$INSTALL_LOC (/srv): the workdir is bound at
+# its own path inside the container too, so this value is valid on the host
+# (call_host shims, condor CLI outside) AND in-container alike.
+export CONDOR_CONFIG=\$(readlink -f \$PWD)/.condor_config
 export APPTAINERENV_CONDOR_CONFIG=\$CONDOR_CONFIG
 
 # HTCondor auth at CERN is Kerberos, and KEYRING ccaches (lxplus default) are
