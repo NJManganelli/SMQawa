@@ -28,11 +28,12 @@ def validate_input_file(nanofile):
     pfn = nanofile
     pfn=re.sub("\n","",pfn)
     aliases = [
-        "root://cms-xrd-global.cern.ch/",
         "root://eoscms.cern.ch/",
+        "root://cmsxrootd.fnal.gov/"
+        "root://cms-xrd-global.cern.ch/",
         "root://xrootd-cms.infn.it/",
         "root://cms-xrd-global.cern.ch/",
-        "root://cmsxrootd.fnal.gov/"
+        
     ]
 
     valid = False
@@ -67,6 +68,8 @@ def main():
     parser.add_argument("--zzdd"     , type=str, default="onlySR"         , help="For vbs-ZZ and/or inc-ZZ analyses DataDriven",
                         choices=["onlySR", "DYSR", "MC"])
     parser.add_argument("--split_by_charge", action='store_true'          , help="split templates by tau charge")
+    parser.add_argument("--split_FV", action='store_true'          , help="split signal into IFV and OFV")
+    parser.add_argument("--pol", action='store_true'          , help="Fill the histogram with polarization weights")
     parser.add_argument('--executor' , type=str, default="FuturesExecutor", help="Executor to use, one of IterativeExecutor (good for debugging), FuturesExecutor (multithreaded), or other coffea option")
     parser.add_argument('--copyInput', action='store_true'     , help="xrdcp a file to the worker node before executing the coffea processor on it")
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
@@ -163,35 +166,20 @@ def main():
             else:
                 file_name = options.infile 
 
-            metadata = {
-                'era': era,
-                'is_data': is_data
-            }
-            runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
-            runs_samples ={
-                options.dataset:{
-                    'files': runs_files,
-                    'metadata': metadata
-                }
-            }
-            events_files = {fn: "Events" for fn in runs_files.keys()}
-            events_samples ={
-                options.dataset:{
-                    'files': events_files,
-                    'metadata': metadata
-                }
-            }
-            sumw_runner = processor.Runner(
-                executor=executor,
-                schema=BaseSchema,
-                format="root",
-                savemetrics=True,
-            )
-            sumw_out, sumw_metrics = sumw_runner(
-                runs_samples,
-                processor_instance=coffea_sumw(),
-            )
             
+            if options.maxChunks > 0:
+                coffea_console.print("WARNING: maxChunks will limit processing of MC or data, "
+                      "for MC the normalization will not be stored for the number of events processed and the scaling will be incorrect, ",
+                      "for data there will similarly not be an appropriate scaling of MC to match the processed luminosity in data."
+                      )
+
+            if is_data:
+                if 'Run20' in options.infile:
+                    options.runperiod = auto_runperiod.replace(f'Run{options.era}','')
+            else:
+                options.runperiod = ''
+
+
             ewk_flag = None
             if "ZZTo" in options.infile and "GluGluTo" not in options.infile and "ZZJJ" not in options.infile:
                 ewk_flag= 'ZZ'
@@ -202,47 +190,23 @@ def main():
                 dy_flag = True
 
             # extarct the run period
-            if is_data:
-                if 'Run20' in options.infile:
-                    options.runperiod = auto_runperiod.replace(f'Run{options.era}','')
-            else:
-                options.runperiod = ''
-
-            coffea_console.print(
-                f"""---------------------------
-                -- options   = {options}
-                -- analysis  = {options.analysis}
-                -- isMC      = {options.isMC}
-                -- split_by_charge = {options.split_by_charge}
-                -- jobNum    = {options.jobNum}
-                -- era       = {options.era}
-                -- infile    = {options.infile}
-                --> {list(events_files.keys())[0]}
-                -- dataset   = {options.dataset}
-                -- period    = {options.runperiod}
-                -- version   = {auto_ver}
-                -- executor  = {options.executor}
-                -- copyInput = {options.copyInput}
-                -- maxChunks = {options.maxChunks if options.maxChunks > 0 else "None"}
-                -- zzdd    = {options.zzdd if options.analysis in ['vbs-ZZ', 'inc-ZZ'] else 'N/A'}
-
-                ---------------------------"""
-            )
-            if options.maxChunks > 0:
-                coffea_console.print("WARNING: maxChunks will limit processing of MC or data, "
-                      "for MC the normalization will not be stored for the number of events processed and the scaling will be incorrect, ",
-                      "for data there will similarly not be an appropriate scaling of MC to match the processed luminosity in data."
-                      )
+            
+            
+            
+            is_signal = None
             if options.analysis in ["inc-WZ"]:
                 from qawa.process.wztau2lnu_inclusive import wzinclusive_processor
                 coffea_console.print(" --- wztau2lnu_inclusive main code processor ... ")
                 proc_configured = wzinclusive_processor(
                     era=options.era,
                     split_by_charge = options.split_by_charge,
+                    split_FV = options.split_FV,
+                    pol = options.pol,
                     ewk_process_name=ewk_flag,
                     run_period=options.runperiod if is_data else '',
                     version=auto_ver,
                 )
+                is_signal = True if ('WZto3LNu' in options.dataset or 'WZTo3LNu' in options.dataset) else False
             elif options.analysis in ["inc-WZ-Fxsec"]:
                 from qawa.process.Fxsec import wzinclusive_processor 
                 coffea_console.print(" --- wztau2lnu_inclusive FV Xsec processor ... ")
@@ -283,10 +247,63 @@ def main():
             else:
                 raise NotImplementedError(f"{options.analysis} does not have hooks for loading a processor, please update the code to point appropriately to it, along with any necessary init configuration options.")
 
+            metadata = {
+                'era': era,
+                'is_data': is_data,
+                'is_signal': is_signal,
+            }
+            runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
+            runs_samples ={
+                options.dataset:{
+                    'files': runs_files,
+                    'metadata': metadata
+                }
+            }
+            events_files = {fn: "Events" for fn in runs_files.keys()}
+            events_samples ={
+                options.dataset:{
+                    'files': events_files,
+                    'metadata': metadata
+                }
+            }
+            sumw_runner = processor.Runner(
+                executor=executor,
+                schema=BaseSchema,
+                format="root",
+                savemetrics=True,
+            )
+            sumw_out, sumw_metrics = sumw_runner(
+                runs_samples,
+                processor_instance=coffea_sumw(),
+            )
+
+            coffea_console.print(
+                f"""---------------------------
+                -- options   = {options}
+                -- analysis  = {options.analysis}
+                -- isMC      = {options.isMC}
+                -- split_by_charge = {options.split_by_charge}
+                -- split_FV = {options.split_FV}
+                -- pol      = {options.pol}
+                -- jobNum    = {options.jobNum}
+                -- era       = {options.era}
+                -- infile    = {options.infile}
+                --> {list(events_files.keys())[0]}
+                -- dataset   = {options.dataset}
+                -- period    = {options.runperiod}
+                -- version   = {auto_ver}
+                -- executor  = {options.executor}
+                -- copyInput = {options.copyInput}
+                -- maxChunks = {options.maxChunks if options.maxChunks > 0 else "None"}
+                -- zzdd    = {options.zzdd if options.analysis in ['vbs-ZZ', 'inc-ZZ'] else 'N/A'}
+
+                ---------------------------"""
+            )
+
             events_runner = processor.Runner(
                 executor=executor,
                 schema=NanoAODSchema,
-                chunksize=100000,
+                chunksize=50000,
                 maxchunks = options.maxChunks if options.maxChunks > 0 else None,
                 format="root",
                 savemetrics=True
