@@ -473,10 +473,13 @@ class LeptonScaleFactors:
                 }
 
     def append_lepton_sf(self, lead_lep, subl_lep, weights):
+        _ones = ak.ones_like(lead_lep.nominal)
+        _nom = lead_lep.nominal*subl_lep.nominal
+        weights.add("Lep_nom", _nom)
         for key in ["eff_m_id", "eff_m_iso", "eff_e_reco", "eff_e_id"]:
             weights.add(
                 key,
-                lead_lep.nominal*subl_lep.nominal,
-                getattr(lead_lep, f"{key}Up") * getattr(subl_lep, f"{key}Up"),
-                getattr(lead_lep, f"{key}Down") * getattr(subl_lep, f"{key}Down"),
+                _ones, #we don't add the central value more than once
+                getattr(lead_lep, f"{key}Up") * getattr(subl_lep, f"{key}Up")/_nom, #we cancel out the nominal value through the division
+                getattr(lead_lep, f"{key}Down") * getattr(subl_lep, f"{key}Down")/_nom, #we cancel out the nominal value through the division
             )

@@ -51,10 +51,32 @@ _runIII_v15_pogs_tags_pogtags_csets = (
     ("TAU", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-01-14", "tau.json.gz"),
 )
 _runII_v15_pogs_tags_pogtags_csets = (
+    ("LUM", "Run2-2016postVFP-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
+    ("LUM", "Run2-2016preVFP-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
+    ("LUM", "Run2-2017-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
+    ("LUM", "Run2-2018-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
+
     ("BTV", "Run2-2016preVFP-UL-NanoAODv15", "add_btagging_wps", "btagging.json.gz"),
     ("BTV", "Run2-2016postVFP-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
     ("BTV", "Run2-2017-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
     ("BTV", "Run2-2018-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
+
+    ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
+    ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
+    # ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
+    ("JME", "Run2-2016postVFP-UL-NanoAODv15", "22026-06-05", "met.json.gz"),
+    ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
+    ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
+    # ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
+    ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-051", "met.json.gz"),
+    ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
+    ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
+    # ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
+    ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
+    ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
+    ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
+    # ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
+    ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
 
     ("EGM", "Run2-2016preVFP-UL-NanoAODv15", "2025-12-05", "electron.json.gz"),
     ("EGM", "Run2-2016preVFP-UL-NanoAODv15", "2025-12-05", "electronSS_EtDependent.json.gz"),
@@ -72,6 +94,15 @@ _runII_v15_pogs_tags_pogtags_csets = (
     ("EGM", "Run2-2018-UL-NanoAODv15", "2025-12-05", "electronSS_EtDependent.json.gz"),
     ("EGM", "Run2-2018-UL-NanoAODv15", "2025-12-05", "photon.json.gz"),
     ("EGM", "Run2-2018-UL-NanoAODv15", "2025-12-05", "photonSS_EtDependent.json.gz"),
+
+    ("MUO", "Run2-2016postVFP-UL-NanoAODv9", "2024-07-02", "muon_JPsi.json.gz"),
+    ("MUO", "Run2-2016postVFP-UL-NanoAODv9", "2024-07-02", "muon_Z.json.gz"),
+    ("MUO", "Run2-2016preVFP-UL-NanoAODv9", "2024-07-02", "muon_JPsi.json.gz"),
+    ("MUO", "Run2-2016preVFP-UL-NanoAODv9", "2024-07-02", "muon_Z.json.gz"),
+    ("MUO", "Run2-2017-UL-NanoAODv9", "2024-07-02", "muon_JPsi.json.gz"),
+    ("MUO", "Run2-2017-UL-NanoAODv9", "2024-07-02", "muon_Z.json.gz"),
+    ("MUO", "Run2-2018-UL-NanoAODv9", "2024-07-02", "muon_JPsi.json.gz"),
+    ("MUO", "Run2-2018-UL-NanoAODv9", "2024-07-02", "muon_Z.json.gz"),
     
     ("TAU", "Run2-2016postVFP-UL-NanoAODv15", "2025-11-27", "tau.json.gz"),
     ("TAU", "Run2-2016preVFP-UL-NanoAODv15", "2025-11-27", "tau.json.gz"),
@@ -193,7 +224,7 @@ class CorrectionlibHandler:
 
     def _loadCentralPaths(self):
         pogs_tags_pogtags_csets = None
-        if self._era in ["2016", "2017", "2018", "2018"]:
+        if self._era in ["2016", "2017", "2018"]:
             if self._ver == "v15":
                 pogs_tags_pogtags_csets = _runII_v15_pogs_tags_pogtags_csets
             elif self._ver == "v9":
@@ -223,7 +254,14 @@ class CorrectionlibHandler:
             if self._subera is not None and self._subera not in tag:
                 continue
             if f"NanoAOD{self._ver}" not in tag:
-                continue
+                if pog == "LUM" and self._era in ["2016", "2017", "2018"]:
+                    # exception for no PU reweighting for v15 Run2
+                    pass
+                if pog == "MUO" and self._era in ["2016", "2017", "2018"]:
+                    # exception for no PU reweighting for v15 Run2
+                    pass
+                else:
+                    continue
             path = self._poghead / pog / tag / pogtag / cset
             if path.exists():
                 key = cset.split(".")[0] if "." in cset else cset # strip filetype/compression
@@ -245,7 +283,7 @@ class CorrectionlibHandler:
             match self._era:
                 case "2024":
                     # PLACEHOLDER - once Run 3 dddy (2024 only to start with) is derived, replace with Run3/...Run3.json
-                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run3" / "WZ_inclusive_data_driven_Run3.json"
                     self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
                 # Correctionlib conversions of the legacy ROOT trigger SFs
                 # (histo_triggerEff_sel0_<era>.root), produced by
