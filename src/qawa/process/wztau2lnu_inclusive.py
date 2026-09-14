@@ -35,6 +35,7 @@ from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, th
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
 from qawa.flashsim_shim import patch_flashsim
+from qawa.eft_weights import points_from_events, stack_named_weights
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -121,6 +122,22 @@ def _wh(*axes):
     return hist.Hist(
         hist.axis.StrCategory([], name="channel", growth=True),
         hist.axis.StrCategory([], name="systematic", growth=True),
+        *axes,
+        hist.storage.Weight(),
+    )
+
+
+def _wh_eft(*axes):
+    """As _wh, plus an `eft` axis holding one entry per SMEFT structure constant.
+
+    Created as a SEPARATE histogram (key `<var>_eft`) rather than by adding an
+    axis to the standard ones, so that samples without EFT weights -- and every
+    existing DCTools config -- are completely unaffected.
+    """
+    return hist.Hist(
+        hist.axis.StrCategory([], name="channel", growth=True),
+        hist.axis.StrCategory([], name="systematic", growth=True),
+        hist.axis.StrCategory([], name="eft", growth=True),
         *axes,
         hist.storage.Weight(),
     )
@@ -983,7 +1000,29 @@ class wzinclusive_processor(processor.ProcessorABC):
                 histos = self.build_histos_pol()
         else:
             histos = self.build_histos()
-        
+
+        # SMEFT structure constants, if this sample carries EFT reweighting.
+        # Auto-detected from the named LHEWeight_<point> branches, so it is
+        # independent of how the sample was simulated -- FlashSim, FullSim and
+        # NanoGEN all take the same path, and samples sharing a parameterisation
+        # can be combined downstream.  Samples without EFT weights are untouched.
+        eft_theta = None
+        if not is_data:
+            eft_par, eft_points = points_from_events(event)
+            if eft_par is not None:
+                theta = eft_par.decompose(stack_named_weights(event, eft_points))
+                problems = eft_par.validate(theta)
+                if problems and self._process_shift_warnings:
+                    for p in problems:
+                        coffea_console.print(f"[red][EFT] {p}[/red]")
+                active = eft_par.active_terms(theta)
+                eft_theta = {t: theta[:, eft_par.terms.index(t)] for t in active}
+                if self._process_shift_warnings:
+                    coffea_console.print(
+                        f"[green][EFT][/green] {eft_par} -> {len(active)} active terms "
+                        f"({len(eft_par.terms) - len(active)} null): {', '.join(active)}"
+                    )
+
         if is_data:
             selection.add('lumimask', self._lumimask(event.run, event.luminosityBlock))
             selection.add('triggers', trigger_rules(event, self._triggers, self._era))
@@ -1789,6 +1828,31 @@ class wzinclusive_processor(processor.ProcessorABC):
                 weight = weight * _weight[cut]
 
             fill_var = _format_variable(event[var], cut)
+
+            # SMEFT structure constants.  Both the EFT decomposition and the
+            # systematic weight are per-event multiplicative factors, so filling
+            # with their product is exact -- no approximation that the systematic
+            # is EFT-independent.  That matters here because cW is energy-growing
+            # and the JES/tau-ES uncertainties grow with pT, so the relative
+            # effect of a systematic genuinely differs between the SM and
+            # quadratic templates in the tail where the sensitivity sits.
+            if eft_theta is not None:
+                eft_key = var + "_eft"
+                if eft_key not in histos:
+                    # lazily cloned from the nominal histogram's value axes, so
+                    # only variables actually filled get an EFT counterpart
+                    histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
+                w_eft = ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
+                for term, col in eft_theta.items():
+                    histos[eft_key].fill(
+                        **{
+                            "channel": ch,
+                            "systematic": systname,
+                            "eft": term,
+                            var: fill_var,
+                            "weight": w_eft * col[cut],
+                        }
+                    )
 
             if pol_weights is None:
                 histos[var].fill(
