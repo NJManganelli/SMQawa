@@ -15,6 +15,11 @@ collections.
 The patches are NOT all equal in quality.  ``PatchReport.surrogates`` lists the
 ones that invent information rather than recover it; those must be understood
 before any result derived from them is trusted.  See ``FLASHSIM_CAVEATS``.
+
+SEPARATE PROBLEM, EARLIER IN THE CHAIN: a FlashSim file cannot be READ by stock
+uproot at all -- 332 of 671 branches raise UnboundLocalError before any of this
+module runs.  See ``qawa.uproot_float16_patch``; it must be enabled at the point
+the file is opened, not here.
 """
 
 from __future__ import annotations
