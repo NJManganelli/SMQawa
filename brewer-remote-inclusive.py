@@ -65,6 +65,7 @@ def main():
     parser.add_argument('--infile'   , type=str, default=None             , help="input root file")
     parser.add_argument('--dataset'  , type=str, default=None             , help="dataset name. need to specify if file is not in EOS")
     parser.add_argument('--runperiod', type=str, default=None             , help="run period, can be auto-parse if full dataset paths are utilized")
+    parser.add_argument('--version'  , type=str, default=None             , help="NanoAOD version (e.g. v15) override, for files whose path does not encode it -- local files, private production, FlashSim output")
     parser.add_argument("--zzdd"     , type=str, default="onlySR"         , help="For vbs-ZZ and/or inc-ZZ analyses DataDriven",
                         choices=["onlySR", "DYSR", "MC"])
     parser.add_argument("--split_by_charge", action='store_true'          , help="split templates by tau charge")
@@ -79,7 +80,9 @@ def main():
     auto_isMC = None  #if neither data or mc tag is found, keep as None
     auto_dataset = None
     auto_runperiod = ""
-    auto_ver = nanoaod_version(options.infile)
+    # An explicit --version wins: nanoaod_version() parses the tier out of a
+    # /store/ path, which private and FlashSim outputs do not have.
+    auto_ver = options.version or nanoaod_version(options.infile)
     if "NANOAODSIM" in split_args:
         auto_isMC = True
     elif "NANOAOD" in split_args:
@@ -247,10 +250,25 @@ def main():
             else:
                 raise NotImplementedError(f"{options.analysis} does not have hooks for loading a processor, please update the code to point appropriately to it, along with any necessary init configuration options.")
 
+            # FlashSim samples are flagged by dataset name. Two things follow:
+            # the processor needs the field shim (metadata), and uproot needs
+            # the Float16 read patch installed BEFORE the Runner opens any file
+            # -- 332 of 671 branches in a FlashSim NanoAOD are otherwise
+            # unreadable. The patch is opt-in so non-FlashSim jobs keep stock
+            # uproot behaviour and stock uproot errors.
+            is_flashsim = 'flashsim' in options.dataset.lower()
+            if is_flashsim:
+                from qawa import uproot_float16_patch
+                if uproot_float16_patch.enable():
+                    coffea_console.print(
+                        "[yellow]FlashSim sample: uproot jagged-Float16 read patch enabled[/yellow]"
+                    )
+
             metadata = {
                 'era': era,
                 'is_data': is_data,
                 'is_signal': is_signal,
+                'is_flashsim': is_flashsim,
             }
             runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
             runs_samples ={
@@ -301,10 +319,18 @@ def main():
                 ---------------------------"""
             )
 
+            # FlashSim needs a schema that tolerates its orphan counter
+            # branches (nFakeJets / nSVFromPU have nothing behind them, and
+            # stock NanoAODSchema dies building a collection for them).
+            events_schema = NanoAODSchema
+            if is_flashsim:
+                from qawa.flashsim_shim import flashsim_schema
+                events_schema = flashsim_schema()
+
             events_runner = processor.Runner(
                 executor=executor,
-                schema=NanoAODSchema,
-                # chunksize=50000,
+                schema=events_schema,
+                chunksize=50000,
                 maxchunks = options.maxChunks if options.maxChunks > 0 else None,
                 format="root",
                 savemetrics=True

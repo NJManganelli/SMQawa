@@ -182,6 +182,73 @@ def _tau_gen_part_flav(event, dr_max=0.3):
     return ak.values_astype(flav, np.uint8)
 
 
+def flashsim_schema():
+    """NanoAODSchema subclass tolerant of two FlashSim output defects.
+
+    Both kill the read in coffea's ``_build_collections`` with
+
+        KeyError: 'content'   (nanoaod.py)
+
+    before any analysis code runs, so neither can be handled downstream.
+
+    (a) ORPHAN COUNTERS.  ``nFakeJets`` and ``nSVFromPU`` are emitted with no
+        ``FakeJets_*`` / ``SVFromPU_*`` fields and no same-named array branch.
+        Note ``nLHEPdfWeight``, ``nPSWeight``, ``nLHEScaleWeight`` and
+        ``nLHEReweightingWeight`` are NOT orphans -- each has an array branch of
+        the same name minus the ``n`` -- and are left alone.
+
+    (b) MIXED JAGGED/SCALAR COLLECTIONS.  FlashSim writes the ``PVBS``
+        collection twice over: a jagged copy indexed by the counter
+        (``PVBS_x[nPVBS]``) AND a scalar copy of every field alongside it
+        (``PVBS_x_scalar``).  coffea sees ``nPVBS``, builds offsets, and tries
+        to zip the whole collection as jagged; the scalar members make
+        ``zip_forms`` return a bare RecordArray with no ``content``.  The
+        ``_scalar`` duplicates look like writer scaffolding that should not
+        have been emitted.  Dropped here; nothing in the analysis reads PVBS.
+
+    Both rules are written generically against the form rather than against
+    those branch names, so FlashSim output gaining or losing such branches
+    needs no change here.
+    """
+    import re as _re
+
+    from coffea.nanoevents import NanoAODSchema
+
+    def _is_list(content):
+        return "list" in str(content.get("class", "")).lower()
+
+    class FlashSimNanoAODSchema(NanoAODSchema):
+        def __init__(self, base_form, *args, **kwargs):
+            fields = list(base_form["fields"])
+            contents = list(base_form["contents"])
+            counted = {f[1:] for f in fields if _re.match(r"^n[A-Z]", f)}
+
+            keep, dropped_orphans, dropped_scalars = [], [], []
+            for i, f in enumerate(fields):
+                # (a) a counter that counts nothing
+                if _re.match(r"^n[A-Z]", f):
+                    name = f[1:]
+                    if not any(g == name or g.startswith(name + "_") for g in fields):
+                        dropped_orphans.append(f)
+                        continue
+                # (b) a non-jagged member of a counted collection
+                head = f.split("_")[0]
+                if head in counted and "_" in f and not _is_list(contents[i]):
+                    dropped_scalars.append(f)
+                    continue
+                keep.append(i)
+
+            if dropped_orphans or dropped_scalars:
+                base_form = dict(base_form)
+                base_form["fields"] = [fields[i] for i in keep]
+                base_form["contents"] = [contents[i] for i in keep]
+            self.dropped_orphan_counters = dropped_orphans
+            self.dropped_scalar_members = dropped_scalars
+            super().__init__(base_form, *args, **kwargs)
+
+    return FlashSimNanoAODSchema
+
+
 def patch_flashsim(event, era, mva_wp=None, tau_match_dr=0.3, verbose=True):
     """Add NanoAOD fields absent from a FlashSim file.  Returns (event, report).
 
