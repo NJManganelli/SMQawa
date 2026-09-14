@@ -34,6 +34,7 @@ from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
+from qawa.flashsim_shim import patch_flashsim
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -1961,7 +1962,18 @@ class wzinclusive_processor(processor.ProcessorABC):
         dataset_name = event.metadata['dataset']
         is_data = event.metadata.get("is_data")
         is_signal = event.metadata.get("is_signal")
+        is_flashsim = event.metadata.get("is_flashsim", False)
 
+        # FlashSim emits only the collections its generative models were trained
+        # on.  Inject the NanoAOD fields the selection needs before anything
+        # touches them.  Purely additive and guarded field-by-field, so this
+        # degrades to a no-op as the FlashSim outputs grow -- see
+        # qawa/flashsim_shim.py FLASHSIM_CAVEATS for what is surrogate rather
+        # than recovered.
+        if is_flashsim:
+            event, _ = patch_flashsim(
+                event, self._era, verbose=self._process_shift_warnings
+            )
 
         # JES/JER corrections
         Rho = event.Rho.fixedGridRhoFastjetAll if "Rho" in event.fields else event.fixedGridRhoFastjetAll # if self._ver in [f"v{V}" for V in range(12)]
