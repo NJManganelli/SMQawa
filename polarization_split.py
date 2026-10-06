@@ -1,4 +1,19 @@
 """
+Split the WZ polarization templates into standalone DCTools datasets.
+
+Six boson combinations x three helicity states = 18 templates:
+
+    boson   observable            weight prefix   meaning
+    W       qcos_theta_w_reco     wZW             W polarization, inclusive WZ
+    Wp      cos_theta_wp_reco     wZWp            W+ polarization
+    Wm      cos_theta_wm_reco     wZWm            W- polarization
+    Z       cos_theta_z_reco      wWZ             Z polarization, inclusive WZ
+    Z_WpZ   cos_theta_wpz_reco    wWpZ            Z polarization in W+Z
+    Z_WmZ   cos_theta_wmz_reco    wWmZ            Z polarization in W-Z
+
+Each template <obs>_<wpref>_<pol> (pol = long, left, right) is written as its
+own dataset <wz_dataset>_<boson>_<pol>, holding one histogram under the key <obs>.
+
 Usage
 -----
 python polarization_split.py -i merged.pkl.gz -o merged_polsplit.pkl.gz
@@ -10,16 +25,18 @@ import argparse
 import copy
 import gzip
 import pickle
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-# Default signal dataset key as it appears in the accumulator
-WZ_DATASET = "WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8"
+POLS = ("long", "left", "right")
 
+# boson -> observable and weight prefix, as named by qawa.polarization
 BOSON_CONFIG = {
-    "W":  dict(obs="qcos_theta_w_reco", wpref="wW"),
-    "Wp": dict(obs="cos_theta_wp_reco", wpref="wWp"),
-    "Wm": dict(obs="cos_theta_wm_reco", wpref="wWm"),
-    "Z":  dict(obs="cos_theta_z_reco",  wpref="wZ"),
+    "W":     dict(obs="qcos_theta_w_reco",  wpref="wZW"),
+    "Wp":    dict(obs="cos_theta_wp_reco",  wpref="wZWp"),
+    "Wm":    dict(obs="cos_theta_wm_reco",  wpref="wZWm"),
+    "Z":     dict(obs="cos_theta_z_reco",   wpref="wWZ"),
+    "Z_WpZ": dict(obs="cos_theta_wpz_reco", wpref="wWpZ"),
+    "Z_WmZ": dict(obs="cos_theta_wmz_reco", wpref="wWmZ"),
 }
 
 
@@ -27,43 +44,52 @@ def _template_key(obs: str, wpref: str, pol: str) -> str:
     return f"{obs}_{wpref}_{pol}"
 
 
+def _find_wz_dataset(accumulator: Dict) -> Optional[str]:
+    """The single WZ signal entry (Run 2 amcatnlo 'WZTo3LNu' or Run 3 powheg 'WZto3LNu')."""
+    cands = [k for k in accumulator
+             if k.startswith(("WZTo3LNu", "WZto3LNu")) and not k.endswith(POLS)]
+    return cands[0] if len(cands) == 1 else None
+
+
 def split_polarization_datasets(
     accumulator: Dict,
-    bosons: List[str] = ("W", "Wp", "Wm", "Z"),
-    wz_dataset: str = WZ_DATASET,
+    bosons: List[str] = tuple(BOSON_CONFIG),
+    wz_dataset: Optional[str] = None,
     keep_inclusive: bool = True,
     verbose: bool = True,
 ) -> Dict:
+    wz_dataset = wz_dataset or _find_wz_dataset(accumulator)
     if wz_dataset not in accumulator:
-        if verbose:
-            print(f"[pol-split] WZ dataset '{wz_dataset}' not in accumulator; "
-                  f"available: {list(accumulator.keys())[:5]}...")
-        return accumulator
+        raise KeyError(f"[pol-split] WZ dataset {wz_dataset!r} not found; "
+                       f"available: {list(accumulator)[:5]}... (pass --wz-dataset)")
 
     wz_entry = accumulator[wz_dataset]
     wz_hist_dict = wz_entry["hist"]
     wz_sumw = wz_entry["sumw"]
 
+    written, missing = 0, []
     for boson in bosons:
-        if boson not in BOSON_CONFIG:
-            if verbose:
-                print(f"[pol-split] unknown boson '{boson}', skipping")
-            continue
         cfg = BOSON_CONFIG[boson]
         obs, wpref = cfg["obs"], cfg["wpref"]
-        for pol in ("long", "left", "right"):
+        for pol in POLS:
             src_key = _template_key(obs, wpref, pol)
             if src_key not in wz_hist_dict:
-                if verbose:
-                    print(f"[pol-split] {boson}: missing template '{src_key}', skipping")
+                missing.append(src_key)
                 continue
             h = copy.deepcopy(wz_hist_dict[src_key])
             new_dataset = f"{wz_dataset}_{boson}_{pol}"
             accumulator[new_dataset] = {"hist": {obs: h}, "sumw": wz_sumw}
+            written += 1
             if verbose:
                 print(f"[pol-split] wrote {new_dataset}  (obs={obs}, from {src_key})")
 
-    if not keep_inclusive and wz_dataset in accumulator:
+    expected = len(bosons) * len(POLS)
+    if verbose:
+        print(f"[pol-split] {written}/{expected} templates written")
+    if missing:
+        raise KeyError(f"[pol-split] {len(missing)} template(s) missing from '{wz_dataset}': {missing}")
+
+    if not keep_inclusive:
         if verbose:
             print(f"[pol-split] dropping inclusive '{wz_dataset}'")
         del accumulator[wz_dataset]
@@ -76,9 +102,10 @@ def _main():
                                              "into standalone DCTools datasets.")
     ap.add_argument("-i", "--input", required=True, help="merged .pkl.gz")
     ap.add_argument("-o", "--output", required=True, help="output .pkl.gz")
-    ap.add_argument("-b", "--bosons", nargs="+", default=["W", "Wp", "Wm", "Z"],
-                    choices=["W", "Wp", "Wm", "Z"])
-    ap.add_argument("--wz-dataset", default=WZ_DATASET)
+    ap.add_argument("-b", "--bosons", nargs="+", default=list(BOSON_CONFIG),
+                    choices=list(BOSON_CONFIG))
+    ap.add_argument("--wz-dataset", default=None,
+                    help="signal dataset key (default: the single WZTo3LNu/WZto3LNu entry)")
     ap.add_argument("--drop-inclusive", action="store_true",
                     help="remove the original inclusive WZ dataset from output")
     args = ap.parse_args()
