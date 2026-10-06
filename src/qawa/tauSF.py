@@ -305,7 +305,7 @@ def tau_energy_scale(sink, events, tagger, wp_VSjet, wp_VSe, unc_type=None, is_c
         # enscale_nom = ak.where(ak.is_none(enscale_nom_with_none), taus.pt, enscale_nom_with_none)
         enscale_nom = ak.fill_none(enscale_nom_with_none, 1.0)
         taus["pt"] = enscale_nom * taus.pt_nanoaod
-        taus["mass"] = enscale_nom * taus.pt_nanoaod
+        taus["mass"] = enscale_nom * taus.mass_nanoaod #there was a bug in here we were using taus.pt_nanoaod
         events["Tau"] = ak.unflatten(taus, counts)
         return events
     else:
