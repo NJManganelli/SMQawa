@@ -101,7 +101,7 @@ def main():
         options.dataset = auto_dataset
     executor = None
     if options.executor == "FuturesExecutor":
-        executor = processor.FuturesExecutor(workers=8,)
+        executor = processor.FuturesExecutor()
     elif options.executor == "IterativeExecutor":
         executor = processor.IterativeExecutor()
     elif options.executor == "DaskExecutor":
@@ -282,6 +282,7 @@ def main():
                 -- options   = {options}
                 -- analysis  = {options.analysis}
                 -- isMC      = {options.isMC}
+                -- is_signal = {is_signal}
                 -- split_by_charge = {options.split_by_charge}
                 -- split_FV = {options.split_FV}
                 -- pol      = {options.pol}
@@ -303,7 +304,7 @@ def main():
             events_runner = processor.Runner(
                 executor=executor,
                 schema=NanoAODSchema,
-                chunksize=50000,
+                # chunksize=50000,
                 maxchunks = options.maxChunks if options.maxChunks > 0 else None,
                 format="root",
                 savemetrics=True
