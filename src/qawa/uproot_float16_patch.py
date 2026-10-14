@@ -51,6 +51,7 @@ FlashSim write plain ``/F`` like CMSSW NanoAOD does.
 
 from __future__ import annotations
 
+import os
 import re
 
 import uproot
@@ -166,3 +167,27 @@ def enable_if_needed(path, tree="Events"):
         enable()
         return True
     return False
+
+
+# --------------------------------------------------------------------------
+# Worker propagation.
+#
+# A monkeypatch installed in the parent process does NOT reach coffea's
+# FuturesExecutor workers: macOS spawns rather than forks, so each worker is a
+# fresh interpreter. Environment variables ARE inherited, so the parent sets
+# ENV_FLAG and every process that imports this module patches itself.
+#
+# The processor module imports this module unconditionally, and a worker must
+# import the processor to unpickle it, so the patch is in place before the
+# worker's first read. Without this, a FlashSim job under FuturesExecutor fails
+# in the worker with the very UnboundLocalError this module exists to prevent.
+ENV_FLAG = "QAWA_UPROOT_FLOAT16_PATCH"
+
+if os.environ.get(ENV_FLAG) == "1":
+    enable()
+
+
+def enable_for_workers():
+    """Enable here AND in any child process spawned from this one."""
+    os.environ[ENV_FLAG] = "1"
+    return enable()
