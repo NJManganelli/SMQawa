@@ -34,6 +34,10 @@ from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
+# imported unconditionally (not inside the is_flashsim branch): a spawned
+# FuturesExecutor worker imports this module to unpickle the processor, and
+# uproot_float16_patch self-enables from the environment at import time.
+from qawa import uproot_float16_patch  # noqa: F401
 from qawa.flashsim_shim import patch_flashsim
 from qawa.eft_weights import points_from_events, stack_named_weights
 
@@ -348,6 +352,26 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         (tau.pt         > 20 ) & 
         (np.abs(tau.eta) < tau_max_eta ) &
         (np.abs(tau.dz)< 0.2 ) &
+        # DM2 (1-prong + 2 pi0) is vetoed because the 2024 tau POG correction
+        # DROPPED SUPPORT FOR IT: TAU/Run3-24CDEReprocessingFGHIPrompt-Summer24-
+        # NanoAODv15/2025-12-25/tau.json.gz declares dm as "0, 1, 10, 11" and
+        # correctionlib RAISES
+        #     IndexError: Index not available in Category for input argument 1 val: 2
+        # from tauSF.getSF. The 2022 file still accepted dm=2 (aliased to the
+        # dm=1 value), so this is an era-specific regression, not a Run-2 issue.
+        #
+        # It is a RARE-EVENT LANDMINE, which is why it went unnoticed: DeepTau
+        # ID removes almost all DM2, leaving ~1 surviving tau per 200k-1M events
+        # (measured 2026-09-16: 0 in 200k for both WZ fullsim and WZ FlashSim,
+        # 1 in 200k for the EFT sample). One such tau kills the whole chunk and
+        # then the brewer's redirector-retry loop burns hours re-failing it.
+        #
+        # Cost of the veto is ~0.005% of selected taus. The alternative --
+        # mapping dm=2 -> dm=1 inside tauSF -- is what the POG themselves did
+        # (SF(dm=2) is bit-identical to SF(dm=1) at every pt/genmatch/wp probed
+        # in the 2022 file) and would keep those events, but it changes shared
+        # correction code rather than this analysis's own selection.
+        (tau.decayMode != 2   ) &
         (tau.decayMode != 5   ) &
         (tau.decayMode != 6   ) &
         tau_e_subid & tau_mu_subid & tau_j_subid
@@ -672,6 +696,33 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
             'taus_eta': _wh(
                 hist.axis.Regular(50, -5, 5, name="taus_eta", label=r"$\eta(\tau)$"),
+            ),
+            'tau_pol': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol", label=r"$\Upsilon_{\tau}$"),
+            ),
+            'tau_pol_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            ),
+            'tau_pol_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            ),
+            'tau_pol_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            ),
+            'tau_pol_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            ),
+            # Upsilon vs tau pT, for extracting the fixed-helicity decay templates
+            # T_h(Upsilon | pT).  The pT edges are the data-driven fake-rate bins
+            # from data/dd/2024/WZ_inclusive_data_driven_2024.json, whose last bin
+            # uses flow='clamp' -- so 100 is effectively infinity and the top bin
+            # here runs 100-600 rather than stopping at 110.
+            # Axis names MUST stay 'tau_pol' / 'tau_pt_vtight': _hist2d_filler
+            # looks the values up as event[xvar], event[yvar].
+            'tau_pol_vs_tau_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_pol", label=r"$\Upsilon_{\tau}$"),
+                hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
+                                   name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV)"),
             ),
             'taus_phi': _wh(
                 hist.axis.Regular(50, -np.pi, np.pi, name="taus_phi", label=r"$\phi(\tau)$"),
@@ -1250,6 +1301,80 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         tau_pt_vtight = lead_tau_vtight.pt
         tau_pt_tight = lead_tau_tight.pt
+
+        # ---- tau polarisation ------------------------------------------------
+        # Upsilon = 2*(pT of leading charged track / pT of visible tau) - 1, in
+        # [-1,1]. For tau -> rho nu the tau helicity fixes the rho's longitudinal
+        # /transverse mix, which shows up as the charged/neutral energy sharing:
+        # longitudinal gives asymmetric sharing (|Upsilon| large), transverse gives
+        # even sharing (Upsilon ~ 0).
+        #
+        # Built ONLY from visible decay products, deliberately. W -> tau nu carries
+        # the tau's own neutrino on top of the W's, so the tau rest frame is NOT
+        # reconstructible in this final state and every rest-frame angular method
+        # is unavailable. This one still works.
+        #
+        # DECAY MODE 0 IS EXCLUDED. For 1-prong-0-pi0 the visible tau IS the single
+        # charged pion, so leadTkPtOverTauPt == 1 identically -- no information --
+        # yet DM0 is ~66% of reconstructed taus, so including it buries the signal
+        # under a delta function at +1.
+        #
+        # Why the tau dipoles need this at all: ceWRe33/ceBRe33 are chirality
+        # flipping, so they do not interfere with the SM (measured: lin_ceWRe33 and
+        # lin_ceBRe33 are identically zero in the 15-point decomposition). Their
+        # signature is a change in tau POLARISATION, not in rate or in ordinary
+        # kinematics.
+        #
+        # FlashSim closure on 1.05M paired events (2026-09-15), <leadTkPtOverTauPt>
+        # flash/fullsim after DeepTau>=5 & pt>20: DM1 0.5038/0.4943,
+        # DM10 0.5630/0.5542, DM11 0.4149/0.4012 -- 2-3% in the informative modes.
+        # ONE-PRONG ONLY. Both published ATLAS measurements that use this
+        # observable require exactly one charged track:
+        #   W->tau nu, 7 TeV   arXiv:1204.6720  (first tau polarisation
+        #                      measurement at a hadron collider, P_tau =
+        #                      -1.06 +- 0.04 (stat) +0.05/-0.07 (syst))
+        #   Z/gamma*->tautau, 8 TeV  arXiv:1709.03490
+        # both defining  Upsilon = 2*pT(track)/ET(tau_had-vis) - 1, which is
+        # exactly 2*leadTkPtOverTauPt - 1 with NanoAOD's visible Tau_pt.
+        #
+        # For a 3-prong decay the "leading track" is one of three charged
+        # pions, so the charged/neutral energy asymmetry that Upsilon encodes
+        # does not exist and the variable has no polarimeter interpretation.
+        # An earlier version of this code included DM10/DM11 -- that was wrong.
+        # Extracting polarisation from 3-prong needs the a1 polarimeter vector
+        # (individual pion 4-vectors, absent from NanoAOD) or the impact-
+        # parameter / refit-SV route used by the H->tautau CP analyses.
+        #
+        # DM0 (h+-nu) is 1-prong and IS kept by ATLAS, but the track is the
+        # whole visible tau so Upsilon == 1 identically and it carries no shape
+        # information; ATLAS notes its selection deliberately suppresses DM0.
+        # Here it is vetoed outright, which is the limit of that suppression:
+        # it removes a delta function at +1 that would otherwise dominate the
+        # histogram. Cost: DM0's polarisation-dependent ACCEPTANCE is a real
+        # (if weak) handle in ATLAS and is given up by vetoing.
+        # DM2 (1-prong 2pi0) is also valid for Upsilon and ATLAS includes it,
+        # but it is already vetoed upstream in build_htaus because the 2024 tau
+        # correction cannot evaluate it -- see the comment there.
+        # What remains is DM1, which arXiv:1709.03490 states "contributes most
+        # of the polarisation sensitivity" anyway.
+        tau_pol_raw = 2.0 * lead_tau_vtight.leadTkPtOverTauPt - 1.0
+        tau_pol_ok  = ak.fill_none(lead_tau_vtight.decayMode == 1, False)
+        tau_pol     = ak.where(tau_pol_ok, tau_pol_raw, -99.0)
+
+        # pT-binned copies: the analysing power and the EFT effect both grow with
+        # tau energy, so one inclusive histogram averages a strong bin against a
+        # weak one. Out-of-bin events go to the -99 sentinel this processor already
+        # uses for "not defined", landing in the underflow of the [-1,1] axis.
+        # Done by VALUE rather than by routing a mask through _histogram_filler's
+        # weight argument, so the systematic variations are preserved.
+        def _tau_pol_in(lo, hi):
+            m = ak.fill_none((tau_pt_vtight > lo) & (tau_pt_vtight < hi), False) & tau_pol_ok
+            return ak.where(m, tau_pol_raw, -99.0)
+
+        tau_pol_pt20to40   = _tau_pol_in(20.,  40.)
+        tau_pol_pt40to60   = _tau_pol_in(40.,  60.)
+        tau_pol_pt60to100  = _tau_pol_in(60., 100.)
+        tau_pol_pt100toInf = _tau_pol_in(100., 1e9)
         taus_eta = lead_tau_vtight.eta
         taus_phi = lead_tau_vtight.phi
         tau_E = lead_tau_vtight.E
@@ -1590,6 +1715,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         event['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
         event['taus_phi'] = ak.fill_none(taus_phi,-99)
         event['taus_eta'] = ak.fill_none(taus_eta,-99)
+        event['tau_pol'] = ak.fill_none(tau_pol,-99)
+        event['tau_pol_pt20to40'] = ak.fill_none(tau_pol_pt20to40,-99)
+        event['tau_pol_pt40to60'] = ak.fill_none(tau_pol_pt40to60,-99)
+        event['tau_pol_pt60to100'] = ak.fill_none(tau_pol_pt60to100,-99)
+        event['tau_pol_pt100toInf'] = ak.fill_none(tau_pol_pt100toInf,-99)
         event['delta_R'] = ak.fill_none(delta_R,-99)
         event['dilep_dR'] = ak.fill_none(dilep_dR,-99)
         event['dilep_deta'] = ak.fill_none(dilep_deta,-99)
@@ -2019,6 +2149,18 @@ class wzinclusive_processor(processor.ProcessorABC):
                     _histogram_filler(ch, sys, 'tau_pt_tight')
                     _histogram_filler(ch, sys, 'taus_phi')
                     _histogram_filler(ch, sys, 'taus_eta')
+                    _histogram_filler(ch, sys, 'tau_pol')
+                    _histogram_filler(ch, sys, 'tau_pol_pt20to40')
+                    _histogram_filler(ch, sys, 'tau_pol_pt40to60')
+                    _histogram_filler(ch, sys, 'tau_pol_pt60to100')
+                    _histogram_filler(ch, sys, 'tau_pol_pt100toInf')
+                    # Nominal only: this is a CONDITIONAL shape P(Upsilon | pT),
+                    # i.e. decay physics. A systematic that moves the tau energy
+                    # scale moves events between pT bins, and that is already
+                    # carried by the systematic axis of tau_pol_eft / tau_pt_vtight_eft;
+                    # the conditional itself does not need 71 copies.
+                    if sys is None:
+                        _hist2d_filler(ch, None, 'tau_pol', 'tau_pt_vtight', 'tau_pol_vs_tau_pt')
                     _histogram_filler(ch, sys, 'tau_pt_loose')
                     _histogram_filler(ch, sys, 'taus_phi_loose')
                     _histogram_filler(ch, sys, 'taus_eta_loose')
