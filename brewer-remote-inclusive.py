@@ -56,13 +56,90 @@ def validate_input_file(nanofile):
             nanofile = aliases[-1] + pfn
     return nanofile
 
+
+def read_input_manifest(infile):
+    """Expand --infile into the list of ROOT paths to process.
+
+    A .txt argument is a manifest: one path per line, with blank lines and
+    '#' comments ignored. Anything else is a single ROOT file. Either way the
+    caller gets a list, so there is exactly one downstream code path.
+    """
+    if not infile:
+        raise ValueError("--infile is required")
+    if not infile.endswith(".txt"):
+        return [infile]
+    with open(infile) as manifest:
+        paths = [
+            line.strip() for line in manifest
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+    if not paths:
+        raise ValueError(f"--infile manifest {infile} listed no paths")
+    coffea_console.print(f"--infile is a manifest: {len(paths)} files from {infile}")
+    return paths
+
+
+def resolve_input_path(path, alias, copy_input):
+    """Map one input path to the name coffea should open.
+
+    A remote /store/ path gets the current redirector prepended; with
+    --copyInput an xrdcp-able path is first copied to a local temporary file
+    and that copy is opened instead. Falls back to the remote name if the copy
+    fails, so a bad local disk degrades to streaming rather than killing the
+    job.
+
+    A file that exists on local disk is always opened in place, even when it
+    sits under a mirrored /store/ tree -- testing os.path.isfile rather than
+    the '/store/' substring is what keeps local mirrors and site POSIX mounts
+    working, since their paths contain /store/ but must not be redirected.
+    """
+    remote_name = path
+    if path.startswith("root://") or path.startswith("file:"):
+        pass
+    elif os.path.isfile(path):
+        coffea_console.print(f"Opening local file in place: {path}")
+        return path
+    elif '/store/' in path:
+        remote_name = alias + path
+    else:
+        coffea_console.print(f"Skipping redirector prepending for file {remote_name}")
+
+    if not copy_input:
+        return remote_name
+    if not remote_name.startswith("root://"):
+        coffea_console.print(
+            f"--copyInput requested but {remote_name} does not start with root:// "
+            "and so is not xrdcp-able; opening it in place"
+        )
+        return remote_name
+    try:
+        local_name = str(tempfile.gettempdir()) + "/" + remote_name.split("//")[-1]
+        local_dir = os.path.dirname(local_name)
+        if not os.path.isdir(local_dir):
+            coffea_console.print(f"making directory... {local_dir}")
+            os.makedirs(local_dir, exist_ok=True)
+        if not os.path.isfile(local_name):
+            coffea_console.print(f"xrdcp file {remote_name} {local_name}")
+            os.system(f"xrdcp {remote_name} {local_name}")
+        if not os.path.isfile(local_name):
+            raise RuntimeError(
+                f"Failed to download the file locally for processing: {remote_name} -> {local_name}"
+            )
+        coffea_console.print(f"File loaded to local directory: {local_name}")
+        return local_name
+    except Exception as le:
+        coffea_console.print(le)
+        coffea_console.print(f"falling back to streaming {remote_name}")
+        return remote_name
+
+
 def main():
     parser = argparse.ArgumentParser("")
     parser.add_argument('--analysis' , type=str, default='inc-WZ'         , help="Processor name to apply to datasets, and parent folder for config files")
     parser.add_argument('--jobNum'   , type=int, default=1                , help="")
     parser.add_argument('--era'      , type=str, default="2018"           , help="")
     parser.add_argument('--isMC'     , type=int, default=1                , help="")
-    parser.add_argument('--infile'   , type=str, default=None             , help="input root file")
+    parser.add_argument('--infile'   , type=str, default=None             , help="input root file, OR a .txt manifest listing one root path per line. A manifest is processed as a SINGLE coffea fileset, so chunks parallelise across every file in it")
     parser.add_argument('--dataset'  , type=str, default=None             , help="dataset name. need to specify if file is not in EOS")
     parser.add_argument('--runperiod', type=str, default=None             , help="run period, can be auto-parse if full dataset paths are utilized")
     parser.add_argument('--version'  , type=str, default=None             , help="NanoAOD version (e.g. v15) override, for files whose path does not encode it -- local files, private production, FlashSim output")
@@ -76,13 +153,17 @@ def main():
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
 
     options = parser.parse_args()
-    split_args = options.infile.split('/')
+    # Every file in a manifest belongs to the same dataset, so the first entry
+    # is the reference path for all of the auto-parsing below.
+    input_paths = read_input_manifest(options.infile)
+    ref_infile = input_paths[0]
+    split_args = ref_infile.split('/')
     auto_isMC = None  #if neither data or mc tag is found, keep as None
     auto_dataset = None
     auto_runperiod = ""
     # An explicit --version wins: nanoaod_version() parses the tier out of a
     # /store/ path, which private and FlashSim outputs do not have.
-    auto_ver = options.version or nanoaod_version(options.infile)
+    auto_ver = options.version or nanoaod_version(ref_infile)
     if "NANOAODSIM" in split_args:
         auto_isMC = True
     elif "NANOAOD" in split_args:
@@ -117,7 +198,6 @@ def main():
 
     failed = True
     ixrd = 0
-    local_file_name = None
     aliases = [
         "root://cms-xrd-global.cern.ch/",
         "root://eoscms.cern.ch/",
@@ -131,45 +211,15 @@ def main():
     ]
     while failed:
         try:
-            file_name = options.infile
-            if '/store/' in options.infile:
-                if options.infile.startswith("root://") or options.infile.startswith("file:"):
-                    pass
-                else:
-                    file_name = aliases[ixrd] + options.infile
-            else:
-                coffea_console.print(f"Skipping redirector prepending for file {file_name}")
+            # Resolve every input path through the SAME logic, whether --infile
+            # named one root file or a .txt manifest of them. aliases[ixrd] is the
+            # redirector currently being tried, so a failure anywhere below retries
+            # the whole sample against the next one.
+            input_files = [
+                resolve_input_path(path, aliases[ixrd], options.copyInput)
+                for path in input_paths
+            ]
 
-            if options.copyInput:
-                if local_file_name is None and file_name.startswith("root://"):
-                    try:
-                        split_name = file_name.split("//")
-                        local_file_name = str(tempfile.gettempdir()) + "/" + split_name[-1]
-                        deepest_name = local_file_name.split("/")[-1]
-                        local_file_nested_dir = local_file_name.replace(deepest_name, "")
-                        if not os.path.isdir(local_file_nested_dir):
-                            coffea_console.print(f"making directory... {local_file_nested_dir}")
-                            os.makedirs(local_file_nested_dir, exist_ok=True)
-                        if not os.path.isfile(local_file_name):
-                            coffea_console.print(f"xrdcp file {file_name} {local_file_name}")
-                            os.system(f"xrdcp {file_name} {local_file_name}")
-                        if not os.path.isfile(local_file_name):
-                            raise RuntimeError(f"Failed to download the file locally for processing: {file_name} -> {local_file_name}")
-                    except Exception as le:
-                        local_file_name = None
-                        coffea_console.print(le)
-                else:
-                    if local_file_name:
-                        coffea_console.print(f"File loaded to local directory: {local_file_name} (existence-test: {os.path.isfile(local_file_name)}")
-                    else:
-                        coffea_console.print(f"local_file_name not set ({local_file_name}), probably due to file_name ({file_name}) not indicating an xrdcp-able path by starting with root://")
-
-
-                file_name = aliases[ixrd] + options.infile
-            else:
-                file_name = options.infile 
-
-            
             if options.maxChunks > 0:
                 coffea_console.print("WARNING: maxChunks will limit processing of MC or data, "
                       "for MC the normalization will not be stored for the number of events processed and the scaling will be incorrect, ",
@@ -177,19 +227,19 @@ def main():
                       )
 
             if is_data:
-                if 'Run20' in options.infile:
+                if 'Run20' in ref_infile:
                     options.runperiod = auto_runperiod.replace(f'Run{options.era}','')
             else:
                 options.runperiod = ''
 
 
             ewk_flag = None
-            if "ZZTo" in options.infile and "GluGluTo" not in options.infile and "ZZJJ" not in options.infile:
+            if "ZZTo" in ref_infile and "GluGluTo" not in ref_infile and "ZZJJ" not in ref_infile:
                 ewk_flag= 'ZZ'
-            if "WZTo" in options.infile and "GluGluTo" not in options.infile:
+            if "WZTo" in ref_infile and "GluGluTo" not in ref_infile:
                 ewk_flag = 'WZ'
             dy_flag = False
-            if "DYJetsToLL" in options.infile:
+            if "DYJetsToLL" in ref_infile:
                 dy_flag = True
 
             # extarct the run period
@@ -259,7 +309,7 @@ def main():
             is_flashsim = 'flashsim' in options.dataset.lower()
             if is_flashsim:
                 from qawa import uproot_float16_patch
-                if uproot_float16_patch.enable():
+                if uproot_float16_patch.enable_for_workers():
                     coffea_console.print(
                         "[yellow]FlashSim sample: uproot jagged-Float16 read patch enabled[/yellow]"
                     )
@@ -270,7 +320,7 @@ def main():
                 'is_signal': is_signal,
                 'is_flashsim': is_flashsim,
             }
-            runs_files = {local_file_name: "Runs"} if local_file_name else {file_name: "Runs"}
+            runs_files = {fn: "Runs" for fn in input_files}
             runs_samples ={
                 options.dataset:{
                     'files': runs_files,
@@ -306,6 +356,7 @@ def main():
                 -- jobNum    = {options.jobNum}
                 -- era       = {options.era}
                 -- infile    = {options.infile}
+                -- nfiles    = {len(input_files)}
                 --> {list(events_files.keys())[0]}
                 -- dataset   = {options.dataset}
                 -- period    = {options.runperiod}
@@ -358,6 +409,10 @@ def main():
             coffea_console.print("-------------------------------------------")
             failed=True
             ixrd += 1
+            if ixrd >= len(aliases):
+                raise RuntimeError(
+                    f"all {len(aliases)} redirectors failed for --infile {options.infile}"
+                ) from err
 
 if __name__ == "__main__":
     main()
