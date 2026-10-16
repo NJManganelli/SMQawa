@@ -59,3 +59,31 @@ Run2024.MuonEG:
         - DiEle27_WPTightCaloOnly_L1DoubleEG
         - Photon200
         - DoublePhoton70
+
+Run2024.MC:
+    pass:
+        - IsoMu24
+        - IsoMu27
+        - Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8
+        - Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8
+        - Mu19_TrkIsoVVL_Mu9_TrkIsoVVL_DZ_Mass3p8
+        - Mu19_TrkIsoVVL_Mu9_TrkIsoVVL_DZ_Mass8
+        - Ele32_WPTight_Gsf
+        - Ele35_WPTight_Gsf
+        - Ele38_WPTight_Gsf
+        - Ele40_WPTight_Gsf
+        - Ele115_CaloIdVT_GsfTrkIdT
+        - Ele23_Ele12_CaloIdL_TrackIdL_IsoVL
+        - Ele23_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
+        - Ele32_WPTight_Gsf_L1DoubleEG
+        - DoubleEle27_CaloIdL_MW
+        - DoubleEle25_CaloIdL_MW
+        - DoubleEle33_CaloIdL_MW
+        - DiEle27_WPTightCaloOnly_L1DoubleEG
+        - Photon200
+        - DoublePhoton70
+        - Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu12_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL
+    veto: []

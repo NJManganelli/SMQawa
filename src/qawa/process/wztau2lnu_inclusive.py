@@ -38,8 +38,10 @@ from qawa.met_shim import prepare_met_for_factory
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
     POL_TEMPLATE_VARS,
+    pol_wpref_for as _pol_wpref_for,     
     compute_polarization_quantities,
     compute_reco_angles,
+    check_pol_ratio,
 )
 
 
@@ -49,35 +51,38 @@ from qawa.polarization import (
 # qawa.polarization, which is pure physics/formulas and takes gen_frac=,
 # slope=, intercept= as required arguments with no era knowledge of its own.
 # ─────────────────────────────────────────────────────────────────────────
+# _RECO_METHODS = ("smp20", "transvmlv")
+
 _POL_ERA_KEY = {"2016": "Run2", "2016APV": "Run2", "2017": "Run2", "2018": "Run2",
                 "2024": "2024"}
 
- 
-
-
 POL_GEN_FRACTIONS_BY_ERA = {
     "Run2": {
-        "Z":  dict(f0=0.24483, fL=0.22700, fR=0.52817),
-        "W":  dict(f0=0.25230, fL=0.47953, fR=0.26817),
-        "Wp": dict(f0=0.24966, fL=0.52017, fR=0.23017),
-        "Wm": dict(f0=0.25669, fL=0.41433, fR=0.32899),
+        "WZ":  dict(f0=0.2429, fL=0.2314, fR=0.5257),
+        "WpZ":  dict(f0=0.2526, fL=0.2631, fR=0.4843),
+        "WmZ":  dict(f0=0.2273, fL=0.1806, fR=0.5921),
+        "ZW":  dict(f0=0.2532, fL=0.4794, fR=0.2673),
+        "ZWp": dict(f0=0.2517, fL=0.5196, fR=0.2287),
+        "ZWm": dict(f0=0.2559, fL=0.4148, fR=0.3292),
     },
-    "2024": {   # TODO: placeholder copied from Run2 -- refit on 2024 MC
-        "Z":  dict(f0=0.25622, fL=0.32269, fR=0.42109),
-        "W":  dict(f0=0.09579, fL=0.59350, fR=0.31070),
-        "Wp": dict(f0=0.07308, fL=0.68563, fR=0.24129),
-        "Wm": dict(f0=0.14875, fL=0.45029, fR=0.40096),
+    "2024": {   
+        "WZ":  dict(f0=0.2409, fL=0.2323, fR=0.5268),
+        "WpZ":  dict(f0=0.2521, fL=0.2629, fR=0.4850),
+        "WmZ":  dict(f0=0.2230, fL=0.1837, fR=0.5933),
+        "ZW":  dict(f0=0.2583, fL=0.4746, fR=0.2671),
+        "ZWp": dict(f0=0.2479, fL=0.5204, fR=0.2317),
+        "ZWm": dict(f0=0.2746, fL=0.4018, fR=0.3236),
     },
 }
 POL_GEN_FRACTIONS_2024_VERIFIED = False
 
 POL_SLOPE_BY_ERA = {
-    "Run2": 0.5080,
-    "2024": 0.4675,
+    "Run2": 1.139,
+    "2024": 1.159,
 }
 POL_Int_BY_ERA = {
-    "Run2": 11.27,
-    "2024": 14.58,
+    "Run2": 37.89,
+    "2024": 36.58,
 }
 
 
@@ -124,14 +129,18 @@ def _wh(*axes):
         hist.storage.Weight(),
     )
 
-def _pol_wpref_for(var):
-    if "cos_theta_wp" in var:
-        return "wWp"
-    if "cos_theta_wm" in var:
-        return "wWm"
-    if "cos_theta_z" in var:
-        return "wZ"
-    return "wW"
+# def _pol_wpref_for(var):
+#     if "cos_theta_wp" in var:
+#         return "wZWp"
+#     if "cos_theta_wm" in var:
+#         return "wZWm"
+#     if "cos_theta_z" in var:
+#         return "wWZ"
+#     if "cos_theta_wpz" in var:
+#         return "wWpZ"
+#     if "cos_theta_wmz" in var:
+#         return "wWmZ"
+#     return "wZW"
 
 def build_leptons_fv(muons, electrons):
     # select tight/loose muons
@@ -529,10 +538,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.gen_fractions = get_pol_gen_fractions(self._era)
         self.pol_slope = get_pol_slope(self._era)
         self.pol_intercept = get_pol_intercept(self._era)
+        # Fail/warn once at setup rather than per event if the ratio
+        # correction r(pt) = slope*pt + intercept is not physical.
+        check_pol_ratio(self.pol_slope, self.pol_intercept)
 
         # ── Polarization weight keys + templated variables (from polarization.py) ──
-
-        
 
         self.pol_weight_keys   = list(POL_WEIGHT_KEYS)
         self.pol_template_vars = [
@@ -542,15 +552,17 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.pol_reco_vars = [
             "cos_theta_w_reco", "cos_theta_z_reco", "qcos_theta_w_reco",
             "cos_theta_wp_reco", "cos_theta_wm_reco",
-            "W_mass", "mT", "W_E", "nu_pz", "tau_corr_pt", 'dilep_tau_loose_met_hadron_mt',
-            "disc", "rescued", "disc_sign", "tau_pt_vtight", "mT_pre"
+            "cos_theta_wpz_reco", "cos_theta_wmz_reco",          
+            "W_mass", "mT", "W_E", "nu_pz", "tau_corr_pt",
+            'dilep_tau_loose_met_hadron_mt',
+            "disc", "rescued", "disc_sign", "tau_pt_vtight", "mT_pre",
         ]
-        
         self.pol_gen_vars = [
-            "cos_theta_z_gen", "cos_theta_w_gen", "cos_theta_wm_gen",
-            "cos_theta_wp_gen", "qcos_theta_w_gen",
+            "cos_theta_z_gen", "cos_theta_wm_gen", "cos_theta_wp_gen",
+            "cos_theta_wpz_gen", "cos_theta_wmz_gen",            
+            "qcos_theta_w_gen",
             "tau_pt_gen", "W_pt_gen", "tau_gen_dR",
-        ]
+        ]  
        
         ### polarization part ####
 
@@ -772,6 +784,14 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
         }
         self.build_histos_pol = lambda: {
+            'tau_pt_ratio_vs_reco': _wh(
+                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 3, name="tau_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
+            ),
+            'tau_pt_ratio_vs_reco_matched': _wh(
+                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 3, name="tau_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
+            ),
             'cos_theta_z_gen': _wh(
                 hist.axis.Regular(20, -1, 1, name="cos_theta_z_gen", label=r"$\cos\theta_{Helicity}$ (Z_gen)"),
             ),
@@ -786,6 +806,18 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
             'qcos_theta_w_gen': _wh(
                 hist.axis.Regular(20, -1, 1, name="qcos_theta_w_gen", label=r"$\cos\theta_{Helicity}$ (qW_gen)"),
+            ),
+            'cos_theta_wpz_gen': _wh(
+                hist.axis.Regular(20, -1, 1, name="cos_theta_wpz_gen", label=r"$\cos\theta^*_Z$ (gen, $W^+Z$)"),
+            ),
+            'cos_theta_wmz_gen': _wh(
+                hist.axis.Regular(20, -1, 1, name="cos_theta_wmz_gen", label=r"$\cos\theta^*_Z$ (gen, $W^-Z$)"),
+            ),
+            'cos_theta_wpz_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="cos_theta_wpz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^+Z$)"),
+            ),
+            'cos_theta_wmz_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="cos_theta_wmz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^-Z$)"),
             ),
             'qcos_theta_w_gen_onshell': _wh(
                 hist.axis.Regular(20, -1, 1, name="qcos_theta_w_gen", label=r"$\cos\theta_{Helicity}$ (qW_gen_onshell)"),
@@ -985,10 +1017,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         
         if is_data:
             selection.add('lumimask', self._lumimask(event.run, event.luminosityBlock))
-            selection.add('triggers', trigger_rules(event, self._triggers, self._era))
         else:
             selection.add('lumimask', np.ones(len(event), dtype='bool'))
-            selection.add('triggers', np.ones(len(event), dtype='bool'))
+        is_mc = not is_data
+        selection.add('triggers', trigger_rules(event, self._triggers, self._era, is_mc))
         if self._jetveto is not None:
             selection.add('jetveto', ~ak.any(
                 self._jetveto.evaluate('jetvetomap', event.OrigJet.eta, event.OrigJet.phi), axis=1
@@ -1355,17 +1387,25 @@ class wzinclusive_processor(processor.ProcessorABC):
         # ── Polarization angles (only when running the pol part) ──────────────
         if self._pol:
             if (not is_data) and is_signal:
-                polq = compute_polarization_quantities(event, event.GenPart, p4_met, lead_tau_for_vars, dilep_p4, lead_lep, subl_lep, z_cand_mask, self.zmass, gen_frac=self.gen_fractions, slope=self.pol_slope, intercept = self.pol_intercept,)
+                polq = compute_polarization_quantities(
+                    event, event.GenPart, p4_met, lead_tau_for_vars, dilep_p4,
+                    lead_lep, subl_lep, z_cand_mask, self.zmass,
+                    gen_frac=self.gen_fractions, slope=self.pol_slope,
+                    intercept=self.pol_intercept,
+                )
                 for _d in ("angles", "extras", "weights"):
                     for _k, _v in polq[_d].items():
                         event[_k] = _v
             else:
-                reco = compute_reco_angles(p4_met, lead_tau_for_vars, dilep_p4, lead_lep, subl_lep, z_cand_mask, slope=self.pol_slope, intercept = self.pol_intercept,)
+                reco = compute_reco_angles(
+                    p4_met, lead_tau_for_vars, dilep_p4, lead_lep, subl_lep,
+                    z_cand_mask, slope=self.pol_slope,
+                    intercept=self.pol_intercept,
+                )
                 for _d in ("angles", "extras"):
                     for _k, _v in reco[_d].items():
                         event[_k] = _v
-        # ── Polarization block end ────────────────────────────────────────────
-
+        # # ── Polarization block end ────────────────────────────────────────────
 
 
         # 2jet and vbs related variables
@@ -1749,7 +1789,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             channels = {
             "inc-SR01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'met_pt', 'high_mTwz'],
             "inc-B01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'met_pt', 'high_mTwz'],
-            "Pol_reg": []
+            "Pol_reg": [],
             }
             
             
@@ -1909,6 +1949,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                             # matched-only version: fit the tau pT slope on THIS one
                             _hist2d_filler(ch, None, 'tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco_matched', extra_weight=event['tau_matched'])
                             _hist2d_filler(ch, None, 'qcos_theta_w_reco', 'tau_corr_pt', 'qcos_w_vs_tau_pt')
+                            _hist2d_filler(ch, None, 'tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco')
+                            _hist2d_filler(ch, None, 'tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco_matched', extra_weight=event['tau_matched'])
         else:
             # ── standard inclusive analysis ────────────────────────────────────
             for ch in channels:

@@ -77,3 +77,36 @@ Run2018.MuonEG:
         - Ele40_WPTight_Gsf 
         - Ele32_WPTight_Gsf_L1DoubleEG
         - Photon200
+
+Run2018.MC:
+    pass:
+        - Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8
+        - Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8
+        - Mu19_TrkIsoVVL_Mu9_TrkIsoVVL_DZ_Mass3p8
+        - Mu19_TrkIsoVVL_Mu9_TrkIsoVVL_DZ_Mass8
+        - IsoMu24
+        - IsoMu27
+        - IsoMu30
+        - Mu50
+        - Ele23_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
+        - Ele23_Ele12_CaloIdL_TrackIdL_IsoVL
+        - DiEle27_WPTightCaloOnly_L1DoubleEG
+        - DoubleEle33_CaloIdL_MW
+        - DoubleEle25_CaloIdL_MW
+        - DoubleEle27_CaloIdL_MW
+        - DoublePhoton70
+        - Ele115_CaloIdVT_GsfTrkIdT
+        - Ele27_WPTight_Gsf
+        - Ele32_WPTight_Gsf
+        - Ele35_WPTight_Gsf
+        - Ele38_WPTight_Gsf
+        - Ele40_WPTight_Gsf
+        - Ele32_WPTight_Gsf_L1DoubleEG
+        - Photon200
+        - Mu12_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu12_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL
+        - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL
+        - Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ
+        - Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL
+    veto: []

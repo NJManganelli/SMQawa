@@ -154,7 +154,7 @@ def met_phi_xy_correction(met, run, npv, is_mc:bool=False, era:str='2016', jet_t
     met['phi'] = phi_
     return met
 
-def trigger_rules(event, rules:dict, era:str='2018'):
+def trigger_rules(event, rules:dict, era:str='2018', isMC: bool = False):
     ds_names_ = {
         '2016' : ['DoubleMuon', 'SingleMuon', 'DoubleEG', 'SingleElectron', 'MuonEG'],
         '2017' : ['DoubleMuon', 'SingleMuon', 'DoubleEG', 'SingleElectron', 'MuonEG'],
@@ -166,25 +166,34 @@ def trigger_rules(event, rules:dict, era:str='2018'):
     
     _pass = np.zeros(len(event), dtype='bool')
     _veto = np.zeros(len(event), dtype='bool')
-    
-    _ds = event.metadata['dataset']
-    ds_name = ''
-    for s in ds_names_[era]:
-        if s in _ds:
-            ds_name = s
-            break
+
+    if isMC:
+        ds_name = 'MC'
+    else:
+        _ds = event.metadata['dataset']
+        ds_name = ''
+        for s in ds_names_[era]:
+            if s in _ds:
+                ds_name = s
+                break
         
-    for t in rules[f'Run{era}.{ds_name}']['pass']:
+    key = f'Run{era}.{ds_name}'
+    if key not in rules:
+        raise KeyError(
+            f"No trigger rules for '{key}' "
+            f"(era={era}, isMC={isMC}, dataset={event.metadata.get('dataset')})"
+        )
+
+    for t in rules[key]['pass']:
         if t in event.HLT.fields:
             _pass = _pass | event.HLT[t]
         else:
             print(f'{t} not present in the data')
-            
-    for t in rules[f'Run{era}.{ds_name}']['veto']:
+
+    for t in rules[key]['veto']:
         if t in event.HLT.fields:
-            _veto =  _veto | event.HLT[t]
-            
-    # passing triggers and vetoing triggers from other datasets
+            _veto = _veto | event.HLT[t]
+
     return _pass & ~_veto
 
 # def theory_pdf_weight(weights, pdf_weight):
