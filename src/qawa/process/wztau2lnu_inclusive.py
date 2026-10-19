@@ -34,6 +34,12 @@ from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
+# imported unconditionally (not inside the is_flashsim branch): a spawned
+# FuturesExecutor worker imports this module to unpickle the processor, and
+# uproot_float16_patch self-enables from the environment at import time.
+from qawa import uproot_float16_patch  # noqa: F401
+from qawa.flashsim_shim import patch_flashsim
+from qawa.eft_weights import points_from_events, stack_named_weights
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -129,18 +135,21 @@ def _wh(*axes):
         hist.storage.Weight(),
     )
 
-# def _pol_wpref_for(var):
-#     if "cos_theta_wp" in var:
-#         return "wZWp"
-#     if "cos_theta_wm" in var:
-#         return "wZWm"
-#     if "cos_theta_z" in var:
-#         return "wWZ"
-#     if "cos_theta_wpz" in var:
-#         return "wWpZ"
-#     if "cos_theta_wmz" in var:
-#         return "wWmZ"
-#     return "wZW"
+
+def _wh_eft(*axes):
+    """As _wh, plus an `eft` axis holding one entry per SMEFT structure constant.
+
+    Created as a SEPARATE histogram (key `<var>_eft`) rather than by adding an
+    axis to the standard ones, so that samples without EFT weights -- and every
+    existing DCTools config -- are completely unaffected.
+    """
+    return hist.Hist(
+        hist.axis.StrCategory([], name="channel", growth=True),
+        hist.axis.StrCategory([], name="systematic", growth=True),
+        hist.axis.StrCategory([], name="eft", growth=True),
+        *axes,
+        hist.storage.Weight(),
+    )
 
 def build_leptons_fv(muons, electrons):
     # select tight/loose muons
@@ -343,6 +352,7 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         (tau.pt         > 20 ) & 
         (np.abs(tau.eta) < tau_max_eta ) &
         (np.abs(tau.dz)< 0.2 ) &
+        (tau.decayMode != 2   ) &
         (tau.decayMode != 5   ) &
         (tau.decayMode != 6   ) &
         tau_e_subid & tau_mu_subid & tau_j_subid
@@ -667,6 +677,66 @@ class wzinclusive_processor(processor.ProcessorABC):
             ),
             'taus_eta': _wh(
                 hist.axis.Regular(50, -5, 5, name="taus_eta", label=r"$\eta(\tau)$"),
+            ),
+            'tau_upsilon_vtight': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight", label=r"$\Upsilon_{\tau}$"),
+            ),
+            'tau_upsilon_vtight_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            ),
+            'tau_upsilon_vtight_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            ),
+            'tau_upsilon_vtight_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            ),
+            'tau_upsilon_vtight_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            ),
+            'tau_upsilon_vtight_vs_tau_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight", label=r"$\Upsilon_{\tau}$"),
+                hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
+                                   name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV)"),
+            ), # Upsilon vs tau pT, for extracting the fixed-helicity decay templates T_h(Upsilon | pT).
+            'tau_upsilon_tight': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight", label=r"$\Upsilon_{\tau}$"),
+            ),
+            'tau_upsilon_tight_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            ),
+            'tau_upsilon_tight_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            ),
+            'tau_upsilon_tight_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            ),
+            'tau_upsilon_tight_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            ),
+            'tau_upsilon_tight_vs_tau_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight", label=r"$\Upsilon_{\tau}$"),
+                hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
+                                   name="tau_pt_tight", label=r"$p_{T}^{\tau}$ (GeV)"),
+            ),
+            'tau_upsilon_loose': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose", label=r"$\Upsilon_{\tau}$"),
+            ),
+            'tau_upsilon_loose_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            ),
+            'tau_upsilon_loose_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            ),
+            'tau_upsilon_loose_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            ),
+            'tau_upsilon_loose_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            ),
+            'tau_upsilon_loose_vs_tau_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose", label=r"$\Upsilon_{\tau}$"),
+                hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
+                                   name="tau_pt_loose", label=r"$p_{T}^{\tau}$ (GeV)"),
             ),
             'taus_phi': _wh(
                 hist.axis.Regular(50, -np.pi, np.pi, name="taus_phi", label=r"$\phi(\tau)$"),
@@ -1014,7 +1084,27 @@ class wzinclusive_processor(processor.ProcessorABC):
                 histos = self.build_histos_pol()
         else:
             histos = self.build_histos()
-        
+
+        # SMEFT structure constants, if this sample carries EFT reweighting.
+        # Auto-detected from the named LHEWeight_<point> branches.
+        # Samples sharing a parameterisation can be combined downstream.
+        eft_theta = None
+        if not is_data:
+            eft_par, eft_points = points_from_events(event)
+            if eft_par is not None:
+                theta = eft_par.decompose(stack_named_weights(event, eft_points))
+                problems = eft_par.validate(theta)
+                if problems and self._process_shift_warnings:
+                    for p in problems:
+                        coffea_console.print(f"[red][EFT] {p}[/red]")
+                active = eft_par.active_terms(theta)
+                eft_theta = {t: theta[:, eft_par.terms.index(t)] for t in active}
+                if self._process_shift_warnings:
+                    coffea_console.print(
+                        f"[green][EFT][/green] {eft_par} -> {len(active)} active terms "
+                        f"({len(eft_par.terms) - len(active)} null): {', '.join(active)}"
+                    )
+
         if is_data:
             selection.add('lumimask', self._lumimask(event.run, event.luminosityBlock))
         else:
@@ -1223,6 +1313,51 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         tau_pt_vtight = lead_tau_vtight.pt
         tau_pt_tight = lead_tau_tight.pt
+
+        # ---- tau polarisation ------------------------------------------------
+        # ceWRe33/ceBRe33 are chirality
+        # flipping, so they do not interfere with the SM (measured: lin_ceWRe33 and
+        # lin_ceBRe33 are identically zero in the 15-point decomposition). Their
+        # signature is a change in tau POLARISATION, not in rate or in ordinary
+        # kinematics.
+        #
+        # Upsilon = 2*(pT of leading charged track / pT of visible tau) - 1, in
+        # [-1,1]. For tau -> rho nu the tau helicity fixes the rho's longitudinal
+        # /transverse mix, which shows up as the charged/neutral energy sharing:
+        # longitudinal gives asymmetric sharing (|Upsilon| large), transverse gives
+        # even sharing (Upsilon ~ 0).
+        #
+        # Built only from visible decay products, with decay mode 0 excluded:
+        # for 1-prong-0-pi0 leadTkPtOverTauPt == 1 by definition, no information gain
+        #
+        tau_upsilon_vtight_raw = 2.0 * lead_tau_vtight.leadTkPtOverTauPt - 1.0
+        tau_upsilon_tight_raw = 2.0 * lead_tau_tight.leadTkPtOverTauPt - 1.0
+        tau_upsilon_loose_raw = 2.0 * lead_tau_loose.leadTkPtOverTauPt - 1.0
+        tau_upsilon_vtight_ok  = ak.fill_none(lead_tau_vtight.decayMode == 1, False)
+        tau_upsilon_tight_ok  = ak.fill_none(lead_tau_tight.decayMode == 1, False)
+        tau_upsilon_loose_ok  = ak.fill_none(lead_tau_loose.decayMode == 1, False)
+        tau_upsilon_vtight     = ak.where(tau_upsilon_vtight_ok, tau_upsilon_vtight_raw, -99.0)
+        tau_upsilon_tight     = ak.where(tau_upsilon_tight_ok, tau_upsilon_tight_raw, -99.0)
+        tau_upsilon_loose     = ak.where(tau_upsilon_loose_ok, tau_upsilon_loose_raw, -99.0)
+
+        # pT-binned tau_upsilon: the analysing power and the EFT effect both grow with
+        # tau energy, with -99 sentinel value inserted
+        def _tau_upsilon_in(tau_upsilon_in, tau_upsilon_ok, pt_in, lo, hi):
+            m = ak.fill_none((pt_in > lo) & (pt_in < hi), False) & tau_upsilon_ok
+            return ak.where(m, tau_upsilon_in, -99.0)
+
+        tau_upsilon_vtight_pt20to40   = _tau_upsilon_in(tau_upsilon_vtight, tau_upsilon_vtight_ok, lead_tau_vtight.pt, 20.,  40.)
+        tau_upsilon_vtight_pt40to60   = _tau_upsilon_in(tau_upsilon_vtight, tau_upsilon_vtight_ok, lead_tau_vtight.pt, 40.,  60.)
+        tau_upsilon_vtight_pt60to100  = _tau_upsilon_in(tau_upsilon_vtight, tau_upsilon_vtight_ok, lead_tau_vtight.pt, 60., 100.)
+        tau_upsilon_vtight_pt100toInf = _tau_upsilon_in(tau_upsilon_vtight, tau_upsilon_vtight_ok, lead_tau_vtight.pt, 100., 1e9)
+        tau_upsilon_tight_pt20to40    = _tau_upsilon_in(tau_upsilon_tight, tau_upsilon_tight_ok, lead_tau_tight.pt, 20.,  40.)
+        tau_upsilon_tight_pt40to60    = _tau_upsilon_in(tau_upsilon_tight, tau_upsilon_tight_ok, lead_tau_tight.pt, 40.,  60.)
+        tau_upsilon_tight_pt60to100   = _tau_upsilon_in(tau_upsilon_tight, tau_upsilon_tight_ok, lead_tau_tight.pt, 60., 100.)
+        tau_upsilon_tight_pt100toInf  = _tau_upsilon_in(tau_upsilon_tight, tau_upsilon_tight_ok, lead_tau_tight.pt, 100., 1e9)
+        tau_upsilon_loose_pt20to40    = _tau_upsilon_in(tau_upsilon_loose, tau_upsilon_loose_ok, lead_tau_loose.pt, 20.,  40.)
+        tau_upsilon_loose_pt40to60    = _tau_upsilon_in(tau_upsilon_loose, tau_upsilon_loose_ok, lead_tau_loose.pt, 40.,  60.)
+        tau_upsilon_loose_pt60to100   = _tau_upsilon_in(tau_upsilon_loose, tau_upsilon_loose_ok, lead_tau_loose.pt, 60., 100.)
+        tau_upsilon_loose_pt100toInf  = _tau_upsilon_in(tau_upsilon_loose, tau_upsilon_loose_ok, lead_tau_loose.pt, 100., 1e9)
         taus_eta = lead_tau_vtight.eta
         taus_phi = lead_tau_vtight.phi
         tau_E = lead_tau_vtight.E
@@ -1563,6 +1698,21 @@ class wzinclusive_processor(processor.ProcessorABC):
         event['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
         event['taus_phi'] = ak.fill_none(taus_phi,-99)
         event['taus_eta'] = ak.fill_none(taus_eta,-99)
+        event['tau_upsilon_vtight'] = ak.fill_none(tau_upsilon_vtight,-99)
+        event['tau_upsilon_vtight_pt20to40'] = ak.fill_none(tau_upsilon_vtight_pt20to40,-99)
+        event['tau_upsilon_vtight_pt40to60'] = ak.fill_none(tau_upsilon_vtight_pt40to60,-99)
+        event['tau_upsilon_vtight_pt60to100'] = ak.fill_none(tau_upsilon_vtight_pt60to100,-99)
+        event['tau_upsilon_vtight_pt100toInf'] = ak.fill_none(tau_upsilon_vtight_pt100toInf,-99)
+        event['tau_upsilon_tight'] = ak.fill_none(tau_upsilon_tight,-99)
+        event['tau_upsilon_tight_pt20to40'] = ak.fill_none(tau_upsilon_tight_pt20to40,-99)
+        event['tau_upsilon_tight_pt40to60'] = ak.fill_none(tau_upsilon_tight_pt40to60,-99)
+        event['tau_upsilon_tight_pt60to100'] = ak.fill_none(tau_upsilon_tight_pt60to100,-99)
+        event['tau_upsilon_tight_pt100toInf'] = ak.fill_none(tau_upsilon_tight_pt100toInf,-99)
+        event['tau_upsilon_loose'] = ak.fill_none(tau_upsilon_loose,-99)
+        event['tau_upsilon_loose_pt20to40'] = ak.fill_none(tau_upsilon_loose_pt20to40,-99)
+        event['tau_upsilon_loose_pt40to60'] = ak.fill_none(tau_upsilon_loose_pt40to60,-99)
+        event['tau_upsilon_loose_pt60to100'] = ak.fill_none(tau_upsilon_loose_pt60to100,-99)
+        event['tau_upsilon_loose_pt100toInf'] = ak.fill_none(tau_upsilon_loose_pt100toInf,-99)
         event['delta_R'] = ak.fill_none(delta_R,-99)
         event['dilep_dR'] = ak.fill_none(dilep_dR,-99)
         event['dilep_deta'] = ak.fill_none(dilep_deta,-99)
@@ -1829,6 +1979,31 @@ class wzinclusive_processor(processor.ProcessorABC):
 
             fill_var = _format_variable(event[var], cut)
 
+            # SMEFT structure constants.  Both the EFT decomposition and the
+            # systematic weight are per-event multiplicative factors, so filling
+            # with their product is exact -- no approximation that the systematic
+            # is EFT-independent.  That matters here because cW is energy-growing
+            # and the JES/tau-ES uncertainties grow with pT, so the relative
+            # effect of a systematic genuinely differs between the SM and
+            # quadratic templates in the tail where the sensitivity sits.
+            if eft_theta is not None:
+                eft_key = var + "_eft"
+                if eft_key not in histos:
+                    # lazily cloned from the nominal histogram's value axes, so
+                    # only variables actually filled get an EFT counterpart
+                    histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
+                w_eft = ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
+                for term, col in eft_theta.items():
+                    histos[eft_key].fill(
+                        **{
+                            "channel": ch,
+                            "systematic": systname,
+                            "eft": term,
+                            var: fill_var,
+                            "weight": w_eft * col[cut],
+                        }
+                    )
+
             if pol_weights is None:
                 histos[var].fill(
                     **{
@@ -1967,6 +2142,26 @@ class wzinclusive_processor(processor.ProcessorABC):
                     _histogram_filler(ch, sys, 'tau_pt_tight')
                     _histogram_filler(ch, sys, 'taus_phi')
                     _histogram_filler(ch, sys, 'taus_eta')
+                    _histogram_filler(ch, sys, 'tau_upsilon_vtight')
+                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt20to40')
+                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt40to60')
+                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt60to100')
+                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt100toInf')
+                    _histogram_filler(ch, sys, 'tau_upsilon_tight')
+                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt20to40')
+                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt40to60')
+                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt60to100')
+                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt100toInf')
+                    _histogram_filler(ch, sys, 'tau_upsilon_loose')
+                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt20to40')
+                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt40to60')
+                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt60to100')
+                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt100toInf')
+                    # Nominal only: this is a CONDITIONAL shape P(Upsilon | pT), crosscheck, pT shifts ignored
+                    if sys is None:
+                        _hist2d_filler(ch, None, 'tau_upsilon_vtight', 'tau_pt_vtight', 'tau_upsilon_vtight_vs_tau_pt')
+                        _hist2d_filler(ch, None, 'tau_upsilon_tight', 'tau_pt_tight', 'tau_upsilon_tight_vs_tau_pt')
+                        _hist2d_filler(ch, None, 'tau_upsilon_loose', 'tau_pt_loose', 'tau_upsilon_loose_vs_tau_pt')
                     _histogram_filler(ch, sys, 'tau_pt_loose')
                     _histogram_filler(ch, sys, 'taus_phi_loose')
                     _histogram_filler(ch, sys, 'taus_eta_loose')
@@ -2003,7 +2198,18 @@ class wzinclusive_processor(processor.ProcessorABC):
         dataset_name = event.metadata['dataset']
         is_data = event.metadata.get("is_data")
         is_signal = event.metadata.get("is_signal")
+        is_flashsim = event.metadata.get("is_flashsim", False)
 
+        # FlashSim emits only the collections its generative models were trained
+        # on.  Inject the NanoAOD fields the selection needs before anything
+        # touches them.  Purely additive and guarded field-by-field, so this
+        # degrades to a no-op as the FlashSim outputs grow -- see
+        # qawa/flashsim_shim.py FLASHSIM_CAVEATS for what is surrogate rather
+        # than recovered.
+        if is_flashsim:
+            event, _ = patch_flashsim(
+                event, self._era, verbose=self._process_shift_warnings
+            )
 
         # JES/JER corrections
         Rho = event.Rho.fixedGridRhoFastjetAll if "Rho" in event.fields else event.fixedGridRhoFastjetAll # if self._ver in [f"v{V}" for V in range(12)]
