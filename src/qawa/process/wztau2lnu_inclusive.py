@@ -1231,7 +1231,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         # Adding scale factors to Muon and Electron fields, post-Scale/Smearing
         muonSFs = self._leSF.muonSF(event.Muon)
         elecSFs = self._leSF.electronSF(event.Electron)
-        # keys: nominal, eff_m_(id|iso)(Up|Down) (Muon) or eff_e_(reco|id)(Up|Down) (Electron)
+        # keys: eff_m_(id|iso)(Nominal|Up|Down) (Muon) or eff_e_(reco|id)(Nominal|Up|Down) (Electron)
         for k, v in muonSFs.items():
             event["Muon", k] = v
         for k, v in elecSFs.items():
