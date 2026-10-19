@@ -137,6 +137,7 @@ def main():
     parser = argparse.ArgumentParser("")
     parser.add_argument('--analysis' , type=str, default='inc-WZ'         , help="Processor name to apply to datasets, and parent folder for config files")
     parser.add_argument('--jobNum'   , type=int, default=1                , help="")
+    parser.add_argument('--ncores'   , type=int, default=4                , help="Number of cores for FuturesExecutor")
     parser.add_argument('--era'      , type=str, default="2018"           , help="")
     parser.add_argument('--isMC'     , type=int, default=1                , help="")
     parser.add_argument('--infile'   , type=str, default=None             , help="input root file, OR a .txt manifest listing one root path per line. A manifest is processed as a SINGLE coffea fileset, so chunks parallelise across every file in it")
@@ -185,7 +186,7 @@ def main():
         options.dataset = auto_dataset
     executor = None
     if options.executor == "FuturesExecutor":
-        executor = processor.FuturesExecutor()
+        executor = processor.FuturesExecutor(workers=options.ncores)
     elif options.executor == "IterativeExecutor":
         executor = processor.IterativeExecutor()
     elif options.executor == "DaskExecutor":
