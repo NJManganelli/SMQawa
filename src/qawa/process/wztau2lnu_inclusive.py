@@ -59,6 +59,14 @@ from qawa.polarization import (
 # ─────────────────────────────────────────────────────────────────────────
 # _RECO_METHODS = ("smp20", "transvmlv")
 
+DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
+
+
+def dd_targetdddy_tag(compound_name):
+    tag = compound_name.split("_DDDY_", 1)[-1]
+    tag = tag[len("Target"):] if tag.startswith("Target") else tag
+    return "closure" if tag == "Closure" else tag
+
 _POL_ERA_KEY = {"2016": "Run2", "2016APV": "Run2", "2017": "Run2", "2018": "Run2",
                 "2024": "2024"}
 
@@ -540,7 +548,16 @@ class wzinclusive_processor(processor.ProcessorABC):
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
-        self._dd   = DataDrivenEventReweight(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, override_stat_check=(self._era == "2024"), clibhandler=self.clibhandler, estimator="LNTTau_VTTau_DDDY_Estimate") #FIXME: remove override
+        
+        _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
+        self._dd_targets = {
+            dd_targetdddy_tag(_name): DataDrivenEventReweight(estimator=_name, **_dd_kwargs)
+            for _name in self.clibhandler.getCorrectionSet("dddy").compound.keys()
+            if _name != DD_SR_ESTIMATOR
+        }
+        self.dd_target_systematics = False
+
 
         ### polarization part ####
         # era-aware generator fractions: Run-2 eras -> measured UL set,
@@ -1805,22 +1822,25 @@ class wzinclusive_processor(processor.ProcessorABC):
                 # Doesn't appear to be calculated (by default) in Run3 v15 NanoAOD
                 weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
         else:
-            # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
-            weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
+            # # central weights kept at ones and signal region taget get a datadriven_{name} and closure/targets{VR, IRL,IRM, IRH} also get a nominal and a variation datadriven_{name}_{target}
+            _nom = self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal")
+            weights.add("datadriven_DDDYNominal", _ones, _nom, _nom) 
             if self._dd.stat_systematics:
-                # Per-era statistical nuisance(s): DataDrivenEventReweight restricts stat_systematics
-                # to the single stat_{era} matching the era/subera being processed, so the other
-                # eras' stat nuisances stay at nominal for these events (keeping them decorrelated).
-                for _stat in self._dd.stat_systematics:
-                    weights.add(f"datadriven_{_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Down"))
-            elif self._dd.has_legacy_dddy:
-                # Legacy estimate: a single combined statistical nuisance
-                weights.add("datadriven_DDDY",_ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
-            # Propagated MC systematics from the non-DY subtraction, added under their bare source
-            # names so they correlate with the same-named analysis nuisances on the MC.
-            for _mcsyst in self._dd.mc_systematics:
-                weights.add(_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Down"))
-        # selections (delta_tau_met_phi cut is removed from SR)
+                for dddy_stat in self._dd.stat_systematics:
+                    weights.add(f"datadriven_{dddy_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Down"))
+            for dddy_mcsyst in self._dd.mc_systematics:
+                weights.add(dddy_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
+
+            # --- every other compound of the file: closure, VR, IRL, IRM, IRH ---
+            for dddy_tag, dddy_var in self._dd_targets.items():
+                _nom_t = dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal")
+                weights.add(f"datadriven_DDDYNominal_{dddy_tag}", _ones, _nom_t, _nom_t)
+                if not self.dd_target_systematics:
+                    continue
+                for dddy_stat in dddy_var.stat_systematics:
+                    weights.add(f"datadriven_{dddy_stat}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Down"))
+                for dddy_mcsyst in dddy_var.mc_systematics:
+                    weights.add(f"datadriven_{dddy_mcsyst}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
         common_sel = ['triggers', 'lumimask', 'metfilter']
         if "jetveto" in selection.names:
