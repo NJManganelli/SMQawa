@@ -469,27 +469,27 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         
         
-        jecdddy_tag = ''
-        jerdddy_tag = ''
-        jetvetodddy_tag = None
+        jec_tag = ''
+        jer_tag = ''
+        jetveto_tag = None
         if len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
-                    jecdddy_tag = 'Summer19UL16APV_V7_MC'
-                    jerdddy_tag = 'Summer20UL16APV_JRV3_MC'
+                    jec_tag = 'Summer19UL16APV_V7_MC'
+                    jer_tag = 'Summer20UL16APV_JRV3_MC'
                 else:
-                    jecdddy_tag = 'Summer19UL16_V7_MC'
-                    jerdddy_tag = 'Summer20UL16_JRV3_MC'
+                    jec_tag = 'Summer19UL16_V7_MC'
+                    jer_tag = 'Summer20UL16_JRV3_MC'
             elif self._era == '2017':
-                jecdddy_tag = 'Summer19UL17_V5_MC'
-                jerdddy_tag = 'Summer19UL17_JRV2_MC'
+                jec_tag = 'Summer19UL17_V5_MC'
+                jer_tag = 'Summer19UL17_JRV2_MC'
             elif self._era == '2018':
-                jecdddy_tag = 'Summer19UL18_V5_MC'
-                jerdddy_tag = 'Summer19UL18_JRV2_MC'
+                jec_tag = 'Summer19UL18_V5_MC'
+                jer_tag = 'Summer19UL18_JRV2_MC'
             elif self._era == '2024':
-                jecdddy_tag = 'Summer24Prompt24_V3_MC'
-                jerdddy_tag = 'Summer24Prompt24_JRV1_MC' #FIXME, temporary until new JER tag available in jsons... these are 50% copies of Summer19UL18 anyway
-                jetvetodddy_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
+                jec_tag = 'Summer24Prompt24_V3_MC'
+                jer_tag = 'Summer24Prompt24_JRV1_MC' #FIXME, temporary until new JER tag available in jsons... these are 50% copies of Summer19UL18 anyway
+                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
@@ -498,26 +498,26 @@ class wzinclusive_processor(processor.ProcessorABC):
             if self._era == '2016':
                 if self._isAPV:
                     if run_period in ['B', 'C', 'D']:
-                        jecdddy_tag = 'Summer19UL16APV_RunBCD_V7_DATA'
+                        jec_tag = 'Summer19UL16APV_RunBCD_V7_DATA'
                     else:
-                        jecdddy_tag = 'Summer19UL16APV_RunEF_V7_DATA'
+                        jec_tag = 'Summer19UL16APV_RunEF_V7_DATA'
                 else:
-                    jecdddy_tag = 'Summer19UL16_RunFGH_V7_DATA'
+                    jec_tag = 'Summer19UL16_RunFGH_V7_DATA'
             elif self._era == '2017':
-                jecdddy_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
+                jec_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
             elif self._era == '2018':
-                jecdddy_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
+                jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
             elif self._era == '2024':
                 # FIXME: WRONG TAG, but we don't have the code to split by different nibs, so we'll take nib1 always until correctionlib version is compatible
-                jecdddy_tag = f'Summer24Prompt24_Run{run_period}nib1_V3_DATA'
-                jetvetodddy_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
+                jec_tag = f'Summer24Prompt24_Run{run_period}nib1_V3_DATA'
+                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
         
         self.btag_wp = 'L'
-        self.btagdddy_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
+        self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
         self.jetPU_wp = 'M'
         self.electronID = "wp90iso"
         self.muonID = "Tight"
@@ -530,10 +530,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.zmass = 91.1873 # GeV
         self.clibhandler = CorrectionlibHandler(era = self._era, subera=None, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, analysis="inc-WZ", nanoAODversion=self._ver, cvmfs_head="/cvmfs/")
         self.clibhandler.printStatus(console=coffea_console)
-        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btagdddy_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         # FIXME: JMEUncertainty class not ready for Correctionlib yet... need upstream updates
-        self._jmeu = JMEUncertainty(jecdddy_tag, jerdddy_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
+        self._jmeu = JMEUncertainty(jec_tag, jerdddy_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
         try:
             self._jetid = self.clibhandler.getCorrectionSet("jetid")
         except KeyError as ke:
@@ -605,10 +605,10 @@ class wzinclusive_processor(processor.ProcessorABC):
             '2025': str(self.clibhandler.getPath('Cert_Collisions2025_391658_398903_Golden', fallbackNone=True)),
         }[self._era]
         self._lumimask = LumiMask(self._lumimask_path)
-        if jetvetodddy_tag is None:
+        if jetveto_tag is None:
             self._jetveto = None
         else:
-            self._jetveto = self.clibhandler.getCorrectionSet('jetvetomaps')[jetvetodddy_tag]
+            self._jetveto = self.clibhandler.getCorrectionSet('jetvetomaps')[jetveto_tag]
         with open(f'{_data_path}/{self._era}-trigger-rules.yaml') as ftrig:
             self._triggers = yaml.load(ftrig, Loader=yaml.FullLoader)
 
@@ -1314,8 +1314,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         )
         lead_tau_plus_mask = lead_tau_for_vars.charge == 1
         lead_tau_minus_mask = lead_tau_for_vars.charge == -1
-        lead_tau_plusdddy_tag = ak.fill_none(lead_tau_plus_mask, False)
-        lead_tau_minusdddy_tag = ak.fill_none(lead_tau_minus_mask, False)
+        lead_tau_plus_tag = ak.fill_none(lead_tau_plus_mask, False)
+        lead_tau_minus_tag = ak.fill_none(lead_tau_minus_mask, False)
 
         #definig plus and minus lead tau for W plus/minus
         # tau_plus  = had_taus[had_taus.charge == 1]
@@ -1662,8 +1662,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         selection.add('2plusnhtaus_vtight', nhtaus_lep_vtight  >= 2 )
         selection.add('2plusnhtaus_tight', nhtaus_lep_tight  >= 2 )
         selection.add('2plusnhtaus_loose', nhtaus_lep_loose  >= 2 )
-        selection.add('lead_tau_plus', lead_tau_plusdddy_tag )
-        selection.add('lead_tau_minus', lead_tau_minusdddy_tag )
+        selection.add('lead_tau_plus', lead_tau_plus_tag )
+        selection.add('lead_tau_minus', lead_tau_minus_tag )
         # selection.add('1nhtaus_plus', nhtaus_plus == 1)
         # selection.add('1nhtaus_minus', nhtuaus_minus == 1)
         # selection.add('1nhtaus_loose_plus', nhtaus_loose_plus == 1)
