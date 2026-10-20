@@ -28,7 +28,7 @@ from qawa.leptonsSF import LeptonScaleFactors
 from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from qawa.btag import BTVCorrector
-from qawa.jme import JMEUncertainty, update_collection
+from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
@@ -373,7 +373,7 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
 
     return tau[base_selection & ~overlap_leptons]
 
-def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9"):
+def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9", *, era):
 
     overlap_leptons = ak.any(jets.metric_table(tight_leptons) <= 0.4, axis=2)
     overlap_taus = ak.any(jets.metric_table(taus_loose) <= 0.4, axis=2)
@@ -388,6 +388,9 @@ def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAOD
         )
     if nanoAODversion in [f"v{V}" for V in range(12)] and "puId" in jets.fields:
         jet_mask = jet_mask & ((jets.puId >= 6) | (jets.puId == 3) | (jets.pt >= 50)) # medium puID https://twiki.cern.ch/twiki/bin/viewauth/CMS/PileupJetIDUL 3,7 for 16and 16APV; 6,7 for 17,18
+    # Forward-jet pT requirement: JetMET Run 3 performance (A. Benecke, 4 Dec 2025), slide 14
+    # https://indico.cern.ch/event/1615783/contributions/6811120/attachments/3186812/5672346/20251204_JetMET_PerformanceRun3.pdf#page=14
+    jet_mask = jet_mask & forward_jet_pt_mask(jets, era)
 
     assert hasattr(btag_corrector, "tagged_jets")
     jet_btag = (btag_corrector.tagged_jets(jets, wp=["L", "M", "T"])[btag_wp]) & (np.abs(jets.eta)<2.4) #FIXME: update eta restriction if appropriate for RunIII
@@ -487,8 +490,9 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = 'Summer19UL18_V5_MC'
                 jer_tag = 'Summer19UL18_JRV2_MC'
             elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V3_MC'
-                jer_tag = 'Summer24Prompt24_JRV1_MC' #FIXME, temporary until new JER tag available in jsons... these are 50% copies of Summer19UL18 anyway
+                jec_tag = 'Summer24Prompt24_V2'
+                # JER payload as shipped in the 2024 jet_jerc.json.gz (borrowed from 2023BPix RunD)
+                jer_tag = 'Summer23BPixPrompt23_RunD_JRV1' #FIXME, temporary until new 2024 JER tag available in jsons (borrowed from Summer23BPix RunD)
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
@@ -508,8 +512,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             elif self._era == '2018':
                 jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
             elif self._era == '2024':
-                # FIXME: WRONG TAG, but we don't have the code to split by different nibs, so we'll take nib1 always until correctionlib version is compatible
-                jec_tag = f'Summer24Prompt24_Run{run_period}nib1_V3_DATA'
+                # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
+                jec_tag = 'Summer24Prompt24_V2'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
@@ -532,8 +536,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.clibhandler.printStatus(console=coffea_console)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
-        # FIXME: JMEUncertainty class not ready for Correctionlib yet... need upstream updates
-        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
+        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._era == "2024" else None, version=self._ver) 
         try:
             self._jetid = self.clibhandler.getCorrectionSet("jetid")
         except KeyError as ke:
@@ -1422,7 +1425,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 2 * self._jetid[f"{jet_type}_Tight"].evaluate(*jet_args)
                 )
         jets = event.Jet
-        good_jets, good_bjets = build_jets(jets, tight_lep, had_taus_loose, self.btag_wp, self._btag, nanoAODversion=self._ver)
+        good_jets, good_bjets = build_jets(jets, tight_lep, had_taus_loose, self.btag_wp, self._btag, nanoAODversion=self._ver, era=self._era)
         jet_sorter = ak.argsort(good_jets.pt, axis=1, ascending=False)
         good_jets = good_jets[jet_sorter]
 
@@ -2241,9 +2244,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         if ak.parameters(met_to_correct).get("__record__") != "MissingET":
             met_to_correct = as_missinget(met_to_correct) # TODO: remove this behavior shim when coffea annotates all the new MET variants as MissingET type
        
-        jets = self._jmeu.corrected_jets_L123_JER(event.Jet, Rho, cache)
-        jets_to_correct_met = self._jmeu.corrected_jets_L123_noJER(event.Jet, Rho, cache) # For case without smeared L123 jets ONLY
-        met = self._jmeu.corrected_met(met_to_correct, jets, Rho, cache) # we are adding fully smeared L123 jets
+        jets = self._jmeu.corrected_jets_L123_JER(event.Jet, Rho, cache, run=event.run, event_id=event.event)
+        jets_to_correct_met = self._jmeu.corrected_jets_L123_noJER(event.Jet, Rho, cache, run=event.run) # For case without smeared L123 jets ONLY
+        # FlashSim has no CorrT1METJet: Type-1 MET without the low-pT jet term
+        met = self._jmeu.corrected_met(met_to_correct, jets, Rho, cache, raw_met=raw_met, corrt1_jets=event.CorrT1METJet if "CorrT1METJet" in event.fields else None, run=event.run, event_id=event.event, gen_jets=event.GenJet if "GenJet" in event.fields else None) # we are adding fully smeared L123 jets
 
         event = ak.with_field(event, event.Jet, 'OrigJet')
         event = ak.with_field(event, met_to_correct, 'OrigMET')
