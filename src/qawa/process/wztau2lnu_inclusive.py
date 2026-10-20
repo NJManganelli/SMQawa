@@ -533,7 +533,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         # FIXME: JMEUncertainty class not ready for Correctionlib yet... need upstream updates
-        self._jmeu = JMEUncertainty(jec_tag, jerdddy_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
+        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
         try:
             self._jetid = self.clibhandler.getCorrectionSet("jetid")
         except KeyError as ke:
