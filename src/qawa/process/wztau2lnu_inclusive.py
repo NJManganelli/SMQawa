@@ -62,7 +62,7 @@ from qawa.polarization import (
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
 
 
-def dd_target_tag(compound_name):
+def dd_targetdddy_tag(compound_name):
     tag = compound_name.split("_DDDY_", 1)[-1]
     tag = tag[len("Target"):] if tag.startswith("Target") else tag
     return "closure" if tag == "Closure" else tag
@@ -469,27 +469,27 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         
         
-        jec_tag = ''
-        jer_tag = ''
-        jetveto_tag = None
+        jecdddy_tag = ''
+        jerdddy_tag = ''
+        jetvetodddy_tag = None
         if len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
-                    jec_tag = 'Summer19UL16APV_V7_MC'
-                    jer_tag = 'Summer20UL16APV_JRV3_MC'
+                    jecdddy_tag = 'Summer19UL16APV_V7_MC'
+                    jerdddy_tag = 'Summer20UL16APV_JRV3_MC'
                 else:
-                    jec_tag = 'Summer19UL16_V7_MC'
-                    jer_tag = 'Summer20UL16_JRV3_MC'
+                    jecdddy_tag = 'Summer19UL16_V7_MC'
+                    jerdddy_tag = 'Summer20UL16_JRV3_MC'
             elif self._era == '2017':
-                jec_tag = 'Summer19UL17_V5_MC'
-                jer_tag = 'Summer19UL17_JRV2_MC'
+                jecdddy_tag = 'Summer19UL17_V5_MC'
+                jerdddy_tag = 'Summer19UL17_JRV2_MC'
             elif self._era == '2018':
-                jec_tag = 'Summer19UL18_V5_MC'
-                jer_tag = 'Summer19UL18_JRV2_MC'
+                jecdddy_tag = 'Summer19UL18_V5_MC'
+                jerdddy_tag = 'Summer19UL18_JRV2_MC'
             elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V3_MC'
-                jer_tag = 'Summer24Prompt24_JRV1_MC' #FIXME, temporary until new JER tag available in jsons... these are 50% copies of Summer19UL18 anyway
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
+                jecdddy_tag = 'Summer24Prompt24_V3_MC'
+                jerdddy_tag = 'Summer24Prompt24_JRV1_MC' #FIXME, temporary until new JER tag available in jsons... these are 50% copies of Summer19UL18 anyway
+                jetvetodddy_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
@@ -498,26 +498,26 @@ class wzinclusive_processor(processor.ProcessorABC):
             if self._era == '2016':
                 if self._isAPV:
                     if run_period in ['B', 'C', 'D']:
-                        jec_tag = 'Summer19UL16APV_RunBCD_V7_DATA'
+                        jecdddy_tag = 'Summer19UL16APV_RunBCD_V7_DATA'
                     else:
-                        jec_tag = 'Summer19UL16APV_RunEF_V7_DATA'
+                        jecdddy_tag = 'Summer19UL16APV_RunEF_V7_DATA'
                 else:
-                    jec_tag = 'Summer19UL16_RunFGH_V7_DATA'
+                    jecdddy_tag = 'Summer19UL16_RunFGH_V7_DATA'
             elif self._era == '2017':
-                jec_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
+                jecdddy_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
             elif self._era == '2018':
-                jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
+                jecdddy_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
             elif self._era == '2024':
                 # FIXME: WRONG TAG, but we don't have the code to split by different nibs, so we'll take nib1 always until correctionlib version is compatible
-                jec_tag = f'Summer24Prompt24_Run{run_period}nib1_V3_DATA'
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
+                jecdddy_tag = f'Summer24Prompt24_Run{run_period}nib1_V3_DATA'
+                jetvetodddy_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
         
         self.btag_wp = 'L'
-        self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
+        self.btagdddy_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
         self.jetPU_wp = 'M'
         self.electronID = "wp90iso"
         self.muonID = "Tight"
@@ -530,10 +530,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.zmass = 91.1873 # GeV
         self.clibhandler = CorrectionlibHandler(era = self._era, subera=None, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, analysis="inc-WZ", nanoAODversion=self._ver, cvmfs_head="/cvmfs/")
         self.clibhandler.printStatus(console=coffea_console)
-        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btagdddy_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         # FIXME: JMEUncertainty class not ready for Correctionlib yet... need upstream updates
-        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
+        self._jmeu = JMEUncertainty(jecdddy_tag, jerdddy_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=None, version=self._ver) 
         try:
             self._jetid = self.clibhandler.getCorrectionSet("jetid")
         except KeyError as ke:
@@ -548,12 +548,11 @@ class wzinclusive_processor(processor.ProcessorABC):
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
-        # self._dd   = DataDrivenEventReweight(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, override_stat_check=(self._era == "2024"), clibhandler=self.clibhandler, estimator="LNTTau_VTTau_DDDY_Estimate") #FIXME: remove override
         
         _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
         self._dd_targets = {
-            dd_target_tag(_name): DataDrivenEventReweight(estimator=_name, **_dd_kwargs)
+            dd_targetdddy_tag(_name): DataDrivenEventReweight(estimator=_name, **_dd_kwargs)
             for _name in self.clibhandler.getCorrectionSet("dddy").compound.keys()
             if _name != DD_SR_ESTIMATOR
         }
@@ -606,10 +605,10 @@ class wzinclusive_processor(processor.ProcessorABC):
             '2025': str(self.clibhandler.getPath('Cert_Collisions2025_391658_398903_Golden', fallbackNone=True)),
         }[self._era]
         self._lumimask = LumiMask(self._lumimask_path)
-        if jetveto_tag is None:
+        if jetvetodddy_tag is None:
             self._jetveto = None
         else:
-            self._jetveto = self.clibhandler.getCorrectionSet('jetvetomaps')[jetveto_tag]
+            self._jetveto = self.clibhandler.getCorrectionSet('jetvetomaps')[jetvetodddy_tag]
         with open(f'{_data_path}/{self._era}-trigger-rules.yaml') as ftrig:
             self._triggers = yaml.load(ftrig, Loader=yaml.FullLoader)
 
@@ -1315,8 +1314,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         )
         lead_tau_plus_mask = lead_tau_for_vars.charge == 1
         lead_tau_minus_mask = lead_tau_for_vars.charge == -1
-        lead_tau_plus_tag = ak.fill_none(lead_tau_plus_mask, False)
-        lead_tau_minus_tag = ak.fill_none(lead_tau_minus_mask, False)
+        lead_tau_plusdddy_tag = ak.fill_none(lead_tau_plus_mask, False)
+        lead_tau_minusdddy_tag = ak.fill_none(lead_tau_minus_mask, False)
 
         #definig plus and minus lead tau for W plus/minus
         # tau_plus  = had_taus[had_taus.charge == 1]
@@ -1663,8 +1662,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         selection.add('2plusnhtaus_vtight', nhtaus_lep_vtight  >= 2 )
         selection.add('2plusnhtaus_tight', nhtaus_lep_tight  >= 2 )
         selection.add('2plusnhtaus_loose', nhtaus_lep_loose  >= 2 )
-        selection.add('lead_tau_plus', lead_tau_plus_tag )
-        selection.add('lead_tau_minus', lead_tau_minus_tag )
+        selection.add('lead_tau_plus', lead_tau_plusdddy_tag )
+        selection.add('lead_tau_minus', lead_tau_minusdddy_tag )
         # selection.add('1nhtaus_plus', nhtaus_plus == 1)
         # selection.add('1nhtaus_minus', nhtuaus_minus == 1)
         # selection.add('1nhtaus_loose_plus', nhtaus_loose_plus == 1)
@@ -1823,42 +1822,25 @@ class wzinclusive_processor(processor.ProcessorABC):
                 # Doesn't appear to be calculated (by default) in Run3 v15 NanoAOD
                 weights.add("prefiring_weight", event.L1PreFiringWeight.Nom, event.L1PreFiringWeight.Dn, event.L1PreFiringWeight.Up)
         else:
+            # # central weights kept at ones and signal region taget get a datadriven_{name} and closure/targets{VR, IRL,IRM, IRH} also get a nominal and a variation datadriven_{name}_{target}
             _nom = self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal")
             weights.add("datadriven_DDDYNominal", _ones, _nom, _nom) 
             if self._dd.stat_systematics:
-                for _stat in self._dd.stat_systematics:
-                    weights.add(f"datadriven_{_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Down"))
-            elif self._dd.has_legacy_dddy:
-                weights.add("datadriven_DDDY", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
-            for _mcsyst in self._dd.mc_systematics:
-                weights.add(_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Down"))
+                for dddy_stat in self._dd.stat_systematics:
+                    weights.add(f"datadriven_{dddy_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Down"))
+            for dddy_mcsyst in self._dd.mc_systematics:
+                weights.add(dddy_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
             # --- every other compound of the file: closure, VR, IRL, IRM, IRH ---
-            for _tag, _ddt in self._dd_targets.items():
-                _nom_t = _ddt.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal")
-                weights.add(f"datadriven_DDDYNominal_{_tag}", _ones, _nom_t, _nom_t)
+            for dddy_tag, dddy_var in self._dd_targets.items():
+                _nom_t = dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal")
+                weights.add(f"datadriven_DDDYNominal_{dddy_tag}", _ones, _nom_t, _nom_t)
                 if not self.dd_target_systematics:
                     continue
-                for _stat in _ddt.stat_systematics:
-                    weights.add(f"datadriven_{_stat}_{_tag}", _ones, _ddt.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Up"), _ddt.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Down"))
-                for _mcsyst in _ddt.mc_systematics:
-                    weights.add(f"datadriven_{_mcsyst}_{_tag}", _ones, _ddt.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Up"), _ddt.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Down"))
-        #     # If systematic variations are needed, they must be manually inserted here to give different DD estimates; they should be picked up later for histos.
-        #     weights.add("datadriven_DDDYNominal", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, systematic="nominal"))  #added nominal value twice to avoid getting 1/up for the nominaldown
-        #     if self._dd.stat_systematics:
-        #         # Per-era statistical nuisance(s): DataDrivenEventReweight restricts stat_systematics
-        #         # to the single stat_{era} matching the era/subera being processed, so the other
-        #         # eras' stat nuisances stay at nominal for these events (keeping them decorrelated).
-        #         for _stat in self._dd.stat_systematics:
-        #             weights.add(f"datadriven_{_stat}", _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_stat}Down"))
-        #     elif self._dd.has_legacy_dddy:
-        #         # Legacy estimate: a single combined statistical nuisance
-        #         weights.add("datadriven_DDDY",_ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYUp"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, "DDDYDown"))
-        #     # Propagated MC systematics from the non-DY subtraction, added under their bare source
-        #     # names so they correlate with the same-named analysis nuisances on the MC.
-        #     for _mcsyst in self._dd.mc_systematics:
-        #         weights.add(_mcsyst, _ones, self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Up"), self._dd.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{_mcsyst}Down"))
-        # # selections (delta_tau_met_phi cut is removed from SR)
+                for dddy_stat in dddy_var.stat_systematics:
+                    weights.add(f"datadriven_{dddy_stat}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_stat}Down"))
+                for dddy_mcsyst in dddy_var.mc_systematics:
+                    weights.add(f"datadriven_{dddy_mcsyst}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
         common_sel = ['triggers', 'lumimask', 'metfilter']
         if "jetveto" in selection.names:
