@@ -1,0 +1,42 @@
+{
+ "schema_version": 2,
+ "description": "SMQawa muon smearing random numbers",
+ "corrections": [
+  {
+   "name": "RandomSmearing",
+   "description": "Per-muon uniform random number for the Muon POG resolution smearing (muonscarekit d3933320)",
+   "version": 1,
+   "inputs": [
+    {
+     "name": "evtNr",
+     "type": "int",
+     "description": "event number"
+    },
+    {
+     "name": "lumiNr",
+     "type": "int",
+     "description": "luminosity block"
+    },
+    {
+     "name": "phi",
+     "type": "real",
+     "description": "muon phi"
+    }
+   ],
+   "output": {
+    "name": "random_number",
+    "type": "real",
+    "description": "uniform random number in [0, 1)"
+   },
+   "data": {
+    "nodetype": "hashprng",
+    "inputs": [
+     "evtNr",
+     "lumiNr",
+     "phi"
+    ],
+    "distribution": "stdflat"
+   }
+  }
+ ]
+}

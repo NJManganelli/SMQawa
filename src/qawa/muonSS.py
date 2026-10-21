@@ -7,7 +7,7 @@ import correctionlib
 import os
 from coffea.lookup_tools.doublecrystalball import doublecrystalball
 
-def get_rndm(eta, nL, cset):
+def get_rndm(eta, phi, nL, evtNr, lumiNr, cset, random_evaluator):
     # obtain parameters from correctionlib
     eta_f, nL_f = eta, nL
 
@@ -18,12 +18,7 @@ def get_rndm(eta, nL, cset):
 
     # get random number following the CB
     # we need reproducible random numbers since in the systematics call, the previous correction needs to be cancelled out
-    if len(eta) > 0:
-        seed = abs(np.float32(eta[0]).view("int32"))
-    else:
-        seed = 42
-    rng = np.random.default_rng(seed=seed)
-    rndm_f = rng.random(len(eta))
+    rndm_f = ak.to_numpy(random_evaluator.evaluate(evtNr, lumiNr, phi))
 
     # Avoid SciPy/coffea warnings by not constructing DSCB with invalid parameters.
     # Valid if: sigma>0, alpha>0, n>1 (all finite). We only evaluate PPF on valid entries.
@@ -96,18 +91,22 @@ def filter_boundaries(pt_corr, pt, low_pt_threshold=26):
     return pt_corr
 
 
-def pt_resol(pt, eta, nL, cset):
+def pt_resol(pt, eta, phi, nL, evtNr, lumiNr, cset, random_evaluator):
     """ "
     Function for the calculation of the resolution correction
     Input:
     pt - muon transverse momentum
     eta - muon pseudorapidity
+    phi - muon azimuthal angle
     nL - muon number of tracker layers
+    evtNr - event number, one entry per muon
+    lumiNr - luminosity block, one entry per muon
     cset - correctionlib object
+    random_evaluator - correctionlib evaluator of RandomSmearing (uniform random number per muon)
 
     This function should only be applied to reco muons in MC!
     """
-    rndm = get_rndm(eta, nL, cset)
+    rndm = get_rndm(eta, phi, nL, evtNr, lumiNr, cset, random_evaluator)
     std = get_std(pt, eta, nL, cset)
     k = get_k(eta, "nom", cset)
 
@@ -273,8 +272,11 @@ def muon_pt_scare(sink, events, unc_type=None, is_correction=True, clibhandler=N
             return events
         else:
             # * MC needs both scale and resolution corrections
+            random_evaluator = clibhandler.getCorrectionSet("muon_smear_random")["RandomSmearing"]
+            event_number = ak.flatten(ak.broadcast_arrays(events.event, muons_jagged.pt)[0])
+            lumi_block = ak.flatten(ak.broadcast_arrays(events.luminosityBlock, muons_jagged.pt)[0])
             muons_pt_scarecorr = pt_resol(
-                muons.pt_scalecorr, muons.eta, muons.nTrackerLayers, evaluator
+                muons.pt_scalecorr, muons.eta, muons.phi, muons.nTrackerLayers, event_number, lumi_block, evaluator, random_evaluator
             )
             muons["pt_scare_factor"] = muons_pt_scarecorr / muons.pt_nanoaod
             muons["pt_scarecorr"] = muons_pt_scarecorr

@@ -1,0 +1,54 @@
+{
+ "schema_version": 2,
+ "description": "SMQawa electron smearing random numbers",
+ "corrections": [
+  {
+   "name": "electron_smear_random",
+   "description": "Per-electron standard normal deviate for the EGM energy smearing",
+   "version": 1,
+   "inputs": [
+    {
+     "name": "event",
+     "type": "int",
+     "description": "event number"
+    },
+    {
+     "name": "run",
+     "type": "int",
+     "description": "run number"
+    },
+    {
+     "name": "pt",
+     "type": "real",
+     "description": "uncorrected electron pt"
+    },
+    {
+     "name": "eta",
+     "type": "real",
+     "description": "electron eta"
+    },
+    {
+     "name": "phi",
+     "type": "real",
+     "description": "electron phi"
+    }
+   ],
+   "output": {
+    "name": "z",
+    "type": "real",
+    "description": "standard normal deviate"
+   },
+   "data": {
+    "nodetype": "hashprng",
+    "inputs": [
+     "event",
+     "run",
+     "pt",
+     "eta",
+     "phi"
+    ],
+    "distribution": "normal"
+   }
+  }
+ ]
+}

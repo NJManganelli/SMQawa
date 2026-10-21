@@ -279,6 +279,8 @@ class CorrectionlibHandler:
 
     def _loadUserPaths(self, analysis: str):
         # Where to load HLT, DDDY, etc corrections...
+        self._paths["electron_smear_random"] = _QAWA_DATA / "egm" / "electron_smear_random.json"
+        self._paths["muon_smear_random"] = _QAWA_DATA / "muo" / "muon_smear_random.json"
         if analysis == "inc-WZ":
             match self._era:
                 case "2024":
