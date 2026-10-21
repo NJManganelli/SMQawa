@@ -2272,10 +2272,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         event = ak.with_field(event, muon, 'Muon')
 
         # Electron corrections
-        electron = event.Electron
         if "electronSS_EtDependent" in self.clibhandler.keys():
             # Main pt/energy scale correction needed in data, updates event.Electron pt and energyErr fields and adds *_orig, plus the scale and smear variations to MC
             EGM_scale_and_smear(None, events=event, is_correction=True, unc_type=None, restriction=None, is_electron=True, clibhandler=self.clibhandler)
+            electron = event.Electron
             # Unlike Muon ScaRe KIT corrections, these systematics calls just extract the already embedded pt_(scale|smear)_(up|down) pt and energyErr for casting to systematics (if MC)
             if not is_data:
                 electron.add_systematic("scale_e", "UpDownMultiSystematic", ("pt", "energyErr"),
@@ -2291,6 +2291,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                                    partial(propagate_shift_to_met, events=event, met=met, shifted_collection=electron, unc_type="Resolution", is_correction=False)
                                    )
         else:
+            electron = event.Electron
             if not is_data:
                 electron.add_systematic("scale_e", "UpDownMultiSystematic", ("pt", "energyErr"),
                                         partial(EGM_scale_and_smear_v9, events=event,is_correction=False, unc_type="Scale", restriction=None, is_electron=True)

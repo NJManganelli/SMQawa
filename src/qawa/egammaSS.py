@@ -247,6 +247,8 @@ def EGM_scale_and_smear_v9(sink, events, unc_type=None, is_correction=True, rest
             else:
                 raise ValueError(f"unc_type must be one of Scale or Resolution, got {unc_type}")
     
+EGM_SS_MIN_PT = 15.0
+
 # sink is needed for expected "pt" argument in the add_systematic callable function, so that all others may be set; it can be set to anything since it's unused
 def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restriction=None, is_electron=False, clibhandler=None):
     # if year in ["2016preVFP", "2016postVFP", "2017", "2018", "2022preEE", "2022postEE", "2023preBPix", "2023postBPix", "2024", "2025"]:
@@ -271,6 +273,7 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
     # SCeta = ak.flatten(egm_object.ScEta) if "ScEta" in egm_object.fields else ak.flatten(egm_object.superclusterEta)
     r9 = ak.flatten(egm_object.r9)
     pt_raw = ak.flatten(egm_object.pt_raw) if "pt_raw" in egm_object.fields else ak.flatten(egm_object.pt)
+    applicable = pt_raw >= EGM_SS_MIN_PT
     energy = ak.flatten(egm_object.energy)
     energyErr = ak.flatten(egm_object.energyErr)
 
@@ -278,17 +281,14 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
         cset = clibhandler.getCorrectionSet(cset_name)
         scale_evaluator = cset.compound["Scale"]
         smear_and_syst_evaluator = cset["SmearAndSyst"]
+        random_evaluator = clibhandler.getCorrectionSet("electron_smear_random")["electron_smear_random"]
     except KeyError as ke:
         raise KeyError(f"Unable to locatione {cset_name} in clibhandler with available keys: {clibhandler.keys()}")
 
     # we need reproducible random numbers since in the systematics call, the previous correction needs to be cancelled out
-    if len(SCeta) > 0:
-        seed = abs(np.float32(SCeta[0]).view("int32"))
-    else:
-        seed = 42
-    rng = np.random.default_rng(seed=seed)
-    random_throw = rng.normal(loc=0., scale=1.)
-    smear_correction = smear_and_syst_evaluator.evaluate('smear', pt_raw, r9, SCeta)
+    event_number = ak.flatten(ak.broadcast_arrays(events.event, egm_object.pt)[0])
+    random_throw = random_evaluator.evaluate(event_number, run, pt_raw, ak.flatten(egm_object.eta), ak.flatten(egm_object.phi))
+    smear_correction = np.where(applicable, smear_and_syst_evaluator.evaluate('smear', pt_raw, r9, SCeta), 0.0)
 
 
     if is_correction:
@@ -340,8 +340,12 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
             if is_electron:
                 scale_up = smear_and_syst_evaluator.evaluate("scale_up", pt_raw, r9, SCeta)
                 scale_down = smear_and_syst_evaluator.evaluate("scale_down", pt_raw, r9, SCeta)
-                smear_up = smear_and_syst_evaluator.evaluate('smear_up', pt_raw, r9, SCeta) * random_throw
-                smear_down = smear_and_syst_evaluator.evaluate('smear_down', pt_raw, r9, SCeta) * random_throw
+                smear_up = smear_and_syst_evaluator.evaluate('smear_up', pt_raw, r9, SCeta)
+                smear_down = smear_and_syst_evaluator.evaluate('smear_down', pt_raw, r9, SCeta)
+                scale_up = np.where(applicable, scale_up, 1.0)
+                scale_down = np.where(applicable, scale_down, 1.0)
+                smear_up = np.where(applicable, smear_up, 0.0)
+                smear_down = np.where(applicable, smear_down, 0.0)
             else:
                 pass
                 # Conservative scale uncertainties without Zmmg corrections
@@ -367,11 +371,11 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
                 elif restriction == "EE":
                     uncMask = ak.to_numpy(ak.flatten(egm_object.isScEtaEE))
     
-                scale_up = np.where(uncMask, scale_up, np.zeros_like(scale_up))
-                scale_down = np.where(uncMask, scale_down, np.zeros_like(scale_down))
+                scale_up = np.where(uncMask, scale_up, np.ones_like(scale_up))
+                scale_down = np.where(uncMask, scale_down, np.ones_like(scale_down))
     
-                smear_up = np.where(uncMask, smear_up, np.zeros_like(smear_up))
-                smear_down = np.where(uncMask, smear_down, np.zeros_like(smear_down))
+                smear_up = np.where(uncMask, smear_up, smear_correction)
+                smear_down = np.where(uncMask, smear_down, smear_correction)
             
             pt_corr_scale_up = pt_corr * scale_up
             pt_corr_scale_down = pt_corr * scale_down
@@ -380,8 +384,8 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
 
             smearing_factor_up = 1 + smear_up * random_throw
             smearing_factor_down = 1 + smear_down * random_throw
-            pt_corr_smear_up = pt_corr * smearing_factor_up
-            pt_corr_smear_down = pt_corr * smearing_factor_down
+            pt_corr_smear_up = pt_raw * smearing_factor_up
+            pt_corr_smear_down = pt_raw * smearing_factor_down
             energyErr_corr_smear_up = np.sqrt( energyErr**2 + (energy * smear_up)**2 ) * smearing_factor_up
             energyErr_corr_smear_down = np.sqrt( energyErr**2 + (energy * smear_down)**2 ) * smearing_factor_down
 
@@ -408,10 +412,10 @@ def EGM_scale_and_smear(sink, events, unc_type=None, is_correction=True, restric
             # # -- Smearing also affects the energy uncertainty in Data.
             # smear = smear_and_syst_evaluator.evaluate("smear", data_electrons.pt * scale, data_electrons.r9, data_electrons.ScEta)
             # data_energyErr_corrected = np.sqrt((data_electrons.energyErr)**2 + (data_electrons.energy * smear)**2) * scale
-            scale_correction = scale_evaluator.evaluate("scale", run, SCeta, r9, pt_raw, gain)
+            scale_correction = np.where(applicable, scale_evaluator.evaluate("scale", run, SCeta, r9, pt_raw, gain), 1.0)
             pt_corr = pt_raw * scale_correction
-            smear_correction = smear_and_syst_evaluator.evaluate("smear", pt_corr, r9, SCeta)
-            energyErr_corr = np.sqrt( (energyErr**2 + (energy * smear_correction)**2 ) * scale_correction )
+            smear_correction = np.where(applicable, smear_and_syst_evaluator.evaluate("smear", pt_corr, r9, SCeta), 0.0)
+            energyErr_corr = np.sqrt(energyErr**2 + (energy * smear_correction)**2) * scale_correction
 
             corrected_egm_object["energyErr_orig"] = corrected_egm_object.energyErr
             corrected_egm_object["energyErr"] = ak.unflatten(energyErr_corr, counts)
