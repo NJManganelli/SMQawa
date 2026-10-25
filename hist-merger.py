@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--dir", type=str, default=".", help="path to directory where files are stored, defaults to '.'")
     parser.add_argument("--outdir", type=str, default=".",
                         help="path to directory where files should be written, defaults to '.'")
+    parser.add_argument("-f", "--filename", type=str, default="latest_DD", help="output file name suffix")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     options = parser.parse_args()
 
@@ -115,7 +116,7 @@ def main():
     for directory, n in collections.Counter(os.path.dirname(f) for f in empty).items():
         rich.print(f"[red]{os.path.basename(directory)} contains {n} empty pkl.gz files!")
 
-    output = os.path.join(options.outdir, f"merged-histogram-{options.tag}-{options.era}-Inc_WZ_latest_rawdeeptau.pkl.gz")
+    output = os.path.join(options.outdir, f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}.pkl.gz")
     with gzip.open(output + ".tmp", "wb") as f:
         pickle.dump(merged, f)
     os.replace(output + ".tmp", output)
