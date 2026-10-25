@@ -979,6 +979,40 @@ def test_kinds_from_sumw_cross_check(tmp_path, dataset, kind):
     assert f"--kindsFrom {config} lists {dataset} as {kind}, but its sumw is" in r.stderr
 
 
+@pytest.mark.parametrize("listed", [None, "signal", "background", "data"])
+def test_kinds_from_eft_is_only_signal(tmp_path, listed):
+    args, out = kinds_layout(tmp_path)
+    groups = {"data": ("data", ["MuonEG"]), "DY": ("background", ["DY"]), "WZ": ("signal", ["WZ", "ZZ"])}
+    if listed is not None:
+        groups["EFT"] = (listed, ["EFT"])
+    config = write_config(tmp_path / "kinds.yaml", groups)
+    r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", config)
+    if listed in (None, "signal"):
+        assert r.returncode == 0, r.stderr
+        assert sorted(load_output(out / "merged-histogram-Inc-tagX-2024-latest-EFT.pkl.gz")) == ["EFT"]
+    else:
+        assert r.returncode != 0 and outputs(out) == []
+        assert f"dataset EFT has kind eft in its job files, but --kindsFrom {config} lists it as {listed}" in r.stderr
+
+
+def test_kinds_from_malformed_config_names_the_config(tmp_path):
+    args, out = kinds_layout(tmp_path)
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("groups:\n  DY:\n")
+    scalar = tmp_path / "scalar.yaml"
+    scalar.write_text("groups:\n  DY:\n    processes: DY\n    type: background\n")
+    (tmp_path / "bad.json").write_text("{not json")
+    included = tmp_path / "included.yaml"
+    included.write_text("xsections: !include bad.json\ngroups:\n  DY:\n    processes: [DY]\n    type: background\n")
+    expected = {empty: f"--kindsFrom {empty}: group DY is None, expected a mapping with type and processes",
+                scalar: f"--kindsFrom {scalar}: group DY has processes 'DY', expected a list",
+                included: f"--kindsFrom {included}: Expecting property name"}
+    for config, message in expected.items():
+        r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", str(config))
+        assert r.returncode != 0 and message in r.stderr and "Traceback" not in r.stderr
+    assert outputs(out) == []
+
+
 def test_kinds_from_conflicting_configs_fail(tmp_path):
     args, out = kinds_layout(tmp_path)
     first = write_config(tmp_path / "first.yaml", {"DY": ("background", ["DY"])})

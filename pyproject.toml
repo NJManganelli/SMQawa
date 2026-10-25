@@ -35,7 +35,8 @@ dependencies = [
     "coffea>=0.7.15",
     "vector",
     "onnxruntime",
-    "scipy"
+    "scipy",
+    "PyYAML"
 ]
 
 [build-system]

@@ -60,17 +60,23 @@ def read_kinds(paths):
         try:
             with open(path) as f:
                 config = yaml.load(f, ConfigLoader)
-        except (OSError, yaml.YAMLError) as err:
+        except (OSError, json.JSONDecodeError, yaml.YAMLError) as err:
             raise SystemExit(f"--kindsFrom {path}: {err}") from err
         groups = config.get("groups") if isinstance(config, dict) else None
         if not groups:
             raise SystemExit(f"--kindsFrom {path}: no groups")
         listed = collections.defaultdict(set)
         for group, entry in groups.items():
+            if not isinstance(entry, dict):
+                raise SystemExit(f"--kindsFrom {path}: group {group} is {entry!r}, expected a mapping with type and "
+                                 f"processes")
             if entry.get("type") not in CONFIG_KINDS:
                 raise SystemExit(f"--kindsFrom {path}: group {group} has type {entry.get('type')!r}, expected one of "
                                  f"{', '.join(CONFIG_KINDS)}")
-            for dataset in entry.get("processes") or []:
+            processes = entry.get("processes") or []
+            if not isinstance(processes, list):
+                raise SystemExit(f"--kindsFrom {path}: group {group} has processes {processes!r}, expected a list")
+            for dataset in processes:
                 listed[dataset].add(entry["type"])
         for dataset, types in listed.items():
             if types == {"data", "background"}:
@@ -298,7 +304,7 @@ def split_by_kind(merged, kinds):
             if (kind == "data") != (content["sumw"] < 0):
                 raise SystemExit(f"--kindsFrom {path} lists {dataset} as {listed}, but its sumw is {content['sumw']} "
                                  f"(only data has a negative sumw)")
-        elif listed is not None and kind != "eft" and kind != CONFIG_KINDS[listed]:
+        elif listed is not None and kind != CONFIG_KINDS[listed] and (kind, listed) != ("eft", "signal"):
             raise SystemExit(f"dataset {dataset} has kind {kind} in its job files, but --kindsFrom {path} lists it as "
                              f"{listed}")
         parts.setdefault(KIND_FILES[kind], {})[dataset] = content
