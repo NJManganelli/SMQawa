@@ -28,6 +28,20 @@ FAILING_DUMP = (
     "sys.argv = sys.argv[1:]\n"
     "runpy.run_path(sys.argv[0], run_name='__main__')\n"
 )
+SECOND_DUMP_FAILS = (
+    "import pickle, runpy, sys\n"
+    "real = pickle.dump\n"
+    "calls = []\n"
+    "def dump(obj, f, *args, **kwargs):\n"
+    "    calls.append(obj)\n"
+    "    if len(calls) == 2:\n"
+    "        f.write(b'partial')\n"
+    "        raise OSError('disk full')\n"
+    "    real(obj, f, *args, **kwargs)\n"
+    "pickle.dump = dump\n"
+    "sys.argv = sys.argv[1:]\n"
+    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+)
 PROTOCOL_RUNNER = ("import pickle, runpy, sys; pickle.HIGHEST_PROTOCOL = pickle.DEFAULT_PROTOCOL - 1; "
                    "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
 POOL_SPY = (
@@ -748,6 +762,23 @@ def test_malformed_lumi_names_the_file(tmp_path):
     assert r.returncode != 0 and "DY/lumi" in r.stderr and "histogram_1.pkl.gz" in r.stderr and outputs(out) == []
 
 
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_empty_lumi_records_keep_the_dtype(tmp_path, ncores):
+    records = [[], numpy.array([[1, 2], [1, 1]], dtype=numpy.uint32), numpy.empty((0, 2)),
+               numpy.array([[3, 1]], dtype=numpy.uint32), []]
+    for i, record in enumerate(records):
+        content = dy_job(10, 100)
+        content["DY"]["lumi"] = record
+        write_job(tmp_path / "jobs_tagX_2024_DY", i, content)
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
+    assert r.returncode == 0, r.stderr
+    lumi = merged_output(out)["DY"]["lumi"]
+    assert lumi.dtype == numpy.uint32 and lumi.tolist() == [[1, 1], [1, 2], [3, 1]]
+
+
 def kind_job(dataset, weight, sumw, kind):
     content = {dataset: dy_job(weight, sumw)["DY"]}
     if kind is not None:
@@ -847,3 +878,13 @@ def test_unknown_or_missing_kind_in_one_file_fails(tmp_path):
     r = run_merger(tmp_path, *args)
     assert r.returncode != 0 and "WZ/kind" in r.stderr and "unknown kind 'background'" in r.stderr
     assert outputs(out) == []
+
+
+def test_failed_split_write_keeps_every_previous_output(tmp_path):
+    args, out = kind_layout(tmp_path)
+    assert run_merger(tmp_path, *args, "--splitByKind").returncode == 0
+    before = {name: (out / name).read_bytes() for name in outputs(out)}
+    write_job(tmp_path / "jobs_tagX_2024_D", 2, kind_job("D", 12, -1, "data"))
+    r = run_merger(tmp_path, *args, "--splitByKind", runner=SECOND_DUMP_FAILS)
+    assert r.returncode != 0 and "disk full" in r.stderr
+    assert {name: (out / name).read_bytes() for name in outputs(out)} == before

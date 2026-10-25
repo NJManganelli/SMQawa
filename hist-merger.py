@@ -151,7 +151,10 @@ def add_into(accumulator, key, value):
 def add_lumi(target, lumi):
     blocks = numpy.asarray(lumi).reshape(-1, 2)
     if "lumi" in target:
-        blocks = numpy.concatenate([target["lumi"], blocks])
+        if len(blocks) == 0:
+            return
+        if len(target["lumi"]):
+            blocks = numpy.concatenate([target["lumi"], blocks])
     target["lumi"] = numpy.unique(blocks, axis=0)
 
 
@@ -372,10 +375,17 @@ def main():
         for content in merged.values():
             content.pop("kind", None)
         outputs = {f"{name}.pkl.gz": merged}
-    for basename, content in outputs.items():
-        output = os.path.join(options.outdir, basename)
-        with gzip.open(output + ".tmp", "wb", compresslevel=options.compressionLevel) as f:
-            pickle.dump(content, f, protocol=pickle.HIGHEST_PROTOCOL)
+    paths = [os.path.join(options.outdir, basename) for basename in outputs]
+    try:
+        for output, content in zip(paths, outputs.values()):
+            with gzip.open(output + ".tmp", "wb", compresslevel=options.compressionLevel) as f:
+                pickle.dump(content, f, protocol=pickle.HIGHEST_PROTOCOL)
+    except BaseException:
+        for output in paths:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(output + ".tmp")
+        raise
+    for output in paths:
         os.replace(output + ".tmp", output)
         print(output)
     summary = (f"merged {len(filenames)} files from {ndirectories} directories in {time.monotonic() - start:.1f} s; "
