@@ -1,16 +1,22 @@
+import collections
 import contextlib
 import gzip
 import importlib.util
+import io
+import multiprocessing
 import os
 import pickle
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import hist
 import numpy
+import psutil
 import pytest
+from rich.console import Console
 
 SCRIPT = Path(__file__).resolve().parents[1] / "hist-merger.py"
 FAILING_DUMP = (
@@ -563,3 +569,127 @@ def test_small_inputs_keep_four_workers(tmp_path):
     r = run_merger(tmp_path, *args, ncores=None, runner=POOL_SPY)
     assert r.returncode == 0, r.stderr
     assert re.search(r"^pool 4$", r.stdout, re.M) and "merging in the main process" not in " ".join(r.stdout.split())
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_display_does_not_change_results(tmp_path, ncores):
+    args, out = layout(tmp_path)
+    plain = run_merger(tmp_path, *args, ncores=ncores)
+    assert plain.returncode == 0, plain.stderr
+    assert "\u2501" not in plain.stdout and "\x1b[" not in plain.stdout and " free, " not in plain.stdout
+    reference = merged_values(merged_output(out))
+    env = {**os.environ, "FORCE_COLOR": "1", "COLUMNS": "120"}
+    shown = run_merger(tmp_path, *args, ncores=ncores, env=env)
+    assert shown.returncode == 0, shown.stderr
+    assert "dirs " in shown.stdout and " free, " in shown.stdout and ("chunks" in shown.stdout) == (ncores > 1)
+    assert merged_values(merged_output(out)) == reference
+    quiet = run_merger(tmp_path, *args, "--noProgress", ncores=ncores, env=env)
+    assert quiet.returncode == 0, quiet.stderr
+    assert " free, " not in quiet.stdout and merged_values(merged_output(out)) == reference
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_summary_line_in_every_mode(tmp_path, ncores):
+    args, out = layout(tmp_path)
+    r = run_merger(tmp_path, *args, ncores=ncores)
+    worker = r", largest worker \d+\.\d\d GiB" if ncores > 1 else ""
+    pattern = rf"^merged 7 files from 2 directories in \d+\.\d s; peak RSS: main process \d+\.\d\d GiB{worker}$"
+    assert r.returncode == 0 and re.search(pattern, r.stdout, re.M), r.stdout
+
+
+def test_display_counts_directories_files_and_chunks(tmp_path):
+    module = load_module()
+    files = sorted(str(tmp_path / f"jobs_tagX_2024_{d}" / f"histogram_{i}.pkl.gz")
+                   for d, n in (("A", 10), ("B", 2), ("C", 1)) for i in range(n))
+    chunks = module.make_chunks(files, 4)
+    display = module.MergeDisplay(files, len(chunks), False, "2024")
+    for chunk in chunks[:2]:
+        display.chunk_done(chunk)
+    tasks = {t.description.strip(): t for t in display.progress.tasks}
+    assert tasks["dirs 0/3"].completed == 8 and tasks["dirs 0/3"].total == 13 and tasks["chunks"].completed == 2
+    assert tasks["A"].completed == 8 and tasks["A"].total == 10
+    for chunk in chunks[2:]:
+        display.chunk_done(chunk)
+    tasks = {t.description.strip(): t for t in display.progress.tasks}
+    assert tasks["dirs 3/3"].completed == 13 and tasks["chunks"].completed == len(chunks)
+    assert tasks["C"].completed == 1
+
+
+def test_rows_fit_80_columns(monkeypatch):
+    module = load_module()
+    files = sorted(f"/d/jobs_WZ_DD_2024_{d}/histogram_{i}.pkl.gz"
+                   for d, n in (("WZto3LNu_EFT_madgraph_pythia8", 10), ("TTto2L2Nu", 4)) for i in range(n))
+    chunks = module.make_chunks(files, 4)
+    monkeypatch.setattr(module, "tree_memory", lambda processes: (int(114.4 * 2**30), 5))
+    display = module.MergeDisplay(files, len(chunks), True, "2024")
+    display.live.renderable.renderables[1].columns[1].total = 256 * 2**30
+    for chunk in chunks[:3]:
+        display.chunk_done(chunk)
+    console = Console(file=io.StringIO(), width=80, force_terminal=True, color_system=None)
+    with console.capture() as capture:
+        console.print(display.live.renderable)
+    lines = capture.get().splitlines()
+    assert len(lines) == 4 and lines[1].startswith("  WZto3LNu"), lines
+    assert lines[-1].startswith("memory") and "\u2501" in lines[-1] and "proc" in lines[-1], lines
+
+
+@pytest.mark.parametrize("fraction, free, style", [(0.4, 0.5, "green"), (0.6, 0.3, "yellow"), (0.9, 0.05, "bold red"),
+                                                   (0.2, 0.05, "bold red")])
+def test_memory_colours(monkeypatch, fraction, free, style):
+    module = load_module()
+    total = 64 * 2**30
+    monkeypatch.setattr(module, "tree_memory", lambda processes: (int(fraction * total), 3))
+    memory = collections.namedtuple("memory", "total available")
+    monkeypatch.setattr(module.psutil, "virtual_memory", lambda: memory(total, int(free * total)))
+    grid = module.MemoryBarColumn(True).render(None)
+    assert list(grid.columns[1].cells)[0].style == style
+
+
+def test_memory_sampling_error_does_not_abort(monkeypatch):
+    module = load_module()
+
+    def denied(self, recursive=False):
+        raise psutil.AccessDenied(os.getpid())
+
+    monkeypatch.setattr(psutil.Process, "children", denied)
+    files = [f"/d/jobs_t_2024_A/histogram_{i}.pkl.gz" for i in range(4)]
+    console = Console(file=io.StringIO(), force_terminal=True, width=80)
+    with module.MergeDisplay(files, 2, True, "2024", console=console) as display:
+        for filename in files:
+            time.sleep(0.3)
+            display.files_done([filename])
+    assert "memory unavailable" in console.file.getvalue()
+
+
+def test_serial_display_does_not_scan_processes(monkeypatch):
+    module = load_module()
+    calls = []
+    monkeypatch.setattr(psutil.Process, "children", lambda self, recursive=False: calls.append(1) or [])
+    module.MemoryBarColumn(False).render(None)
+    assert calls == []
+    column = module.MemoryBarColumn(True)
+    column.render(None)
+    column.render(None)
+    assert calls == [1]
+
+
+def hold(ready):
+    block = os.urandom(200 * 2**20)
+    ready.set()
+    time.sleep(60 + len(block) * 0)
+
+
+def test_tree_memory_counts_children():
+    module = load_module()
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    child = context.Process(target=hold, args=(ready,))
+    child.start()
+    try:
+        assert ready.wait(30)
+        own = psutil.Process().memory_info().rss
+        rss, count = module.tree_memory(module.MemoryBarColumn(True).current_processes())
+        assert rss >= own + 150 * 2**20 and count >= 2
+    finally:
+        child.kill()
+        child.join()
