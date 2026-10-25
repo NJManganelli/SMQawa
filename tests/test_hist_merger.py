@@ -312,3 +312,13 @@ def test_growing_categories_across_files(tmp_path):
         write_job(tmp_path / "jobs_tagX_2024_DY", i, {"DY": {"hist": {"x": make_hist(e)}, "sumw": 1}})
     merged = merge(tmp_path, tmp_path)
     assert_same(merged["DY"]["hist"]["x"], make_hist([x for e in entries for x in e]))
+
+
+def test_output_name(tmp_path):
+    three_files(tmp_path)
+    out = tmp_path / "out"
+    merge(tmp_path, tmp_path)
+    assert outputs(out) == ["merged-histogram-Inc-tagX-2024-latest.pkl.gz"]
+    (out / "merged-histogram-Inc-tagX-2024-latest.pkl.gz").unlink()
+    merge(tmp_path, tmp_path, "-f", "mysuffix")
+    assert outputs(out) == ["merged-histogram-Inc-tagX-2024-mysuffix.pkl.gz"]
