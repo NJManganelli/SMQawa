@@ -249,6 +249,8 @@ def main():
     parser.add_argument("--ncores", type=int, default=None,
                         help="number of worker processes (default 4, or 1 when the largest input is at least 10 MiB); "
                              "1 or less merges in the main process; memory grows with --ncores")
+    parser.add_argument("--compressionLevel", type=int, default=4,
+                        help="gzip level for the OUTPUT file (1=fast/larger .. 9=slow/smaller)")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     parser.add_argument("--noProgress", action="store_true",
                         help="do not show the progress display; it is also off when stdout is not a terminal")
@@ -309,8 +311,8 @@ def main():
         rich.print(f"[red]{os.path.basename(directory)} contains {n} empty pkl.gz files!")
 
     output = os.path.join(options.outdir, f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}.pkl.gz")
-    with gzip.open(output + ".tmp", "wb") as f:
-        pickle.dump(merged, f)
+    with gzip.open(output + ".tmp", "wb", compresslevel=options.compressionLevel) as f:
+        pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
     os.replace(output + ".tmp", output)
     print(output)
     summary = (f"merged {len(filenames)} files from {ndirectories} directories in {time.monotonic() - start:.1f} s; "
