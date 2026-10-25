@@ -111,14 +111,15 @@ class LeptonScaleFactors:
     def __init_legacy__(self, era:str='2018', isAPV:bool=False, isEE:bool=False, isBPix:bool=False):
         raise NotImplementedError("Legacy path deprecated due to evolution in clib")
 
-    def muonSF(self, muons: ak.Array):
+    def muonSF(self, muons: ak.Array, variations=True):
         if self.clib_muons:
-            return self.muonSF_clib(muons)
+            return self.muonSF_clib(muons, variations=variations)
         else:
             raise NotImplementedError("Legacy path deprecated due to evolution in clib")
 
-    def muonSF_clib(self, muons: ak.Array):
+    def muonSF_clib(self, muons: ak.Array, variations=True):
         maskEtaPt = (np.abs(muons.eta) <= 2.4) & (muons.pt >= self.mask_m_pt)
+        systs = {"nominal": "nominal", "up": "systup", "down": "systdown"} if variations else {"nominal": "nominal"}
         # Alternative systematics are additive (i.e. must be added to nominal to bound it): "AltBkg", "AltSig","massBin","massRange","stat","syst","tagIso"
         id_sfs = {sig2_name: ak.where(maskEtaPt, 
                                       # correction
@@ -127,7 +128,7 @@ class LeptonScaleFactors:
                                                                                     sig2_syst
                                                                                     ),
                                       ak.ones_like(muons.pt)
-                                      ) for sig2_name, sig2_syst in {"nominal": "nominal", "up": "systup", "down": "systdown"}.items()
+                                      ) for sig2_name, sig2_syst in systs.items()
                   }
         id_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in id_sfs.items()}
         iso_sfs = {sig2_name: ak.where(maskEtaPt, 
@@ -137,10 +138,17 @@ class LeptonScaleFactors:
                                                                                      sig2_syst
                                                                                      ),
                                        ak.ones_like(muons.pt)
-                                       ) for sig2_name, sig2_syst in {"nominal": "nominal", "up": "systup", "down": "systdown"}.items()
+                                       ) for sig2_name, sig2_syst in systs.items()
                   }
         iso_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in iso_sfs.items()}
         _ones = ak.ones_like(muons.pt)
+        if not variations:
+            return {
+                "eff_m_idNominal":   id_sfs["nominal"],
+                "eff_m_isoNominal":  iso_sfs["nominal"],
+                "eff_e_recoNominal": _ones,
+                "eff_e_idNominal":   _ones,
+            }
         return {
             "eff_m_idNominal":   id_sfs["nominal"],
             "eff_m_idUp":        id_sfs["up"],
@@ -156,13 +164,13 @@ class LeptonScaleFactors:
             "eff_e_idDown":      _ones,
         }
 
-    def electronSF(self, electrons: ak.Array):
+    def electronSF(self, electrons: ak.Array, variations=True):
         if self.clib_electrons:
-            return self.electronSF_clib(electrons)
+            return self.electronSF_clib(electrons, variations=variations)
         else:
             raise NotImplementedError("Legacy path deprecated due to evolution in clib")
 
-    def electronSF_clib(self, electrons: ak.Array):
+    def electronSF_clib(self, electrons: ak.Array, variations=True):
         # 0	{ name: "year", type: "string", description: "year/scenario: example, 2017, 2022FG etc" }
         # 1	{ name: "ValType", type: "string", description: "sf/ sfup / sfdown / effData / effMC / err_stat /err_statData / err_statMC / err_syst (sfup = sf + syst, sfdown = sf - syst) " }
         # 2	{ name: "WorkingPoint", type: "string", description: "Working Point of choice : Loose, Medium etc." }
@@ -178,6 +186,7 @@ class LeptonScaleFactors:
         maskAbove75 = sig4_electrons_pt >= 75.0
         mask20to75 = (sig4_electrons_pt >= 20.0) & (sig4_electrons_pt < 75.0)
         maskBelow20 = (sig4_electrons_pt >= 10.0) & (sig4_electrons_pt < 20.0)
+        systs = {"nominal": "sf", "up": "sfup", "down": "sfdown"} if variations else {"nominal": "sf"}
         reco_sfs = {sig1_name: ak.where(maskAbove75,
                                         # correction RecoAbove75
                                         self.clib_electrons[self.cset_e_key].evaluate(self.sig0_year,
@@ -206,7 +215,7 @@ class LeptonScaleFactors:
                                                           ak.ones_like(sig4_electrons_pt)
                                                           )
                                                  )
-                                        ) for sig1_name, sig1_syst in {"nominal": "sf", "up": "sfup", "down": "sfdown"}.items()
+                                        ) for sig1_name, sig1_syst in systs.items()
                     }
         reco_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in reco_sfs.items()}
         maskAbove10 = sig4_electrons_pt >= 10.0
@@ -220,10 +229,17 @@ class LeptonScaleFactors:
                                                                                     ),
                                       # fallback: 1.0
                                       ak.ones_like(sig4_electrons_pt)
-                                      ) for sig1_name, sig1_syst in {"nominal": "sf", "up": "sfup", "down": "sfdown"}.items()
+                                      ) for sig1_name, sig1_syst in systs.items()
                   }
         id_sfs = {k: ak.fill_none(v, 1.0, axis=1) for k, v in id_sfs.items()}
         _ones = ak.ones_like(electrons.pt)
+        if not variations:
+            return {
+                "eff_m_idNominal":   _ones,
+                "eff_m_isoNominal":  _ones,
+                "eff_e_recoNominal": reco_sfs["nominal"],
+                "eff_e_idNominal":   id_sfs["nominal"],
+            }
         return {
             "eff_m_idNominal":   _ones,
             "eff_m_idUp":        _ones,
@@ -239,8 +255,11 @@ class LeptonScaleFactors:
             "eff_e_idDown":      id_sfs["down"],
         }
 
-    def append_lepton_sf(self, lead_lep, subl_lep, weights):
+    def append_lepton_sf(self, lead_lep, subl_lep, weights, variations=True):
         for key in ["eff_m_id", "eff_m_iso", "eff_e_reco", "eff_e_id"]:
+            if not variations:
+                weights.add(key, getattr(lead_lep, f"{key}Nominal") * getattr(subl_lep, f"{key}Nominal"))
+                continue
             weights.add(
                 key,
                 getattr(lead_lep, f"{key}Nominal") * getattr(subl_lep, f"{key}Nominal"),
