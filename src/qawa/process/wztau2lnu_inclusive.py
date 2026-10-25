@@ -500,6 +500,52 @@ def fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
             target.fill(channel=channel, **dict(zip(slot_names, label)), **dense, weight=weight(k, rows))
 
 
+def merge_histograms(hists):
+    first = hists[0]
+    axes = []
+    for i, ax in enumerate(first.axes):
+        if isinstance(ax, hist.axis.StrCategory):
+            labels = list(dict.fromkeys(label for h in hists for label in h.axes[i]))
+            merged_ax = hist.axis.StrCategory(labels, growth=ax.traits.growth, overflow=ax.traits.overflow)
+            merged_ax.__dict__.update(copy.deepcopy(ax.__dict__))
+            axes.append(merged_ax)
+        else:
+            assert all(h.axes[i] == ax for h in hists[1:])
+            axes.append(ax)
+    assert all(h.storage_type == first.storage_type for h in hists[1:])
+    out = type(first)(*axes, storage=first.storage_type())
+    out.__dict__.update(copy.deepcopy(first.__dict__))
+    out._variance_known = len(hists) == 1 and first._variance_known
+    out_view = out.view(flow=True)
+    for h in hists:
+        if any(isinstance(ax, hist.axis.StrCategory) and len(ax) == 0 for ax in h.axes):
+            continue
+        index = []
+        for ax, out_ax in zip(h.axes, out.axes):
+            if isinstance(ax, hist.axis.StrCategory):
+                index.append([out_ax.index(label) for label in ax] + ([len(out_ax)] if ax.traits.overflow else []))
+            else:
+                index.append(range(ax.extent))
+        block = np.ix_(*index)
+        view = h.view(flow=True)
+        for field in view.dtype.names or (None,):
+            if field is None:
+                out_view[block] += view
+            else:
+                out_view[field][block] += view[field]
+    return out
+
+
+def merge_histogram_sets(outputs):
+    grouped = {}
+    for output in outputs:
+        for dataset, histos in output.items():
+            keys = grouped.setdefault(dataset, {})
+            for key, h in histos.items():
+                keys.setdefault(key, []).append(h)
+    return {dataset: {key: merge_histograms(hists) for key, hists in keys.items()} for dataset, keys in grouped.items()}
+
+
 class wzinclusive_processor(processor.ProcessorABC):
     # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing
     # NEED
@@ -2412,7 +2458,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 name
             ) for collections, name in shifts
         ]
-        return processor.accumulate(shifts)
+        return merge_histogram_sets(shifts)
 
 
 
