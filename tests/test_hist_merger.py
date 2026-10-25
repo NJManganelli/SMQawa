@@ -449,10 +449,14 @@ def test_shared_reference_in_one_file_is_not_double_counted(tmp_path, ncores):
     assert merged["DY"]["hist"]["h1"].sum().value == 2 and merged["DY"]["hist"]["h2"].sum().value == 2
 
 
-def layout(tmp_path):
+def layout(tmp_path, big=False):
     for dataset, n in (("DY", 3), ("WZ", 4)):
         for i in range(n):
-            write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i, {dataset: dy_job(10 + i, 100)["DY"]})
+            content = {dataset: dy_job(10 + i, 100)["DY"]}
+            if big and i == 0 and dataset == "DY":
+                payload = numpy.random.default_rng(0).integers(0, 256, 11 * 2**20, numpy.uint8)
+                content[dataset]["hist"]["blob"] = {"payload": payload}
+            write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i, content)
     out = tmp_path / "out"
     out.mkdir(exist_ok=True)
     return ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out)), out
@@ -542,3 +546,20 @@ def test_workers_start_before_the_display(tmp_path):
     r = run_merger(tmp_path, *args, ncores=2, runner=POOL_SPY, env=env)
     assert r.returncode == 0, r.stderr
     assert has_pool_line(r.stdout) and re.search(r"^threads 1$", r.stdout, re.M), r.stdout
+
+
+def test_eft_size_input_falls_back_to_one_core(tmp_path):
+    args, out = layout(tmp_path, big=True)
+    r = run_merger(tmp_path, *args, ncores=None, runner=POOL_SPY)
+    assert r.returncode == 0, r.stderr
+    assert "merging in the main process" in " ".join(r.stdout.split()) and not has_pool_line(r.stdout)
+    r = run_merger(tmp_path, *args, ncores=2, runner=POOL_SPY)
+    assert r.returncode == 0, r.stderr
+    assert re.search(r"^pool 2$", r.stdout, re.M) and "memory grows with --ncores" in " ".join(r.stdout.split())
+
+
+def test_small_inputs_keep_four_workers(tmp_path):
+    args, out = layout(tmp_path)
+    r = run_merger(tmp_path, *args, ncores=None, runner=POOL_SPY)
+    assert r.returncode == 0, r.stderr
+    assert re.search(r"^pool 4$", r.stdout, re.M) and "merging in the main process" not in " ".join(r.stdout.split())

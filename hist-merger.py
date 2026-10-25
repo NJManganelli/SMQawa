@@ -16,6 +16,8 @@ import rich
 from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TimeElapsedColumn
 from rich.text import Text
 
+LARGE_INPUT_MIB = 10
+
 
 class MemoryUsageColumn(TextColumn):
     warn_threshold = 256
@@ -167,8 +169,9 @@ def main():
     parser.add_argument("--outdir", type=str, default=".",
                         help="path to directory where files should be written, defaults to '.'")
     parser.add_argument("-f", "--filename", type=str, default="latest", help="output file name suffix")
-    parser.add_argument("--ncores", type=int, default=4,
-                        help="number of worker processes (default 4); 1 or less merges in the main process")
+    parser.add_argument("--ncores", type=int, default=None,
+                        help="number of worker processes (default 4, or 1 when the largest input is at least 10 MiB); "
+                             "1 or less merges in the main process; memory grows with --ncores")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     options = parser.parse_args()
 
@@ -197,7 +200,18 @@ def main():
             print(f"{directory}: {n} files")
 
     load = read_whole_file if options.eos else read_gzip
-    ncores = max(1, options.ncores)
+    largest = max(os.path.getsize(f) for f in filenames) / 2**20
+    if options.ncores is None:
+        ncores = 1 if largest >= LARGE_INPUT_MIB else 4
+        if ncores == 1:
+            rich.print(f"[yellow]largest input is {largest:.0f} MiB: merging in the main process to bound memory; "
+                       f"pass --ncores to use workers anyway")
+    else:
+        ncores = max(1, options.ncores)
+        if ncores > 1 and largest >= LARGE_INPUT_MIB:
+            rich.print(f"[yellow]largest input is {largest:.0f} MiB: each of the {ncores} workers holds a partial "
+                       f"merge and a decompressed job file (with --eos also the raw file contents), so memory grows "
+                       f"with --ncores")
     progress = progress_bar()
     task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
     if ncores == 1:
