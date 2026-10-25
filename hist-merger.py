@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
+import numpy
 import psutil
 import rich
 from rich.console import Console, Group
@@ -146,6 +147,13 @@ def add_into(accumulator, key, value):
         accumulator[key] = value.copy() if hasattr(value, "copy") else value
 
 
+def add_lumi(target, lumi):
+    blocks = numpy.asarray(lumi).reshape(-1, 2)
+    if "lumi" in target:
+        blocks = numpy.concatenate([target["lumi"], blocks])
+    target["lumi"] = numpy.unique(blocks, axis=0)
+
+
 def merge_files(filenames, merged, load):
     empty = []
     for filename in filenames:
@@ -163,6 +171,10 @@ def merge_files(filenames, merged, load):
                     add_into(target["hist"], name, histogram)
                     key = None
                 target["sumw"] += content["sumw"]
+                if "lumi" in content:
+                    key = f"{dataset}/lumi"
+                    add_lumi(target, content["lumi"])
+                    key = None
         except Exception as err:
             if key is None:
                 raise RuntimeError(f"cannot merge {filename}: {err}") from err
@@ -188,6 +200,12 @@ def merge_into(merged, partial, source):
                 raise RuntimeError(f"cannot add {dataset}/{name} from {source} to the histograms merged "
                                    f"before it: {err}") from err
         merged[dataset]["sumw"] += content["sumw"]
+        if "lumi" in content:
+            try:
+                add_lumi(merged[dataset], content["lumi"])
+            except Exception as err:
+                raise RuntimeError(f"cannot add {dataset}/lumi from {source} to the histograms merged "
+                                   f"before it: {err}") from err
 
 
 def make_chunks(filenames, ncores):

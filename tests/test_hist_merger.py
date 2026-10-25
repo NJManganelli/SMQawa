@@ -709,3 +709,40 @@ def test_output_compression_and_protocol(tmp_path):
                    runner=PROTOCOL_RUNNER)
     assert r.returncode == 0, r.stderr
     assert gzip.decompress(name.read_bytes())[1] == pickle.DEFAULT_PROTOCOL - 1
+
+
+def lumi_job(weight, blocks):
+    content = dy_job(weight, 100)
+    if blocks is not None:
+        content["DY"]["lumi"] = numpy.array(blocks, dtype=numpy.uint32).reshape(-1, 2)
+    return content
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_lumi_blocks_are_merged_as_a_union(tmp_path, ncores):
+    blocks = [[[1, 1], [1, 2]], [[1, 2], [2, 7]], None, [[2, 7], [1, 1], [3, 1]]]
+    for i, b in enumerate(blocks):
+        write_job(tmp_path / ("jobs_tagX_2024_DY" if i < 2 else "jobs_tagX_2024_DY_ext"), i, lumi_job(10, b))
+    for i in range(2):
+        write_job(tmp_path / "jobs_tagX_2024_WZ", i, {"WZ": dy_job(5, 100)["DY"]})
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
+    assert r.returncode == 0, r.stderr
+    merged = merged_output(out)
+    assert merged["DY"]["lumi"].tolist() == [[1, 1], [1, 2], [2, 7], [3, 1]]
+    assert sorted(merged["DY"]) == ["hist", "lumi", "sumw"] and sorted(merged["DY"]["hist"]) == ["x"]
+    assert merged["DY"]["sumw"] == 400 and merged["DY"]["hist"]["x"].sum().value == 40
+    assert sorted(merged["WZ"]) == ["hist", "sumw"]
+
+
+def test_malformed_lumi_names_the_file(tmp_path):
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, lumi_job(10, [[1, 1]]))
+    content = dy_job(10, 100)
+    content["DY"]["lumi"] = numpy.array([1, 2, 3])
+    write_job(tmp_path / "jobs_tagX_2024_DY", 1, content)
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    assert r.returncode != 0 and "DY/lumi" in r.stderr and "histogram_1.pkl.gz" in r.stderr and outputs(out) == []
