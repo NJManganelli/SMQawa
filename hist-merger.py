@@ -6,6 +6,7 @@ import getpass
 import glob
 import gzip
 import itertools
+import json
 import math
 import os
 import pickle
@@ -18,6 +19,7 @@ from concurrent.futures.process import BrokenProcessPool
 import numpy
 import psutil
 import rich
+import yaml
 from rich.console import Console, Group
 from rich.live import Live
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, ProgressBar, ProgressColumn, TextColumn,
@@ -29,6 +31,57 @@ LARGE_INPUT_MIB = 10
 LABEL_WIDTH = 20
 BAR_WIDTH = 24
 KIND_FILES = {"data": "Data", "mc": "MC-backgrounds", "signal": "MC-signal", "eft": "EFT"}
+CONFIG_KINDS = {"signal": "signal", "background": "mc", "data": "data"}
+
+
+class ConfigLoader(yaml.SafeLoader):
+    pass
+
+
+def construct_include(loader, node):
+    name = loader.construct_scalar(node)
+    candidates = [os.path.join(os.path.dirname(loader.name), name), name]
+    filename = os.path.abspath(next((c for c in candidates if os.path.exists(c)), candidates[0]))
+    extension = os.path.splitext(filename)[1].lstrip(".")
+    with open(filename) as f:
+        if extension in ("yaml", "yml"):
+            return yaml.load(f, ConfigLoader)
+        if extension == "json":
+            return json.load(f)
+        return f.read()
+
+
+ConfigLoader.add_constructor("!include", construct_include)
+
+
+def read_kinds(paths):
+    kinds = {}
+    for path in paths:
+        try:
+            with open(path) as f:
+                config = yaml.load(f, ConfigLoader)
+        except (OSError, yaml.YAMLError) as err:
+            raise SystemExit(f"--kindsFrom {path}: {err}") from err
+        groups = config.get("groups") if isinstance(config, dict) else None
+        if not groups:
+            raise SystemExit(f"--kindsFrom {path}: no groups")
+        listed = collections.defaultdict(set)
+        for group, entry in groups.items():
+            if entry.get("type") not in CONFIG_KINDS:
+                raise SystemExit(f"--kindsFrom {path}: group {group} has type {entry.get('type')!r}, expected one of "
+                                 f"{', '.join(CONFIG_KINDS)}")
+            for dataset in entry.get("processes") or []:
+                listed[dataset].add(entry["type"])
+        for dataset, types in listed.items():
+            if types == {"data", "background"}:
+                types = {"data"}
+            if len(types) > 1:
+                raise SystemExit(f"--kindsFrom {path}: {dataset} is listed as {' and '.join(sorted(types))}")
+            (kind,) = types
+            if kinds.setdefault(dataset, (kind, path))[0] != kind:
+                raise SystemExit(f"--kindsFrom: {dataset} is {kinds[dataset][0]} in {kinds[dataset][1]} but {kind} "
+                                 f"in {path}")
+    return kinds
 
 
 def tree_memory(processes):
@@ -231,15 +284,22 @@ def merge_into(merged, partial, source):
                                f"before it: {err}") from err
 
 
-def split_by_kind(merged):
+def split_by_kind(merged, kinds):
     parts = {"Data": {}, "MC-backgrounds": {}, "MC-signal": {}}
     for dataset, content in merged.items():
         kind = content.get("kind")
+        listed, path = kinds.get(dataset, (None, None))
         if kind is None:
-            if content["sumw"] >= 0:
-                raise SystemExit(f"--splitByKind: dataset {dataset} has no kind and sumw {content['sumw']} >= 0, so "
-                                 f"it is not data; cannot tell signal from background without kind")
-            kind = "data"
+            if listed is None:
+                raise SystemExit(f"--splitByKind: dataset {dataset} has no kind and no --kindsFrom config lists it; "
+                                 f"its kind is not guessed")
+            kind = CONFIG_KINDS[listed]
+            if (kind == "data") != (content["sumw"] < 0):
+                raise SystemExit(f"--kindsFrom {path} lists {dataset} as {listed}, but its sumw is {content['sumw']} "
+                                 f"(only data has a negative sumw)")
+        elif listed is not None and kind != "eft" and kind != CONFIG_KINDS[listed]:
+            raise SystemExit(f"dataset {dataset} has kind {kind} in its job files, but --kindsFrom {path} lists it as "
+                             f"{listed}")
         parts.setdefault(KIND_FILES[kind], {})[dataset] = content
     return parts
 
@@ -307,8 +367,12 @@ def main():
                         help="gzip level for the OUTPUT file (1=fast/larger .. 9=slow/smaller)")
     parser.add_argument("--splitByKind", action="store_true",
                         help="write the Data, MC-backgrounds and MC-signal datasets (and EFT ones, if any) to "
-                             "separate files ...-<filename>-<part>.pkl.gz, by each dataset's kind; without kind, "
-                             "a negative sumw means data")
+                             "separate files ...-<filename>-<part>.pkl.gz, by each dataset's kind (from its job files, "
+                             "else from --kindsFrom); an empty part never replaces an existing file")
+    parser.add_argument("--kindsFrom", nargs="+", default=[], metavar="CONFIG.yaml",
+                        help="with --splitByKind: DCTools input configs whose groups give the kind of datasets "
+                             "without one (type signal -> signal, background -> mc, data -> data); a dataset's own "
+                             "kind must agree with them, and EFT kinds come only from the job files")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     parser.add_argument("--noProgress", action="store_true",
                         help="do not show the progress display; it is also off when stdout is not a terminal")
@@ -318,6 +382,9 @@ def main():
         parser.error("-t/--tag names the output and must not contain *, ? or [; use --match for a glob")
     if not os.path.isdir(options.outdir):
         parser.error(f"--outdir {options.outdir} is not a directory")
+    if options.kindsFrom and not options.splitByKind:
+        parser.error("--kindsFrom requires --splitByKind")
+    kinds = read_kinds(options.kindsFrom)
     if options.match and not fnmatch.fnmatchcase(options.tag, options.match):
         print(f"warning: -t {options.tag} does not match --match {options.match}; the output is still named after "
               f"{options.tag}")
@@ -371,7 +438,7 @@ def main():
     name = f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}"
     if options.splitByKind:
         outputs = {}
-        for part, content in split_by_kind(merged).items():
+        for part, content in split_by_kind(merged, kinds).items():
             basename = f"{name}-{part}.pkl.gz"
             if not content and os.path.exists(os.path.join(options.outdir, basename)):
                 print(f"{basename}: no {part} datasets in this merge, so the existing file is kept")

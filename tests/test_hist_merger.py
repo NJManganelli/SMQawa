@@ -786,14 +786,27 @@ def kind_job(dataset, weight, sumw, kind):
     return content
 
 
+def write_config(path, groups, header=""):
+    lines = [header, "groups:"]
+    for group, (kind, datasets) in groups.items():
+        lines += [f"  {group}:", "    processes:", *(f"      - {d}" for d in datasets), "    type:", f"      {kind}"]
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
 def kind_layout(tmp_path):
     for dataset, sumw, kind in (("D", -1, "data"), ("B", 100, "mc"), ("S", 50, "signal"), ("E", 20, "eft"),
                                 ("O", -1, None)):
         for i in range(2):
             write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i, kind_job(dataset, 10 + i, sumw, kind))
+    write_config(tmp_path / "kinds.yaml", {"data": ("data", ["O"])})
     out = tmp_path / "out"
     out.mkdir()
     return ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out)), out
+
+
+def split(tmp_path):
+    return "--splitByKind", "--kindsFrom", str(tmp_path / "kinds.yaml")
 
 
 def load_output(path):
@@ -804,7 +817,7 @@ def load_output(path):
 @pytest.mark.parametrize("ncores", [1, 2])
 def test_split_by_kind_writes_one_file_per_kind(tmp_path, ncores):
     args, out = kind_layout(tmp_path)
-    r = run_merger(tmp_path, *args, "--splitByKind", ncores=ncores)
+    r = run_merger(tmp_path, *args, *split(tmp_path), ncores=ncores)
     assert r.returncode == 0, r.stderr
     name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
     parts = {"Data": ["D", "O"], "MC-backgrounds": ["B"], "MC-signal": ["S"], "EFT": ["E"]}
@@ -842,14 +855,15 @@ def test_split_without_eft_writes_the_three_files(tmp_path):
     assert load_output(out / name.format("MC-signal")) == {}
 
 
-def test_split_refuses_to_guess_signal_without_kind(tmp_path):
+@pytest.mark.parametrize("sumw", [100, -1])
+def test_split_never_guesses_a_missing_kind(tmp_path, sumw):
     write_job(tmp_path / "jobs_tagX_2024_D", 0, kind_job("D", 10, -1, "data"))
-    write_job(tmp_path / "jobs_tagX_2024_X", 0, kind_job("X", 10, 100, None))
+    write_job(tmp_path / "jobs_tagX_2024_X", 0, kind_job("X", 10, sumw, None))
     out = tmp_path / "out"
     out.mkdir()
     args = ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
     r = run_merger(tmp_path, *args, "--splitByKind")
-    assert r.returncode != 0 and "cannot tell signal from background" in r.stderr and "X" in r.stderr
+    assert r.returncode != 0 and "dataset X has no kind and no --kindsFrom config lists it" in r.stderr
     assert outputs(out) == []
     assert run_merger(tmp_path, *args).returncode == 0
 
@@ -882,24 +896,103 @@ def test_unknown_or_missing_kind_in_one_file_fails(tmp_path):
 
 def test_failed_split_write_keeps_every_previous_output(tmp_path):
     args, out = kind_layout(tmp_path)
-    assert run_merger(tmp_path, *args, "--splitByKind").returncode == 0
+    assert run_merger(tmp_path, *args, *split(tmp_path)).returncode == 0
     before = {name: (out / name).read_bytes() for name in outputs(out)}
     write_job(tmp_path / "jobs_tagX_2024_D", 2, kind_job("D", 12, -1, "data"))
-    r = run_merger(tmp_path, *args, "--splitByKind", runner=SECOND_DUMP_FAILS)
+    r = run_merger(tmp_path, *args, *split(tmp_path), runner=SECOND_DUMP_FAILS)
     assert r.returncode != 0 and "disk full" in r.stderr
     assert {name: (out / name).read_bytes() for name in outputs(out)} == before
 
 
 def test_empty_split_part_never_replaces_an_existing_file(tmp_path):
     args, out = kind_layout(tmp_path)
-    assert run_merger(tmp_path, *args, "--splitByKind").returncode == 0
+    assert run_merger(tmp_path, *args, *split(tmp_path)).returncode == 0
     name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
     kept = {part: (out / name.format(part)).read_bytes() for part in ("MC-backgrounds", "MC-signal", "EFT")}
     write_job(tmp_path / "jobs_tagX_2024_D", 2, kind_job("D", 12, -1, "data"))
-    r = run_merger(tmp_path, *args, "--sample", "D", "--splitByKind")
+    r = run_merger(tmp_path, *args, "--sample", "D", *split(tmp_path))
     assert r.returncode == 0, r.stderr
     assert {part: (out / name.format(part)).read_bytes() for part in kept} == kept
     for part in ("MC-backgrounds", "MC-signal"):
         assert f"{name.format(part)}: no {part} datasets in this merge, so the existing file is kept" in r.stdout
     data = load_output(out / name.format("Data"))
     assert sorted(data) == ["D"] and data["D"]["sumw"] == -3
+
+
+def kinds_layout(tmp_path):
+    for dataset, sumw, kind in (("MuonEG", -1, None), ("DY", 100, None), ("WZ", 50, None), ("ZZ", 30, None),
+                                ("EFT", 20, "eft")):
+        write_job(tmp_path / f"jobs_tagX_2024_{dataset}", 0, kind_job(dataset, 10, sumw, kind))
+    out = tmp_path / "out"
+    out.mkdir()
+    return ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out)), out
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_kinds_from_configs_split_old_pickles(tmp_path, ncores):
+    args, out = kinds_layout(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "xsec.yaml").write_text("DY: 1.0\n")
+    groups = {"data": ("data", ["MuonEG"]), "DDDY": ("background", ["MuonEG"]), "DY": ("background", ["DY"]),
+              "WZ": ("signal", ["WZ", "EFT"])}
+    first = write_config(tmp_path / "config" / "first.yaml", groups, header="xsections:\n  !include xsec.yaml")
+    second = write_config(tmp_path / "second.yaml", {"DY": ("background", ["DY", "ZZ"])})
+    r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", first, second, ncores=ncores)
+    assert r.returncode == 0, r.stderr
+    name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
+    parts = {"Data": ["MuonEG"], "MC-backgrounds": ["DY", "ZZ"], "MC-signal": ["WZ"], "EFT": ["EFT"]}
+    assert outputs(out) == sorted(name.format(part) for part in parts)
+    for part, datasets in parts.items():
+        assert sorted(load_output(out / name.format(part))) == datasets
+
+
+def test_kinds_from_disagreeing_record_names_dataset_and_config(tmp_path):
+    args, out = kinds_layout(tmp_path)
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, kind_job("DY", 10, 100, "signal"))
+    config = write_config(tmp_path / "kinds.yaml", {"data": ("data", ["MuonEG"]), "DY": ("background", ["DY"]),
+                                                    "WZ": ("signal", ["WZ", "ZZ"])})
+    r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", config)
+    assert r.returncode != 0 and outputs(out) == []
+    assert f"dataset DY has kind signal in its job files, but --kindsFrom {config} lists it as background" in r.stderr
+
+
+def test_kinds_from_unlisted_dataset_fails(tmp_path):
+    args, out = kinds_layout(tmp_path)
+    config = write_config(tmp_path / "kinds.yaml", {"data": ("data", ["MuonEG"]), "DY": ("background", ["DY"])})
+    r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", config)
+    assert r.returncode != 0 and outputs(out) == []
+    assert "dataset WZ has no kind and no --kindsFrom config lists it" in r.stderr
+
+
+@pytest.mark.parametrize("dataset, kind", [("DY", "data"), ("MuonEG", "background"), ("MuonEG", "signal")])
+def test_kinds_from_sumw_cross_check(tmp_path, dataset, kind):
+    args, out = kinds_layout(tmp_path)
+    groups = {"data": ("data", ["MuonEG"]), "DY": ("background", ["DY", "ZZ"]), "WZ": ("signal", ["WZ"])}
+    groups = {group: (t, [d for d in datasets if d != dataset]) for group, (t, datasets) in groups.items()}
+    groups["moved"] = (kind, [dataset])
+    config = write_config(tmp_path / "kinds.yaml", groups)
+    r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", config)
+    assert r.returncode != 0 and outputs(out) == []
+    assert f"--kindsFrom {config} lists {dataset} as {kind}, but its sumw is" in r.stderr
+
+
+def test_kinds_from_conflicting_configs_fail(tmp_path):
+    args, out = kinds_layout(tmp_path)
+    first = write_config(tmp_path / "first.yaml", {"DY": ("background", ["DY"])})
+    second = write_config(tmp_path / "second.yaml", {"DY": ("signal", ["DY"])})
+    within = write_config(tmp_path / "within.yaml", {"DY": ("background", ["DY"]), "S": ("signal", ["DY"])})
+    unknown = write_config(tmp_path / "unknown.yaml", {"DY": ("mc", ["DY"])})
+    expected = {(first, second): f"--kindsFrom: DY is background in {first} but signal in {second}",
+                (within,): f"--kindsFrom {within}: DY is listed as background and signal",
+                (unknown,): f"--kindsFrom {unknown}: group DY has type 'mc', expected one of signal, background, data"}
+    for configs, message in expected.items():
+        r = run_merger(tmp_path, *args, "--splitByKind", "--kindsFrom", *configs)
+        assert r.returncode != 0 and message in r.stderr and "globbing" not in r.stdout
+    assert outputs(out) == []
+
+
+def test_kinds_from_requires_split_by_kind(tmp_path):
+    args, out = kinds_layout(tmp_path)
+    config = write_config(tmp_path / "kinds.yaml", {"DY": ("background", ["DY"])})
+    r = run_merger(tmp_path, *args, "--kindsFrom", config)
+    assert r.returncode == 2 and "--kindsFrom requires --splitByKind" in r.stderr and outputs(out) == []

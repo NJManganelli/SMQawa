@@ -46,7 +46,12 @@ given. Unreadable or unmergeable job files are an error naming the file (and the
 disagree); empty ones are skipped and reported. A worker that dies, for example killed for memory, ends the merge
 with an error. A dataset's `lumi` record (processed run and luminosity-block pairs) is merged as a union.
 `--splitByKind` writes the Data, MC-backgrounds and MC-signal datasets (and EFT ones) to separate files
-`...-<suffix>-<part>.pkl.gz`, using each dataset's `kind` (data, mc, signal, eft); without `kind`, a negative
-`sumw` means data, and anything else is an error. On a terminal the merger shows its progress per directory, file
+`...-<suffix>-<part>.pkl.gz`, using each dataset's `kind` (data, mc, signal, eft). For job files without `kind`,
+`--kindsFrom CONFIG.yaml [...]` takes it from DCTools input configs, whose `groups:` list `processes:` with
+`type: signal|background|data` (signal, mc, data; a dataset in both a data group and a background group, as in the
+data-driven DY group, is data). A dataset's own `kind` must agree with the configs (EFT kinds come only from the job
+files), a dataset without `kind` that no config lists is an error, and a kind taken from a config must give a negative
+`sumw` exactly for data. The files of one merge are replaced together, after all of them were written, and a part with
+no datasets never replaces an existing file. On a terminal the merger shows its progress per directory, file
 and chunk and the memory of all its processes; `--noProgress` turns this off, and it is off in batch logs. Every run ends with a line giving the elapsed time and
 the peak memory (RSS) of the main process and of the largest worker.
