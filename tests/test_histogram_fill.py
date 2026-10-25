@@ -468,3 +468,75 @@ def test_cache_safety():
     assert not np.array_equal(o3.view(flow=True)["value"], o4.view(flow=True)["value"])
 
     assert container_sizes() == before
+
+
+def filled(labels, seed, eft=False, metadata=None):
+    rng = np.random.default_rng(seed)
+    h = booked(hist.axis.Regular(5, 0, 10, name="x"), eft=eft)
+    if metadata is not None:
+        h.metadata = metadata
+    for label in labels:
+        n = 50
+        extra = {"eft": rng.choice(["t0", "t1"], n)} if eft else {}
+        h.fill(channel=label[0], systematic=label[1], x=rng.normal(5, 4, n), weight=rng.normal(1, 0.3, n), **extra)
+    return h
+
+
+def merge_inputs():
+    pass_a = {"ds": {
+        "disjoint": filled([("chA", "nominal")], 1, metadata={"tag": "a"}),
+        "overlap": filled([("chA", "nominal"), ("chB", "nominal")], 2),
+        "untouched": filled([], 3),
+        "three": filled([("chA", "nominal")], 4, eft=True),
+    }}
+    pass_b = {"ds": {
+        "disjoint": filled([("chB", "jesUp")], 5, metadata={"tag": "b"}),
+        "overlap": filled([("chB", "nominal"), ("chA", "jesUp")], 6),
+        "untouched": filled([], 7),
+        "three": filled([("chB", "jesUp"), ("chA", "nominal")], 8, eft=True),
+        "single": filled([("chA", "jesUp")], 9),
+    }, "other": {"only": filled([("chC", "nominal")], 10)}}
+    pass_c = {"ds": {
+        "disjoint": filled([("chC", "nominal")], 11),
+        "overlap": filled([("chA", "nominal")], 12),
+        "untouched": filled([], 13),
+        "three": filled([("chA", "jesDown")], 14, eft=True),
+    }}
+    return [pass_a, {}, pass_b, pass_c]
+
+
+def assert_same_merge(merged, ref):
+    assert list(merged) == list(ref)
+    for dataset in ref:
+        assert list(merged[dataset]) == list(ref[dataset])
+        for key, r in ref[dataset].items():
+            o = merged[dataset][key]
+            assert o.__dict__ == r.__dict__, key
+            assert len(o.axes) == len(r.axes)
+            for oa, ra in zip(o.axes, r.axes):
+                assert type(oa) is type(ra) and oa.__dict__ == ra.__dict__ and oa.traits == ra.traits
+                assert list(oa) == list(ra) if isinstance(ra, hist.axis.StrCategory) else oa == ra
+            assert o.storage_type == r.storage_type
+            for field in ("value", "variance"):
+                assert np.array_equal(o.view(flow=True)[field], r.view(flow=True)[field]), (key, field)
+
+
+def test_merge_histogram_sets_matches_accumulate():
+    from coffea import processor
+    merged = wzmod.merge_histogram_sets(merge_inputs())
+    ref = processor.accumulate(merge_inputs())
+    assert ref["ds"]["overlap"]._variance_known is False
+    assert ref["ds"]["single"]._variance_known is True
+    assert ref["other"]["only"]._variance_known is True
+    assert_same_merge(merged, ref)
+    assert list(merged["ds"]["disjoint"].axes["channel"]) == ["chA", "chB", "chC"]
+
+    one = merge_inputs()[2]
+    assert_same_merge(wzmod.merge_histogram_sets([one]), processor.accumulate([one]))
+
+
+def test_merge_histogram_sets_empty_cases():
+    assert wzmod.merge_histogram_sets([]) == {}
+    assert wzmod.merge_histogram_sets([{}, {}]) == {}
+    assert wzmod.merge_histogram_sets([{"ds": {}}, {"ds": {}}]) == {"ds": {}}
+    assert wzmod.merge_histogram_sets([{}, {"ds": {}}, {}]) == {"ds": {}}
