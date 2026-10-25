@@ -77,7 +77,6 @@ class tauIDScaleFactors:
         inputs_vsmu =  {"eta": tau_eta, "genmatch": tau_genmatch, "wp": self.vsmu_wp, "wp_VSjet": self.vsjet_wp, "wp_VSe": self.vse_wp, "syst": syst}
         if inputs_vsmu["wp_VSjet"] in ['VTight', 'VVTight']:
             inputs_vsmu["wp_VSjet"] = 'Tight'
-        inputs_tes =   {"pt": tau_pt, "eta": tau_eta, "dm": tau_dm, "genmatch": tau_genmatch, "id": self.tagger, "wp": self.vsjet_wp, "wp_VSe": self.vse_wp, "syst": syst}
 
         # {self.tagger}VSjet
         # sf_vsjet = self.corr_vsjet.evaluate(tau_pt,tau_dm,tau_genmatch, self.vsjet_wp, self.vse_wp, syst,"pt")
@@ -103,14 +102,6 @@ class tauIDScaleFactors:
         sf_vsmu = ak.fill_none(sf_vsmu, 1.)
         sf_vsmu = ak.unflatten(sf_vsmu, ntaus)
         sf_vsmu = ak.prod(sf_vsmu, axis=-1)
-
-        # tau energy scale
-        # tau_energy_scale ['pt', 'eta', 'dm', 'genmatch', 'id', 'wp', 'wp_VSe', 'syst'] #v15
-        # tau_energy_scale ['pt', 'eta', 'dm', 'genmatch', 'id', 'syst'] #v9
-        sf_enscale = self.corr_enscale.evaluate(*({k.name: inputs_tes[k.name] for k in self.corr_enscale.inputs}.values()))
-        sf_enscale = ak.fill_none(sf_enscale, 1.)
-        sf_enscale = ak.unflatten(sf_enscale, ntaus)
-        sf_enscale = ak.prod(sf_enscale, axis=-1)
 
         return  sf_vsjet, sf_vse, sf_vsmu
 
