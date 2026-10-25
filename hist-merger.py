@@ -1,14 +1,15 @@
 import argparse
 import collections
 import fnmatch
-import functools
 import getpass
 import glob
 import gzip
+import itertools
 import math
 import os
 import pickle
-from multiprocessing import Pool
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 import psutil
 import rich
@@ -102,14 +103,48 @@ def merge_chunk(filenames, load):
     return merged, empty
 
 
-def merge_into(merged, partial):
+def merge_into(merged, partial, source):
     for dataset, content in partial.items():
         if dataset not in merged:
             merged[dataset] = content
             continue
         for name, histogram in content["hist"].items():
-            add_into(merged[dataset]["hist"], name, histogram)
+            try:
+                add_into(merged[dataset]["hist"], name, histogram)
+            except Exception as err:
+                raise RuntimeError(f"cannot add {dataset}/{name} from {source} to the histograms merged "
+                                   f"before it: {err}") from err
         merged[dataset]["sumw"] += content["sumw"]
+
+
+def make_chunks(filenames, ncores):
+    size = math.ceil(len(filenames) / ncores)
+    chunks = []
+    for _, group in itertools.groupby(filenames, key=os.path.dirname):
+        group = list(group)
+        chunks.extend(group[i:i + size] for i in range(0, len(group), size))
+    return chunks
+
+
+def merge_parallel(chunks, executor, ncores, load, live, done):
+    merged, empty = {}, []
+    chunks = iter(chunks)
+    pending = collections.deque((chunk, executor.submit(merge_chunk, chunk, load))
+                                for chunk in itertools.islice(chunks, ncores))
+    with live:
+        while pending:
+            chunk, future = pending.popleft()
+            try:
+                partial, chunk_empty = future.result()
+            except BrokenProcessPool as err:
+                raise RuntimeError("a worker process died (for example killed for using too much memory); no "
+                                   "output was written; rerun with fewer --ncores") from err
+            empty.extend(chunk_empty)
+            merge_into(merged, partial, chunk[0] if len(chunk) == 1 else f"files {chunk[0]} to {chunk[-1]}")
+            done(chunk)
+            for chunk in itertools.islice(chunks, 1):
+                pending.append((chunk, executor.submit(merge_chunk, chunk, load)))
+    return merged, empty
 
 
 def main():
@@ -163,23 +198,19 @@ def main():
 
     load = read_whole_file if options.eos else read_gzip
     ncores = max(1, options.ncores)
-    merged, empty = {}, []
+    progress = progress_bar()
+    task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
     if ncores == 1:
-        with progress_bar() as progress:
-            task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
+        merged, empty = {}, []
+        with progress:
             for filename in filenames:
                 empty += merge_files([filename], merged, load)
                 progress.advance(task)
     else:
-        nchunks = min(len(filenames), ncores * 4)
-        size = math.ceil(len(filenames) / nchunks)
-        chunks = [filenames[i:i + size] for i in range(0, len(filenames), size)]
-        with Pool(processes=ncores) as pool, progress_bar() as progress:
-            task = progress.add_task("[cyan]Merging chunks...", total=len(chunks))
-            for partial, chunk_empty in pool.imap_unordered(functools.partial(merge_chunk, load=load), chunks):
-                merge_into(merged, partial)
-                empty += chunk_empty
-                progress.advance(task)
+        chunks = make_chunks(filenames, ncores)
+        with ProcessPoolExecutor(max_workers=min(ncores, len(chunks))) as executor:
+            merged, empty = merge_parallel(chunks, executor, ncores, load, progress,
+                                           lambda chunk: progress.advance(task, len(chunk)))
 
     for directory, n in collections.Counter(os.path.dirname(f) for f in empty).items():
         rich.print(f"[red]{os.path.basename(directory)} contains {n} empty pkl.gz files!")

@@ -1,6 +1,9 @@
+import contextlib
 import gzip
+import importlib.util
 import os
 import pickle
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +22,32 @@ FAILING_DUMP = (
     "sys.argv = sys.argv[1:]\n"
     "runpy.run_path(sys.argv[0], run_name='__main__')\n"
 )
+POOL_SPY = (
+    "import concurrent.futures, runpy, sys, threading\n"
+    "real = concurrent.futures.ProcessPoolExecutor\n"
+    "class Spy(real):\n"
+    "    def __init__(self, max_workers=None, *args, **kwargs):\n"
+    "        print(f'pool {max_workers}', flush=True)\n"
+    "        self.first = True\n"
+    "        super().__init__(max_workers, *args, **kwargs)\n"
+    "    def submit(self, *args, **kwargs):\n"
+    "        if self.first:\n"
+    "            print(f'threads {threading.active_count()}', flush=True)\n"
+    "            self.first = False\n"
+    "        return super().submit(*args, **kwargs)\n"
+    "concurrent.futures.ProcessPoolExecutor = Spy\n"
+    "sys.argv = sys.argv[1:]\n"
+    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+)
+KILLER = (
+    "import gzip, multiprocessing, os, signal\n"
+    "real = gzip.open\n"
+    "def killing_open(filename, *args, **kwargs):\n"
+    "    if multiprocessing.parent_process() is not None and str(filename).endswith('histogram_2.pkl.gz'):\n"
+    "        os.kill(os.getpid(), signal.SIGKILL)\n"
+    "    return real(filename, *args, **kwargs)\n"
+    "gzip.open = killing_open\n"
+)
 
 
 def make_hist(entries, nbins=4):
@@ -35,10 +64,18 @@ def write_job(directory, index, content):
         pickle.dump(content, f)
 
 
-def run_merger(cwd, *args, runner=None, env=None, ncores=1):
+def run_merger(cwd, *args, runner=None, env=None, ncores=1, timeout=None):
     prefix = [sys.executable] if runner is None else [sys.executable, "-c", runner]
     extra = [] if ncores is None else ["--ncores", str(ncores)]
-    return subprocess.run([*prefix, str(SCRIPT), *args, *extra], cwd=cwd, capture_output=True, text=True, env=env)
+    return subprocess.run([*prefix, str(SCRIPT), *args, *extra], cwd=cwd, capture_output=True, text=True, env=env,
+                          timeout=timeout)
+
+
+def load_module():
+    spec = importlib.util.spec_from_file_location("hist_merger", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def merged_output(outdir):
@@ -410,3 +447,98 @@ def test_shared_reference_in_one_file_is_not_double_counted(tmp_path, ncores):
     assert r.returncode == 0, r.stderr
     merged = merged_output(out)
     assert merged["DY"]["hist"]["h1"].sum().value == 2 and merged["DY"]["hist"]["h2"].sum().value == 2
+
+
+def layout(tmp_path):
+    for dataset, n in (("DY", 3), ("WZ", 4)):
+        for i in range(n):
+            write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i, {dataset: dy_job(10 + i, 100)["DY"]})
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    return ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out)), out
+
+
+def has_pool_line(stdout):
+    return re.search(r"^pool \d+$", stdout, re.M) is not None
+
+
+def test_chunks_follow_directories():
+    module = load_module()
+    files = [f"/d/{directory}/histogram_{i}.pkl.gz" for directory, n in (("a", 10), ("b", 2), ("c", 1))
+             for i in range(n)]
+    chunks = module.make_chunks(files, 4)
+    assert [(c[0].split("/")[2], len(c)) for c in chunks] == [("a", 4), ("a", 4), ("a", 2), ("b", 2), ("c", 1)]
+    assert [f for c in chunks for f in c] == files
+
+
+class FakeFuture:
+    def __init__(self, executor, fn, args):
+        self.executor, self.fn, self.args = executor, fn, args
+
+    def result(self):
+        self.executor.outstanding -= 1
+        return self.fn(*self.args)
+
+
+class FakeExecutor:
+    def __init__(self):
+        self.outstanding, self.peak = 0, 0
+
+    def submit(self, fn, *args):
+        self.outstanding += 1
+        self.peak = max(self.peak, self.outstanding)
+        return FakeFuture(self, fn, args)
+
+
+def test_window_bounds_in_flight_and_keeps_order(tmp_path):
+    module = load_module()
+    for i in range(9):
+        write_job(tmp_path / "jobs_tagX_2024_DY", i, {"DY": {"hist": {"x": make_hist([(f"c{i}", 0.5, 1)])}, "sumw": 1}})
+    files = sorted(str(p) for p in (tmp_path / "jobs_tagX_2024_DY").glob("*.pkl.gz"))
+    executor = FakeExecutor()
+    merged, empty = module.merge_parallel([[f] for f in files], executor, 3, module.read_gzip,
+                                          contextlib.nullcontext(), lambda *args: None)
+    assert executor.peak == 3 and empty == []
+    assert list(merged["DY"]["hist"]["x"].axes[0]) == [f"c{i}" for i in range(9)]
+
+
+def test_unmergeable_partials_name_the_chunk(tmp_path):
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, dy_job(10, 100))
+    write_job(tmp_path / "jobs_tagX_2024_DY", 1, dy_job(10, 100, nbins=5))
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out), ncores=2)
+    assert r.returncode != 0 and "histogram_1.pkl.gz" in r.stderr and "DY/x" in r.stderr
+    assert outputs(out) == []
+
+
+def test_parallel_category_order_matches_serial(tmp_path):
+    for i in range(8):
+        write_job(tmp_path / "jobs_tagX_2024_DY", i, {"DY": {"hist": {"x": make_hist([(f"c{i}", 0.5, 1)])}, "sumw": 1}})
+    orders = {}
+    for ncores in (1, 2, 4):
+        out = tmp_path / f"out{ncores}"
+        out.mkdir()
+        r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                       ncores=ncores)
+        assert r.returncode == 0, r.stderr
+        orders[ncores] = list(merged_output(out)["DY"]["hist"]["x"].axes[0])
+    assert orders[1] == orders[2] == orders[4] == [f"c{i}" for i in range(8)]
+
+
+def test_killed_worker_aborts_the_merge(tmp_path):
+    args, out = layout(tmp_path)
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(KILLER)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(site), os.environ.get("PYTHONPATH", "")])}
+    r = run_merger(tmp_path, *args, ncores=2, env=env, timeout=60)
+    assert r.returncode != 0 and "a worker process died" in r.stderr and outputs(out) == []
+
+
+def test_workers_start_before_the_display(tmp_path):
+    args, out = layout(tmp_path)
+    env = {**os.environ, "FORCE_COLOR": "1", "COLUMNS": "80"}
+    r = run_merger(tmp_path, *args, ncores=2, runner=POOL_SPY, env=env)
+    assert r.returncode == 0, r.stderr
+    assert has_pool_line(r.stdout) and re.search(r"^threads 1$", r.stdout, re.M), r.stdout
