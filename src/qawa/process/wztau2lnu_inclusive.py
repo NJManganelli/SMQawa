@@ -1330,13 +1330,15 @@ class wzinclusive_processor(processor.ProcessorABC):
         muonSFs = self._leSF.muonSF(event.Muon, variations=variations)
         elecSFs = self._leSF.electronSF(event.Electron, variations=variations)
         # keys: eff_m_(id|iso)(Nominal|Up|Down) (Muon) or eff_e_(reco|id)(Nominal|Up|Down) (Electron)
+        muons = event.Muon
         for k, v in muonSFs.items():
-            event["Muon", k] = v
+            muons = ak.with_field(muons, v, k)
+        electrons = event.Electron
         for k, v in elecSFs.items():
-            event["Electron", k] = v
+            electrons = ak.with_field(electrons, v, k)
         tight_lep, loose_lep, non_iso_leptons = build_leptons(
-            event.Muon,
-            event.Electron,
+            muons,
+            electrons,
             nanoAODversion=self._ver,
             analysisID="inc-WZ-baseline",
             leptonIDs={"electronID": self.electronID, "muonID": self.muonID, "muonISO": self.muonISO},
@@ -1481,26 +1483,6 @@ class wzinclusive_processor(processor.ProcessorABC):
             deep_tau_mu = lead_tau_loose.rawDeepTau2018v2p5VSmu
             deep_tau_jet = lead_tau_loose.rawDeepTau2018v2p5VSjet
 
-        if "jetId" not in event.Jet.fields:
-            if self._ver in [f"v{V}" for V in range(12)]:
-                jet_type = "AK4CHS"
-            else:
-                jet_type = "AK4PUPPI"
-            # Match 2017-2018 encoding, no Loose bit active, with following inputs
-            jet_args = (event.Jet.eta,                                      # ('eta', 'real', 'pseudorapidity of the jet')
-                        event.Jet.chHEF,                                    # ('chHEF', 'real', 'charged Hadron Energy Fraction')
-                        event.Jet.neHEF,                                    # ('neHEF', 'real', 'neutral Hadron Energy Fraction')
-                        event.Jet.chEmEF,                                   # ('chEmEF', 'real', 'charged Electromagnetic Energy Fraction')
-                        event.Jet.neEmEF,                                   # ('neEmEF', 'real', 'neutral Electromagnetic Energy Fraction')
-                        event.Jet.muEF,                                     # ('muEF', 'real', 'muon Energy Fraction')
-                        event.Jet.chMultiplicity,                           # ('chMultiplicity', 'int', 'charged Multiplicity')
-                        event.Jet.neMultiplicity,                           # ('neMultiplicity', 'int', 'neutral Multiplicity')
-                        event.Jet.chMultiplicity + event.Jet.neMultiplicity # ('multiplicity', 'int', 'charged Multiplicity + neutral Multiplicity')]
-                        )
-            event["Jet", "jetId"] = (
-                4 * self._jetid[f"{jet_type}_TightLeptonVeto"].evaluate(*jet_args) + 
-                2 * self._jetid[f"{jet_type}_Tight"].evaluate(*jet_args)
-                )
         jets = event.Jet
         good_jets, good_bjets = build_jets(jets, tight_lep, had_taus_loose, self.btag_wp, self._btag, nanoAODversion=self._ver, era=self._era)
         jet_sorter = ak.argsort(good_jets.pt, axis=1, ascending=False)
@@ -2190,6 +2172,27 @@ class wzinclusive_processor(processor.ProcessorABC):
             event, _ = patch_flashsim(
                 event, self._era, verbose=self._process_shift_warnings
             )
+
+        if "jetId" not in event.Jet.fields:
+            if self._ver in [f"v{V}" for V in range(12)]:
+                jet_type = "AK4CHS"
+            else:
+                jet_type = "AK4PUPPI"
+            # Match 2017-2018 encoding, no Loose bit active, with following inputs
+            jet_args = (event.Jet.eta,                                      # ('eta', 'real', 'pseudorapidity of the jet')
+                        event.Jet.chHEF,                                    # ('chHEF', 'real', 'charged Hadron Energy Fraction')
+                        event.Jet.neHEF,                                    # ('neHEF', 'real', 'neutral Hadron Energy Fraction')
+                        event.Jet.chEmEF,                                   # ('chEmEF', 'real', 'charged Electromagnetic Energy Fraction')
+                        event.Jet.neEmEF,                                   # ('neEmEF', 'real', 'neutral Electromagnetic Energy Fraction')
+                        event.Jet.muEF,                                     # ('muEF', 'real', 'muon Energy Fraction')
+                        event.Jet.chMultiplicity,                           # ('chMultiplicity', 'int', 'charged Multiplicity')
+                        event.Jet.neMultiplicity,                           # ('neMultiplicity', 'int', 'neutral Multiplicity')
+                        event.Jet.chMultiplicity + event.Jet.neMultiplicity # ('multiplicity', 'int', 'charged Multiplicity + neutral Multiplicity')]
+                        )
+            event["Jet", "jetId"] = (
+                4 * self._jetid[f"{jet_type}_TightLeptonVeto"].evaluate(*jet_args) + 
+                2 * self._jetid[f"{jet_type}_Tight"].evaluate(*jet_args)
+                )
 
         # JES/JER corrections
         Rho = event.Rho.fixedGridRhoFastjetAll if "Rho" in event.fields else event.fixedGridRhoFastjetAll # if self._ver in [f"v{V}" for V in range(12)]
