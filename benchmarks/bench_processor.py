@@ -7,7 +7,9 @@ import json
 import os
 import pickle
 import resource
+import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
@@ -18,6 +20,9 @@ Subcommands:
   run       run the processor on one entry range of one file and dump the output
   compare   compare two dumps under the comparison rule of the optimisation plan
   selftest  check that compare reaches the expected verdict on mutated dumps
+  scale     at-scale run of one variant (the reference tree, the worktree's C1 engine or a benchmark
+            engine of fill_engines.py) in a fresh subprocess, with machine state and memory sampling
+  report    G1 verdict (required) and the R2-R4 information rows over the scale results in a directory
 
 The tree under test is chosen with PYTHONPATH (<tree>/src); `run` asserts that
 qawa is imported from below the first PYTHONPATH entry.
@@ -32,6 +37,9 @@ SUFFIXES = tuple(
 )
 SAME_SELECTION = {"dilep_ll_dphi": "dilep_deta", "dilep_ll_dphi_eft": "dilep_deta_eft"}
 VARIANCE_RTOL = 1e-9
+ORDER_TOLERANT_RTOL = 1e-9
+CANCELLATION_RTOL = 1e-9
+MAX_LISTED_CELLS = 50
 RANDOM_SEED = 1
 
 
@@ -116,10 +124,13 @@ def histogram_bytes(output, suffix=None):
 
 
 class Instrument:
-    def __init__(self):
+    def __init__(self, pass_rss=False):
         self.passes = []
         self.expected_shift = set()
         self.expected_weight = set()
+        self.current = None
+        self.chunks = []
+        self.pass_rss = pass_rss
 
     def install(self, wzmod):
         from coffea.analysis_tools import Weights
@@ -139,16 +150,74 @@ class Instrument:
         def timed_process_shift(self, event, shift_name=''):
             if shift_name not in (None, ''):
                 inst.expected_shift.add(shift_name)
-            record = {"shift": shift_name, "n_events": len(event)}
+            record = {"shift": shift_name, "n_events": len(event), "raw_bytes": 0, "block_cache_bytes": 0,
+                      "blocks": 0, "max_rows": 0, "multicell_buffer_bytes": 0}
+            inst.current = record
             t0 = time.perf_counter()
             result = process_shift(self, event, shift_name)
             record["wall"] = time.perf_counter() - t0
             record["maxrss_mb"] = maxrss_mb()
+            if inst.pass_rss:
+                import psutil
+                record["rss_mb"] = psutil.Process().memory_info().rss / 2**20
             record["output_bytes"] = histogram_bytes(result)
             record["eft_output_bytes"] = histogram_bytes(result, "_eft")
             inst.passes.append(record)
+            inst.current = None
             return result
         cls.process_shift = timed_process_shift
+
+        process = cls.process
+
+        def chunk_process(self, event):
+            start = len(inst.passes)
+            t0 = time.perf_counter()
+            result = process(self, event)
+            wall = time.perf_counter() - t0
+            passes = inst.passes[start:]
+            inst.chunks.append({"entrystart": event.metadata.get("entrystart"),
+                                "entrystop": event.metadata.get("entrystop"), "n_events": len(event),
+                                "wall": wall, "passes": len(passes), "merge": wall - sum(p["wall"] for p in passes)})
+            return result
+        cls.process = chunk_process
+
+        if hasattr(wzmod, "fill_histogram"):
+            self.install_engine(wzmod)
+
+    def install_engine(self, wzmod):
+        inst = self
+        fill_histogram = wzmod.fill_histogram
+        channel_block = wzmod.channel_block
+        standard_weights = wzmod.standard_weights
+
+        def recorded_fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
+            result = fill_histogram(histos, key, values, labels, weight, exclude, pass_state)
+            rec = inst.current
+            if rec is not None:
+                cache = pass_state["block_cache"]
+                rec["blocks"] = max(rec["blocks"], len(cache))
+                rec["block_cache_bytes"] = max(
+                    rec["block_cache_bytes"], sum(rows.nbytes for block in cache.values() for _, rows in block)
+                )
+                buffers = [v.nbytes for k, v in pass_state.items() if k.endswith("_buffer")]
+                rec["multicell_buffer_bytes"] = max([rec["multicell_buffer_bytes"]] + buffers)
+            return result
+        wzmod.fill_histogram = recorded_fill_histogram
+
+        def recorded_channel_block(exclude, pass_state):
+            result = channel_block(exclude, pass_state)
+            rec = inst.current
+            if rec is not None:
+                rec["max_rows"] = max(rec["max_rows"], sum(len(rows) for _, rows in result))
+            return result
+        wzmod.channel_block = recorded_channel_block
+
+        def recorded_standard_weights(raw):
+            rec = inst.current
+            if rec is not None:
+                rec["raw_bytes"] = max(rec["raw_bytes"], raw.nbytes)
+            return standard_weights(raw)
+        wzmod.standard_weights = recorded_standard_weights
 
     def expected(self):
         return {"nominal": ["nominal"], "shift": sorted(self.expected_shift), "weight": sorted(self.expected_weight)}
@@ -356,12 +425,43 @@ def ulp_distance(a, b):
     return np.abs(ia - ib)
 
 
-def compare_content(rh, oh, key, res, identical=False):
+def tolerant_cells(r, o, rtol):
+    both_nan = np.isnan(r) & np.isnan(o)
+    finite = np.isfinite(r) & np.isfinite(o)
+    with np.errstate(invalid="ignore", over="ignore"):
+        close = finite & (np.abs(r - o) <= rtol * np.maximum(np.abs(r), np.abs(o)))
+    return both_nan | (r == o) | close
+
+
+def order_tolerant_values(rval, oval, rvar, key, res):
+    strict_bad = ~((rval == oval) | (np.isnan(rval) & np.isnan(oval)))
+    if strict_bad.any():
+        res.note(f"{key}: {int(strict_bad.sum())} strict value mismatches (information)")
+    failing = ~tolerant_cells(rval, oval, ORDER_TOLERANT_RTOL)
+    if not failing.any():
+        return True
+    cells = np.argwhere(failing)
+    r, o, var = rval[failing], oval[failing], rvar[failing]
+    with np.errstate(invalid="ignore", over="ignore"):
+        diff = np.abs(r - o)
+        cancellation = np.isfinite(diff) & (diff <= CANCELLATION_RTOL * np.sqrt(np.abs(var)))
+    res.fail("2t", key, f"{len(cells)} value cells outside rule 2t ({int(cancellation.sum())} cancellation, "
+                        f"{int((~cancellation).sum())} real)")
+    for i in range(min(len(cells), MAX_LISTED_CELLS)):
+        cell = tuple(int(c) for c in cells[i])
+        res.note(f"{key}{cell}: |R-O| {diff[i]:.6g}, |R| {abs(r[i]):.6g}, |O| {abs(o[i]):.6g}, "
+                 f"sqrt(var_R) {np.sqrt(abs(var[i])):.6g}, class {'cancellation' if cancellation[i] else 'real'}")
+    return False
+
+
+def compare_content(rh, oh, key, res, identical=False, order_tolerant=False):
     rv, ov = aligned_views(rh, oh)
     rval, oval = np.ascontiguousarray(rv["value"]), np.ascontiguousarray(ov["value"])
     rvar, ovar = np.ascontiguousarray(rv["variance"]), np.ascontiguousarray(ov["variance"])
     ok = True
-    if not np.array_equal(rval, oval, equal_nan=True):
+    if order_tolerant:
+        ok = order_tolerant_values(rval, oval, rvar, key, res)
+    elif not np.array_equal(rval, oval, equal_nan=True):
         bad = ~((rval == oval) | (np.isnan(rval) & np.isnan(oval)))
         res.fail(2, key, f"{int(bad.sum())} value cells differ")
         ok = False
@@ -374,9 +474,7 @@ def compare_content(rh, oh, key, res, identical=False):
     both_nan = np.isnan(rvar) & np.isnan(ovar)
     equal = rvar == ovar
     finite = np.isfinite(rvar) & np.isfinite(ovar)
-    with np.errstate(invalid="ignore", over="ignore"):
-        close = finite & (np.abs(rvar - ovar) <= VARIANCE_RTOL * np.maximum(np.abs(rvar), np.abs(ovar)))
-    passes = both_nan | equal | close
+    passes = tolerant_cells(rvar, ovar, VARIANCE_RTOL)
     differing = ~(both_nan | equal)
     ndiff = int(differing.sum())
     max_rel, max_ulp = 0.0, 0
@@ -397,13 +495,13 @@ def compare_content(rh, oh, key, res, identical=False):
     return ok
 
 
-def compare_hist(rh, oh, key, axis_map, res, identical=False):
+def compare_hist(rh, oh, key, axis_map, res, identical=False, order_tolerant=False):
     diffs = structure_diffs(rh, oh, axis_map)
     if diffs:
         for d in diffs:
             res.fail(1, key, d)
         return
-    compare_content(rh, oh, key, res, identical)
+    compare_content(rh, oh, key, res, identical, order_tolerant)
 
 
 def n_category_labels(h):
@@ -415,7 +513,7 @@ def finite_abs_sum(h):
     return float(np.abs(v[np.isfinite(v)]).sum())
 
 
-def check_changed(name, cov, rmapped, ohists, axis_map, res):
+def check_changed(name, cov, rmapped, ohists, axis_map, res, order_tolerant=False):
     for key in sorted(cov):
         rin, oin = key in rmapped, key in ohists
         if not rin and not oin:
@@ -444,7 +542,7 @@ def check_changed(name, cov, rmapped, ohists, axis_map, res):
             import hist
             sub = Result()
             compare_content(rh[{rch.name: hist.loc("Pol_reg")}], oh[{och.name: hist.loc("Pol_reg")}],
-                            key + "[Pol_reg]", sub)
+                            key + "[Pol_reg]", sub, order_tolerant=order_tolerant)
             for f in sub.failures:
                 res.fail("changed", f[1], f[2])
 
@@ -557,7 +655,7 @@ def check_vacuity(rdump, odump, res, report=True):
 
 
 def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), removed=(), restored=(),
-                  identical=False, report=True):
+                  identical=False, report=True, order_tolerant=False):
     hist_map = hist_map or {}
     axis_map = axis_map or {}
     sets = coverage(changed, removed, restored)
@@ -581,15 +679,38 @@ def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), remove
         for k in sorted(okeys - rkeys):
             res.fail(1, k, "extra key in O")
         for k in sorted(rkeys & okeys):
-            compare_hist(rmapped[k][1], ohists[k], k, axis_map, res, identical)
+            compare_hist(rmapped[k][1], ohists[k], k, axis_map, res, identical, order_tolerant)
         for flag, name, cov in sets:
             if flag == "changed":
-                check_changed(name, cov, rmapped, ohists, axis_map, res)
+                check_changed(name, cov, rmapped, ohists, axis_map, res, order_tolerant)
             elif flag == "removed":
                 check_removed(name, rmapped, ohists, res)
             else:
                 check_restored(name, rmapped, ohists, axis_map, res)
     check_vacuity(rdump, odump, res, report)
+    return res
+
+
+SUMW_MODES = ("strict", "order_tolerant")
+
+
+def compare_sumw(rsumw, osumw, mode):
+    if mode not in SUMW_MODES:
+        raise UsageError(f"unknown sumw mode {mode!r}")
+    res = Result()
+    if set(rsumw) != set(osumw):
+        res.fail("sumw", "-", f"key sets differ: R-only {sorted(set(rsumw) - set(osumw))} "
+                              f"O-only {sorted(set(osumw) - set(rsumw))}")
+    for ds in sorted(set(rsumw) & set(osumw)):
+        r, o = float(rsumw[ds]), float(osumw[ds])
+        if not (np.isfinite(r) and np.isfinite(o)):
+            res.fail("sumw", ds, f"non-finite sumw: R {r!r}, O {o!r}")
+        elif (r == 0.0) != (o == 0.0):
+            res.fail("sumw", ds, f"zero must match exactly: R {r!r}, O {o!r}")
+        elif mode == "strict" and r != o:
+            res.fail("sumw", ds, f"strict: R {r!r}, O {o!r}")
+        elif mode == "order_tolerant" and abs(r - o) > ORDER_TOLERANT_RTOL * max(abs(r), abs(o)):
+            res.fail("sumw", ds, f"order_tolerant: R {r!r}, O {o!r}")
     return res
 
 
@@ -635,7 +756,7 @@ def cmd_compare(args):
     hist_map, axis_map = load_map(args.rename_map)
     res = compare_dumps(load_dump(args.ref), load_dump(args.opt), hist_map, axis_map,
                         split_names(args.changed), split_names(args.removed), split_names(args.restored),
-                        identical=args.identical)
+                        identical=args.identical, order_tolerant=args.order_tolerant)
     print_result(res)
     return 0 if res.passed else 1
 
@@ -717,15 +838,19 @@ def finite_nonzero_value(v):
     return np.isfinite(v["value"]) & (v["value"] != 0) & np.isfinite(v["variance"]) & (v["variance"] != 0)
 
 
-def modify_values(hists, key):
+def modify_values_by(hists, key, factor):
     h = copy.deepcopy(hists[key])
     v = h.view(flow=True)
     cell = first_cell(h, finite_nonzero_value)
     if cell is None:
         raise RuntimeError(f"{key}: no finite non-zero cell")
-    v["value"][cell] = v["value"][cell] * 1.5
+    v["value"][cell] = v["value"][cell] * factor
     hists[key] = h
     return key
+
+
+def modify_values(hists, key):
+    return modify_values_by(hists, key, 1.5)
 
 
 def drop_label_everywhere(dump, label):
@@ -788,8 +913,8 @@ def cmd_selftest(args):
 
     rows = []
 
-    def row(desc, dump, verdict, build, changed=(), removed=(), restored=(), map_rows=None):
-        rows.append((desc, dump, verdict, build, changed, removed, restored, map_rows))
+    def row(desc, dump, verdict, build, changed=(), removed=(), restored=(), map_rows=None, order_tolerant=False):
+        rows.append((desc, dump, verdict, build, changed, removed, restored, map_rows, order_tolerant))
 
     def standard(dump_name, mut=None, mut_r=None):
         def build():
@@ -1003,8 +1128,66 @@ def cmd_selftest(args):
     row("usage: --restored mT_WZ --changed mT_WZ_eft", "m7r", ("USAGE",), standard("m7r"),
         changed=["mT_WZ_eft"], restored=["mT_WZ"])
 
+    def scale_value(factor):
+        return lambda o: mutate_cell(oh(o), "value", finite_nonzero_value, lambda x: x * (1 + factor))
+
+    def zero_value(o):
+        mutate_cell(oh(o), "value", lambda v: v["value"] == 0, lambda x: 1e-300)
+
+    def flip_variance_known(o):
+        hs = oh(o)
+        h = copy.deepcopy(hs["dilep_deta"])
+        h.__dict__["_variance_known"] = not h.__dict__["_variance_known"]
+        hs["dilep_deta"] = h
+
+    def nan_to_one(o):
+        mutate_cell(oh(o), "value", lambda v: np.isnan(v["value"]), lambda x: 1.0)
+
+    def finite_to_nan(o):
+        mutate_cell(oh(o), "value", finite_nonzero_value, lambda x: np.nan)
+
+    def near_cancellation(shift):
+        def set_small(d, offset):
+            hs = oh(d)
+            for key in sorted(hs):
+                h = hs[key]
+                if n_category_labels(h) == 0:
+                    continue
+                cell = first_cell(h, finite_nonzero_value)
+                if cell is not None:
+                    h2 = copy.deepcopy(h)
+                    v = h2.view(flow=True)
+                    v["value"][cell] = 1e-12 + offset * np.sqrt(v["variance"][cell])
+                    hs[key] = h2
+                    return
+            raise RuntimeError("no suitable cell")
+        return standard("m1", lambda o: set_small(o, shift), lambda r: set_small(r, 0.0))
+
+    row("order-tolerant: one value cell x(1+5e-10)", "m1", ("PASS", "strict value mismatches"),
+        standard("m1", scale_value(5e-10)), order_tolerant=True)
+    row("order-tolerant: one value cell x(1+2e-9)", "m1", ("FAIL", "2t"), standard("m1", scale_value(2e-9)),
+        order_tolerant=True)
+    row("order-tolerant: one value cell +1 ulp", "m1", ("PASS", "bitwise"), standard("m1", nextafter_value),
+        order_tolerant=True)
+    row("order-tolerant: one zero value cell -> 1e-300", "m1", ("FAIL", "2t"), standard("m1", zero_value),
+        order_tolerant=True)
+    row("order-tolerant: NaN cells kept, one finite cell x(1+5e-10)", "m7", ("PASS",),
+        standard("m7", lambda o: modify_values_by(oh(o), "dilep_deta_eft", 1 + 5e-10)), order_tolerant=True)
+    row("order-tolerant: dilep_deta _variance_known flipped", "m1", ("FAIL", "1"), standard("m1", flip_variance_known),
+        order_tolerant=True)
+    row("order-tolerant: one variance x(1+2e-9)", "m1", ("FAIL", "3"), standard("m1", scale_variance(2e-9)),
+        order_tolerant=True)
+    row("order-tolerant: a NaN value cell of R is 1.0 in O", "m7", ("FAIL", "2t"), standard("m7", nan_to_one),
+        order_tolerant=True)
+    row("order-tolerant: a finite non-zero value cell is NaN in O", "m7", ("FAIL", "2t"),
+        standard("m7", finite_to_nan), order_tolerant=True)
+    row("order-tolerant: near-cancellation, O + 0.5e-9 sqrt(var)", "m1", ("FAIL", "2t", "class cancellation"),
+        near_cancellation(0.5e-9), order_tolerant=True)
+    row("order-tolerant: near-cancellation, O + 2e-9 sqrt(var)", "m1", ("FAIL", "2t", "class real"),
+        near_cancellation(2e-9), order_tolerant=True)
+
     failures = 0
-    for i, (desc, dump, verdict, build, changed, removed, restored, map_rows) in enumerate(rows):
+    for i, (desc, dump, verdict, build, changed, removed, restored, map_rows, order_tolerant) in enumerate(rows):
         hist_map, axis_map = {}, {}
         if map_rows:
             hist_map, axis_map = load_map(write_map(os.path.join(workdir, f"map_{i}.tsv"), map_rows))
@@ -1017,7 +1200,8 @@ def cmd_selftest(args):
             failures += not ok
             continue
         r, o = build()
-        res = compare_dumps(r, o, hist_map, axis_map, changed, removed, restored, report=False)
+        res = compare_dumps(r, o, hist_map, axis_map, changed, removed, restored, report=False,
+                            order_tolerant=order_tolerant)
         rules = sorted({f[0] for f in res.failures})
         text = " | ".join(f"{f[0]}:{f[1]}:{f[2]}" for f in res.failures) + " | " + " | ".join(res.notes)
         if verdict[0] == "PASS":
@@ -1032,8 +1216,504 @@ def cmd_selftest(args):
         if not ok:
             for f in res.failures[:10]:
                 print("      ", f)
-    print(f"selftest: {len(rows)} rows, {failures} mismatches")
+
+    x = 1234.5678901234567
+    sumw_rows = [
+        ("sumw x(1+5e-10), order_tolerant", {"ds": x}, {"ds": x * (1 + 5e-10)}, "order_tolerant", ("PASS",)),
+        ("sumw x(1+2e-9), order_tolerant", {"ds": x}, {"ds": x * (1 + 2e-9)}, "order_tolerant", ("FAIL", "sumw")),
+        ("sumw +1 ulp, strict", {"ds": x}, {"ds": np.nextafter(x, np.inf)}, "strict", ("FAIL", "sumw")),
+        ("sumw dataset missing in O", {"ds": x, "ds2": x}, {"ds": x}, "strict", ("FAIL", "sumw", "key sets")),
+        ("sumw R 0.0 vs O 1e-300, strict", {"ds": 0.0}, {"ds": 1e-300}, "strict", ("FAIL", "sumw", "zero")),
+        ("sumw R 0.0 vs O 1e-300, order_tolerant", {"ds": 0.0}, {"ds": 1e-300}, "order_tolerant",
+         ("FAIL", "sumw", "zero")),
+        ("sumw O NaN, strict", {"ds": x}, {"ds": np.nan}, "strict", ("FAIL", "sumw", "non-finite")),
+        ("sumw O NaN, order_tolerant", {"ds": x}, {"ds": np.nan}, "order_tolerant", ("FAIL", "sumw", "non-finite")),
+    ]
+    for desc, rsumw, osumw, mode, verdict in sumw_rows:
+        res = compare_sumw(rsumw, osumw, mode)
+        rules = sorted({f[0] for f in res.failures})
+        text = " | ".join(f"{f[0]}:{f[1]}:{f[2]}" for f in res.failures)
+        if verdict[0] == "PASS":
+            ok = res.passed
+        else:
+            ok = (not res.passed) and rules == [verdict[1]] and (len(verdict) < 3 or verdict[2] in text)
+        failures += not ok
+        print(f"[{'ok' if ok else 'MISMATCH'}] {desc} (synthetic): expected {verdict}, "
+              f"got {'PASS' if res.passed else 'FAIL ' + text}")
+    print(f"selftest: {len(rows) + len(sumw_rows)} rows, {failures} mismatches")
     return 1 if failures else 0
+
+
+# ---------------------------------------------------------------- scale
+
+WORKTREE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CAP_ENV = {k: "4" for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                            "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")}
+ENGINE_CHOICES = ("reference", "worktree", "multicell", "multicell_pr20", "multicell_string", "chunked",
+                  "integer_axis")
+SCALE_DESCRIPTIONS = {
+    "reference": "unmodified reference tree: per-(channel, systematic, variable) _histogram_filler closures",
+    "worktree": "C1: hist.fill per (channel, slot) into the booked Weight hist, on the shared prep",
+}
+R3_REFERENCE_MB = 256.0
+R4_REFERENCE_RATIO = 1.25
+PROTOTYPE_FILL_SECONDS = {"A1": 15.9, "A2": 13.47, "A3": 1.56, "A4": 10.11, "A5": 2.13, "E1": 82.8}
+PHASE_A_REFERENCE_PEAK_MB = {"A1": 2813, "A2": 2707, "A3": 1185, "A4": 5301, "A5": 1517, "E1": 3869}
+PHASE_A_SPREAD_CONFIGS = ("A2", "A4", "E1")
+SAMPLING_BAND_MB = (192.0, 320.0)
+OTHER_PROCESS_RISE_MB = 1024.0
+OTHERS_INTERVAL = 5.0
+QUIET_SWAPOUT_WINDOW = 60.0
+QUIET_POLL = 15.0
+QUIET_AVAILABLE_MARGIN_MB = 2048.0
+
+
+def footprint_mb(pid):
+    if sys.platform != "darwin":
+        return None
+    import ctypes
+    import ctypes.util
+
+    class RusageInfoV4(ctypes.Structure):
+        _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(name, ctypes.c_uint64) for name in (
+            "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins", "wired_size",
+            "resident_size", "phys_footprint", "proc_start_abstime", "proc_exit_abstime", "child_user_time",
+            "child_system_time", "child_pkg_idle_wkups", "child_interrupt_wkups", "child_pageins",
+            "child_elapsed_abstime", "diskio_bytesread", "diskio_byteswritten", "cpu_time_qos_default",
+            "cpu_time_qos_maintenance", "cpu_time_qos_background", "cpu_time_qos_utility", "cpu_time_qos_legacy",
+            "cpu_time_qos_user_initiated", "cpu_time_qos_user_interactive", "billed_system_time",
+            "serviced_system_time", "logical_writes", "lifetime_max_phys_footprint", "instructions", "cycles",
+            "billed_energy", "serviced_energy", "interval_max_phys_footprint", "runnable_time")]
+
+    libproc = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib")
+    info = RusageInfoV4()
+    if libproc.proc_pid_rusage(int(pid), 4, ctypes.byref(info)) != 0:
+        return None
+    return info.phys_footprint / 2**20, info.lifetime_max_phys_footprint / 2**20
+
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"error: {exc}"
+
+
+def machine_state():
+    import re
+    import psutil
+    pages = {}
+    for line in sh("vm_stat").splitlines():
+        m = re.match(r'"?([^:"]+)"?:\s+(\d+)', line.strip())
+        if m:
+            pages[m.group(1)] = int(m.group(2))
+    page = 16384
+    free = re.search(r"free percentage:\s*(\d+)", sh("memory_pressure -Q"))
+    level = sh("sysctl -n kern.memorystatus_vm_pressure_level").strip()
+    batt = sh("pmset -g batt")
+    therm = sh("pmset -g therm")
+    speed = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", therm)
+    return {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"), "loadavg": os.getloadavg(),
+        "pressure_level": int(level) if level.isdigit() else None,
+        "free_percent": int(free.group(1)) if free else None,
+        "available_mb": psutil.virtual_memory().available / 2**20,
+        "compressor_stored_gb": pages.get("Pages stored in compressor", 0) * page / 2**30,
+        "swapouts": pages.get("Swapouts"), "swapins": pages.get("Swapins"),
+        "swapusage": sh("sysctl -n vm.swapusage").strip(),
+        "power_source": "AC" if "AC Power" in batt else ("battery" if "Battery Power" in batt else batt[:60]),
+        "cpu_speed_limit": int(speed.group(1)) if speed else None,
+    }
+
+
+def not_quiet_reasons(name, state, older):
+    reasons = []
+    if state["pressure_level"] != 1:
+        reasons.append(f"pressure level {state['pressure_level']}")
+    if state["loadavg"][0] >= 2:
+        reasons.append(f"1-min load {state['loadavg'][0]:.2f}")
+    if older is None:
+        reasons.append(f"swapouts not yet observed over {QUIET_SWAPOUT_WINDOW:.0f} s")
+    elif state["swapouts"] != older["swapouts"]:
+        reasons.append(f"swapouts rose by {state['swapouts'] - older['swapouts']} pages")
+    need = PHASE_A_REFERENCE_PEAK_MB.get(name, 0.0) + QUIET_AVAILABLE_MARGIN_MB
+    if state["available_mb"] < need:
+        reasons.append(f"available memory {state['available_mb']:.0f} MB < {need:.0f} MB")
+    return reasons
+
+
+def wait_until_quiet(name, max_wait):
+    start = time.monotonic()
+    history = [(start, machine_state())]
+    while True:
+        now = time.monotonic()
+        older = [st for t, st in history if now - t >= QUIET_SWAPOUT_WINDOW]
+        reasons = not_quiet_reasons(name, history[-1][1], older[-1] if older else None)
+        if not reasons or now - start >= max_wait:
+            return history[-1][1], reasons, now - start
+        time.sleep(QUIET_POLL)
+        history.append((time.monotonic(), machine_state()))
+
+
+class OthersSampler(threading.Thread):
+    def __init__(self, interval=OTHERS_INTERVAL):
+        super().__init__(daemon=True)
+        self.interval = interval
+        self.stop_event = threading.Event()
+        self.start_mb = {}
+        self.max_mb = {}
+        self.names = {}
+        self.series = []
+        self.unreadable = 0
+
+    def sample(self):
+        import psutil
+        own, uid = os.getpid(), os.getuid()
+        total, unreadable = 0.0, 0
+        for p in psutil.process_iter(["pid", "uids", "name"]):
+            try:
+                if p.info["pid"] == own or p.info["uids"].real != uid:
+                    continue
+            except (psutil.Error, AttributeError):
+                continue
+            fp = footprint_mb(p.info["pid"])
+            if fp is None:
+                unreadable += 1
+                continue
+            pid = p.info["pid"]
+            self.names[pid] = p.info["name"]
+            self.start_mb.setdefault(pid, 0.0 if self.series else fp[0])
+            self.max_mb[pid] = max(self.max_mb.get(pid, 0.0), fp[0])
+            total += fp[0]
+        self.unreadable = max(self.unreadable, unreadable)
+        self.series.append((time.time(), total))
+
+    def run(self):
+        while not self.stop_event.is_set():
+            self.sample()
+            self.stop_event.wait(self.interval)
+
+    def summary(self):
+        self.stop_event.set()
+        self.join(timeout=60)
+        rises = sorted(((self.max_mb[pid] - self.start_mb.get(pid, 0.0), pid, self.names.get(pid))
+                        for pid in self.max_mb), reverse=True)
+        sums = [v for _, v in self.series]
+        return {
+            "available": sys.platform == "darwin", "samples": len(self.series), "unreadable": self.unreadable,
+            "sum_start_mb": sums[0] if sums else None, "sum_max_rise_mb": (max(sums) - sums[0]) if sums else None,
+            "max_single_rise_mb": rises[0][0] if rises else None,
+            "top_rises": [{"rise_mb": r, "pid": pid, "name": name} for r, pid, name in rises[:5]],
+            "series": self.series,
+        }
+
+
+def eft_assertions(output, terms):
+    problems = []
+    for hists in output.values():
+        for key, h in hists.items():
+            if key.endswith("_eft") and len(h.axes[0]) and set(h.axes[2]) != set(terms):
+                problems.append(f"(a) {key}: eft labels {sorted(h.axes[2])}")
+        h = hists.get("dilep_deta_eft")
+        if h is None:
+            problems.append("(b) dilep_deta_eft missing")
+            continue
+        v = h.view(flow=True)["value"]
+        labels = list(h.axes[2])
+        nan_terms = {labels[i[2]] for i in np.argwhere(np.isnan(v))}
+        if not nan_terms:
+            problems.append("(b) dilep_deta_eft has no NaN value cell")
+        elif nan_terms != {"lin_cW"}:
+            problems.append(f"(b) NaN value cells in terms {sorted(nan_terms)}")
+    return problems
+
+
+def scale_paths(args):
+    label = args.label or args.engine
+    if args.sample > 1:
+        label += f"_s{args.sample}"
+    base = os.path.join(args.out, args.name)
+    os.makedirs(base, exist_ok=True)
+    return label, os.path.join(base, label + ".json"), os.path.join(base, label + ".pkl")
+
+
+def cmd_scale_worker(args):
+    tree = args.reference_tree if args.engine == "reference" else WORKTREE
+    import_qawa_checked(os.path.join(tree, "src"))
+    import qawa.process.wztau2lnu_inclusive as wzmod
+    from coffea import processor
+    from coffea.nanoevents import NanoAODSchema
+
+    sampler = OthersSampler()
+    sampler.start()
+    if args.eft_synthetic:
+        install_synthetic_eft(wzmod, args.eft_operators, args.eft_nan_modulus)
+    description = SCALE_DESCRIPTIONS.get(args.engine)
+    fill_seconds = [0.0]
+    if args.engine != "reference":
+        if args.engine != "worktree":
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import fill_engines
+            wzmod.fill_histogram = fill_engines.ENGINES[args.engine]
+            description = fill_engines.ENGINE_DESCRIPTIONS[args.engine]
+        fill = wzmod.fill_histogram
+
+        def timed_fill(histos, key, values, labels, weight, exclude, pass_state):
+            t0 = time.perf_counter()
+            result = fill(histos, key, values, labels, weight, exclude, pass_state)
+            fill_seconds[0] += time.perf_counter() - t0
+            return result
+        wzmod.fill_histogram = timed_fill
+    inst = Instrument(pass_rss=True)
+    inst.install(wzmod)
+
+    proc = wzmod.wzinclusive_processor(**processor_kwargs(args))
+    runner = processor.Runner(executor=processor.IterativeExecutor(), schema=NanoAODSchema,
+                              chunksize=args.chunksize, maxchunks=args.maxchunks)
+    fileset = {args.dataset: {"files": {args.file: "Events"},
+                              "metadata": {"is_data": args.is_data, "is_signal": args.is_signal, "is_flashsim": False}}}
+    np.random.seed(RANDOM_SEED)
+    t0 = time.perf_counter()
+    output = runner(fileset, proc, treename="Events")
+    total = time.perf_counter() - t0
+    nominal = [p["wall"] for p in inst.passes if p["shift"] is None]
+    shifts = [p["wall"] for p in inst.passes if p["shift"] is not None]
+    result = {
+        "engine": args.engine, "description": description, "total": total, "peak_rss_mb": maxrss_mb(),
+        "pass_rss_peak_mb": max((p["rss_mb"] for p in inst.passes), default=None),
+        "chunks": inst.chunks, "nominal_pass": nominal,
+        "shift_pass_mean": float(np.mean(shifts)) if shifts else None,
+        "shift_pass_max": float(np.max(shifts)) if shifts else None,
+        "fill_seconds": None if args.engine == "reference" else fill_seconds[0],
+        "merge_in_process": sum(c["merge"] for c in inst.chunks),
+        "outside_process": total - sum(c["wall"] for c in inst.chunks),
+        "output_bytes": histogram_bytes(output),
+        "max_raw_bytes": max((p["raw_bytes"] for p in inst.passes), default=0),
+        "max_block_cache_bytes": max((p["block_cache_bytes"] for p in inst.passes), default=0),
+        "max_blocks": max((p["blocks"] for p in inst.passes), default=0),
+        "multicell_buffer_bytes": max((p["multicell_buffer_bytes"] for p in inst.passes), default=0),
+        "random_seed": RANDOM_SEED, "passes": inst.passes,
+    }
+    t1 = time.perf_counter()
+    result["gzip_pickle_bytes"] = len(gzip.compress(pickle.dumps(output, protocol=pickle.HIGHEST_PROTOCOL), 1))
+    result["size_seconds"] = time.perf_counter() - t1
+    label, json_path, dump_path = scale_paths(args)
+    save_dump({"output": output, "expected": inst.expected(), "range": [(c["entrystart"], c["entrystop"])
+                                                                      for c in inst.chunks],
+               "n_events": sum(c["n_events"] for c in inst.chunks), "timings": result,
+               "flags": {k: v for k, v in vars(args).items() if k != "func"}},
+              dump_path)
+    result["others"] = sampler.summary()
+    footprint = footprint_mb(os.getpid())
+    result["lifetime_max_footprint_mb"] = None if footprint is None else footprint[1]
+    with open(json_path + ".worker", "w") as f:
+        json.dump(result, f, indent=1, default=str)
+    print(f"{label}: total {total:.1f} s, lifetime max footprint {result['lifetime_max_footprint_mb']} MB, "
+          f"ru_maxrss {result['peak_rss_mb']:.1f} MB, fill {result['fill_seconds']}", flush=True)
+    return 0
+
+
+def native_chunked_size(output):
+    from hist.chunked import ChunkedHist
+    natives = {ds: {k: ChunkedHist.from_hist(h) for k, h in hists.items()} for ds, hists in output.items()}
+    return len(gzip.compress(pickle.dumps(natives, protocol=pickle.HIGHEST_PROTOCOL), 1))
+
+
+def reliability(result):
+    reasons = []
+    if result.get("not_quiet_reasons"):
+        reasons.append("not quiet at start (" + "; ".join(result["not_quiet_reasons"]) + ")")
+    rise = (result.get("others") or {}).get("max_single_rise_mb")
+    if rise is not None and rise > OTHER_PROCESS_RISE_MB:
+        reasons.append(f"another process grew by {rise:.0f} MB")
+    return "reliable" if not reasons else "unreliable: " + "; ".join(reasons)
+
+
+def cmd_scale(args):
+    if args.worker:
+        return cmd_scale_worker(args)
+    if args.engine == "reference" and not args.reference_tree:
+        raise SystemExit("--engine reference requires --reference-tree")
+    if args.engine != "reference" and args.reference_tree:
+        raise SystemExit("--reference-tree is only valid with --engine reference")
+    label, json_path, dump_path = scale_paths(args)
+    state_before, not_quiet, waited = wait_until_quiet(args.name, args.quiet_wait)
+    tree = args.reference_tree if args.engine == "reference" else WORKTREE
+    env = dict(os.environ)
+    env.update(CAP_ENV)
+    env["PYTHONPATH"] = os.path.join(tree, "src")
+    ref_json = os.path.join(args.out, args.name, "reference.json")
+    timeout = None
+    if args.engine != "reference" and os.path.exists(ref_json):
+        with open(ref_json) as f:
+            timeout = 3 * json.load(f)["total"]
+    cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:] + ["--worker"]
+    t0 = time.perf_counter()
+    try:
+        rc = subprocess.call(cmd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        rc = None
+    wall = time.perf_counter() - t0
+    state_after = machine_state()
+    if rc is None:
+        result = {"engine": args.engine, "stopped": True, "total_lower_bound": wall,
+                  "reason": f"exceeded 3x the reference wall time ({timeout:.0f} s)"}
+    elif rc != 0:
+        result = {"engine": args.engine, "failed": True, "rc": rc}
+    else:
+        with open(json_path + ".worker") as f:
+            result = json.load(f)
+        os.remove(json_path + ".worker")
+        dump = load_dump(dump_path)
+        result["native_chunkedhist_gzip_pickle_bytes"] = native_chunked_size(dump["output"])
+        if args.engine == "reference" and args.eft_synthetic:
+            result["eft_assertions"] = eft_assertions(dump["output"], synthetic_terms(args.eft_operators))
+        ref_dump = os.path.join(args.out, args.name, "reference.pkl")
+        if args.engine != "reference" and os.path.exists(ref_dump):
+            hist_map, axis_map = load_map(args.rename_map)
+            res = compare_dumps(load_dump(ref_dump), dump, hist_map, axis_map, split_names(args.changed),
+                                split_names(args.removed), split_names(args.restored), report=False)
+            result["agreement"] = {"passed": res.passed, "failures": res.failures[:50], "notes": res.notes[:20],
+                                   "variance_cells": sum(x[1] for x in res.stats),
+                                   "max_rel": max((x[2] for x in res.stats), default=0.0),
+                                   "max_ulp": max((x[3] for x in res.stats), default=0)}
+            print("agreement:", "PASS" if res.passed else f"FAIL {res.failures[:5]}", flush=True)
+        del dump
+        if args.engine != "reference" and not args.keep_dump:
+            os.remove(dump_path)
+    result["label"] = label
+    result["variant"] = args.label or args.engine
+    result.setdefault("description", SCALE_DESCRIPTIONS.get(args.engine, args.engine))
+    result["state_before"] = state_before
+    result["state_after"] = state_after
+    result["not_quiet_reasons"] = not_quiet
+    result["quiet_wait_seconds"] = waited
+    result["reliability"] = reliability(result)
+    with open(json_path, "w") as f:
+        json.dump(result, f, indent=1, default=str)
+    return 0 if rc == 0 else 1
+
+
+# ---------------------------------------------------------------- report
+
+def median_of(results, field):
+    values = [r[field] for r in results if r.get(field) is not None]
+    return float(np.median(values)) if values else None
+
+
+def memory_metric(r):
+    if r.get("lifetime_max_footprint_mb") is not None:
+        return r["lifetime_max_footprint_mb"]
+    return r.get("peak_rss_mb")
+
+
+def fmt(x, spec=".1f"):
+    return "n/a" if x is None else format(x, spec)
+
+
+def sample_row(label, r):
+    if r.get("stopped"):
+        return (f"| {label} | > {r['total_lower_bound']:.0f} (stopped) | | | | | | | | | | | "
+                f"{r.get('reliability', '')} |")
+    if r.get("failed"):
+        return f"| {label} | FAILED rc={r['rc']} | | | | | | | | | | | {r.get('reliability', '')} |"
+    agree = r.get("agreement")
+    if r["engine"] == "reference":
+        agree_text = "reference"
+    elif agree is None:
+        agree_text = "missing"
+    else:
+        agree_text = ("PASS" if agree["passed"] else "FAIL") + f" (var cells {agree['variance_cells']})"
+    fill = "n/a (closures)" if r.get("fill_seconds") is None else f"{r['fill_seconds']:.2f}"
+    before, after = r.get("state_before") or {}, r.get("state_after") or {}
+    swapouts = None
+    if before.get("swapouts") is not None and after.get("swapouts") is not None:
+        swapouts = after["swapouts"] - before["swapouts"]
+    return (f"| {label} | {r['total']:.1f} | {sum(r['nominal_pass']):.1f} | "
+            f"{fmt(r['shift_pass_mean'], '.2f')}/{fmt(r['shift_pass_max'], '.2f')} | {fill} | "
+            f"{r['merge_in_process']:.1f} | {fmt(r.get('lifetime_max_footprint_mb'), '.0f')} | "
+            f"{r['peak_rss_mb']:.0f} | {fmt(r.get('pass_rss_peak_mb'), '.0f')} | "
+            f"{before.get('pressure_level')}/{after.get('pressure_level')} | {fmt(swapouts, 'd')} | "
+            f"{r['gzip_pickle_bytes'] / 2**20:.1f} | {agree_text} | {r.get('reliability', '')} |")
+
+
+def cmd_report(args):
+    configs = sorted(d for d in os.listdir(args.out) if os.path.isdir(os.path.join(args.out, d)))
+    if args.names:
+        configs = [c for c in configs if c in split_names(args.names)]
+    lines = []
+    g1_failures = []
+    for name in configs:
+        results = {}
+        for fn in sorted(os.listdir(os.path.join(args.out, name))):
+            if fn.endswith(".json"):
+                with open(os.path.join(args.out, name, fn)) as f:
+                    r = json.load(f)
+                results.setdefault(r["variant"], []).append(r)
+        lines.append(f"\n### {name}\n")
+        lines.append("| sample | total (s) | nominal pass (s) | shift pass mean/max (s) | fill (s) | merge (s) | "
+                     "lifetime max footprint (MB) | ru_maxrss (MB) | psutil pass peak (MB) | pressure before/after | "
+                     "swapouts | output gzip (MB) | agreement | reliability |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for variant, rs in results.items():
+            lines.append(f"| **{variant}**: {rs[0].get('description', '')} | | | | | | | | | | | | | |")
+            for r in rs:
+                lines.append(sample_row(r["label"], r))
+        ref = [r for r in results.get("reference", []) if not r.get("failed") and not r.get("stopped")]
+        c1 = [r for r in results.get("worktree", []) if not r.get("failed") and not r.get("stopped")]
+        g1 = [r for r in results.get("worktree", [])
+              if r.get("failed") or r.get("stopped") or not (r.get("agreement") or {}).get("passed")]
+        if not results.get("worktree") or g1:
+            g1_failures.append(name)
+            lines.append(f"\n**G1 (required): FAIL** - C1 samples without a passing agreement: "
+                         f"{[r['label'] for r in g1] or 'no C1 sample'}")
+        else:
+            lines.append(f"\n**G1 (required): PASS** ({len(c1)} C1 sample(s) agree with the reference)")
+        if not ref or not c1:
+            lines.append("R2-R4: not evaluated (reference or C1 missing)")
+            continue
+        ref_total, c1_total = median_of(ref, "total"), median_of(c1, "total")
+        lines.append(f"- R2 time: reference {ref_total:.1f} s, C1 {c1_total:.1f} s (medians), "
+                     f"C1/reference {c1_total / ref_total:.3f}. Recommendation: "
+                     + ("C1 is the default." if c1_total <= ref_total else
+                        "C1 is slower than the reference here; the hand-back names the slower stage "
+                        "(nominal pass, shift passes or merge columns above)."))
+        ref_mem = float(np.median([memory_metric(r) for r in ref]))
+        c1_mems = [memory_metric(r) for r in c1]
+        delta = float(np.median(c1_mems)) - ref_mem
+        metric = "lifetime max footprint" if c1[0].get("lifetime_max_footprint_mb") is not None else "ru_maxrss"
+        lines.append(f"- R3 memory ({metric}): reference {ref_mem:.0f} MB, C1 {np.median(c1_mems):.0f} MB, "
+                     f"C1 - reference {delta:+.0f} MB (reference line +{R3_REFERENCE_MB:.0f} MB). "
+                     f"Recommendation: HTCondor request_memory >= {1.2 * max(c1_mems):.0f} MB "
+                     f"(measured C1 peak {max(c1_mems):.0f} MB + 20 %).")
+        if (SAMPLING_BAND_MB[0] <= delta <= SAMPLING_BAND_MB[1] or name in PHASE_A_SPREAD_CONFIGS) \
+                and (len(ref) < 3 or len(c1) < 3):
+            lines.append("  sampling rule: two more samples of each variant")
+        proto = PROTOTYPE_FILL_SECONDS.get(name)
+        c1_fill = median_of(c1, "fill_seconds")
+        if proto is not None and c1_fill is not None:
+            ratio = c1_fill / proto
+            lines.append(f"- R4 fill against the phase-A prototype: C1 {c1_fill:.2f} s, prototype {proto:.2f} s, "
+                         f"ratio {ratio:.3f} (reference line {R4_REFERENCE_RATIO})"
+                         + ("; above the line: investigate and explain in impl-notes." if ratio > R4_REFERENCE_RATIO
+                            else "."))
+        for variant, rs in results.items():
+            if variant not in ("reference", "worktree"):
+                fills = median_of(rs, "fill_seconds")
+                lines.append(f"- information, {variant}: fill {fmt(fills, '.2f')} s, "
+                             f"total {fmt(median_of(rs, 'total'))} s")
+        unreliable = [r for rs in results.values() for r in rs if r.get("reliability", "").startswith("unreliable")]
+        for r in unreliable:
+            top = ((r.get("others") or {}).get("top_rises") or [])[:5]
+            lines.append(f"  {r['label']}: {r['reliability']}; largest other processes: "
+                         + ", ".join(f"{t['name']} ({t['pid']}) {t['rise_mb']:+.0f} MB" for t in top))
+    print("\n".join(lines))
+    print()
+    if g1_failures:
+        print("G1 FAILED: " + ", ".join(g1_failures))
+        return 1
+    print("G1 passed in every configuration (R2-R4 are information)")
+    return 0
 
 
 # ---------------------------------------------------------------- argparse
@@ -1078,6 +1758,9 @@ def main(argv=None):
     p.add_argument("--removed", action="append")
     p.add_argument("--restored", action="append")
     p.add_argument("--identical", action="store_true", help="also fail on bitwise or variance differences")
+    p.add_argument("--order-tolerant", action="store_true",
+                   help="rule 2t: values within 1e-9 relative (for different summation orders); strict mismatches "
+                        "are printed as information and failing cells are classed cancellation or real")
     p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("selftest", help="compare against mutated copies of real dumps")
@@ -1085,6 +1768,31 @@ def main(argv=None):
         p.add_argument(f"--{name}")
     p.add_argument("--workdir", default=os.path.join(os.getcwd(), "selftest_maps"))
     p.set_defaults(func=cmd_selftest)
+
+    p = sub.add_parser("scale", help="one variant of the at-scale measurement, run in a fresh subprocess")
+    add_run_args(p)
+    p.add_argument("--engine", required=True, choices=ENGINE_CHOICES)
+    p.add_argument("--name", required=True, help="configuration name (A1 ... E1)")
+    p.add_argument("--out", required=True, help="output directory")
+    p.add_argument("--chunksize", type=int, default=100000)
+    p.add_argument("--maxchunks", type=int, required=True)
+    p.add_argument("--reference-tree")
+    p.add_argument("--rename-map")
+    p.add_argument("--changed", action="append")
+    p.add_argument("--removed", action="append")
+    p.add_argument("--restored", action="append")
+    p.add_argument("--label", help="output label (default: the engine name)")
+    p.add_argument("--sample", type=int, default=1, help="sample number for the sampling rule")
+    p.add_argument("--quiet-wait", type=float, default=1800.0,
+                   help="seconds to wait for a quiet machine before running anyway (labelled not quiet)")
+    p.add_argument("--keep-dump", action="store_true")
+    p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_scale)
+
+    p = sub.add_parser("report", help="G1 verdict and R2-R4 information rows over the scale results in a directory")
+    p.add_argument("--out", required=True)
+    p.add_argument("--names", action="append")
+    p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
     return args.func(args)
