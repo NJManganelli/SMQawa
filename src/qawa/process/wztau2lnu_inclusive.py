@@ -432,6 +432,74 @@ def apply_hem_uncertainty(jets, met):
     return scaled_jets, scaled_met
 
 
+STANDARD_FILL_VARIABLES = (
+    'leading_lep_pt', 'leading_lep_phi', 'leading_lep_eta',
+    'trailing_lep_pt', 'trailing_lep_phi', 'trailing_lep_eta',
+    'met_pt', 'met_phi',
+    'tau_pt_vtight', 'tau_pt_tight', 'taus_phi', 'taus_eta',
+    'tau_upsilon_vtight', 'tau_upsilon_vtight_pt20to40', 'tau_upsilon_vtight_pt40to60',
+    'tau_upsilon_vtight_pt60to100', 'tau_upsilon_vtight_pt100toInf',
+    'tau_upsilon_tight', 'tau_upsilon_tight_pt20to40', 'tau_upsilon_tight_pt40to60',
+    'tau_upsilon_tight_pt60to100', 'tau_upsilon_tight_pt100toInf',
+    'tau_upsilon_loose', 'tau_upsilon_loose_pt20to40', 'tau_upsilon_loose_pt40to60',
+    'tau_upsilon_loose_pt60to100', 'tau_upsilon_loose_pt100toInf',
+    'tau_pt_loose', 'taus_phi_loose', 'taus_eta_loose',
+    'lead_jet_pt', 'lead_jet_phi', 'lead_jet_eta',
+    'njets', 'nhtaus_loose', 'nhtaus_tight', 'nhtaus_vtight',
+    'dilep_pt', 'pt_llt', 'ptv_llt', 'dilep_dphi', 'dilep_deta', 'dilep_m', 'dilep_dR',
+    'delta_R', 'dphi_met_ll', 'dilep_dphi_tau', 'dphi_jet_met',
+    'mT_W', 'inv_m_WZ', 'm_lep', 'dilep_tau_loose_met_hadron_mt', 'dilep_mt_llnunu',
+    'HTl', 'ST',
+)
+
+
+def n_minus_one_key(requirements, exclude):
+    sel_args = {s.replace('~', ''): '~' not in s for s in requirements if all(e not in s for e in exclude)}
+    return tuple(sorted(sel_args.items()))
+
+
+def channel_block(exclude, pass_state):
+    key = tuple((name, n_minus_one_key(reqs, exclude)) for name, reqs in pass_state["channels"].items())
+    block = pass_state["block_cache"].get(key)
+    if block is None:
+        selection = pass_state["selection"]
+        block = tuple(
+            (name, rows) for name, rows in
+            ((name, np.flatnonzero(selection.require(**dict(channel_key)))) for name, channel_key in key)
+            if len(rows)
+        )
+        pass_state["block_cache"][key] = block
+    return block
+
+
+def standard_weights(raw):
+    def weight(k, rows):
+        return np.nan_to_num(raw[k][rows], nan=1.0, posinf=1.0, neginf=1.0)
+    return weight
+
+
+def scaled_weights(raw, factor):
+    def weight(k, rows):
+        return np.nan_to_num(raw[k][rows] * factor[rows], nan=1.0, posinf=1.0, neginf=1.0)
+    return weight
+
+
+def eft_term_weights(raw, columns):
+    def weight(slot, rows):
+        k, t = divmod(slot, len(columns))
+        return np.nan_to_num(raw[k][rows], nan=1.0, posinf=1.0, neginf=1.0) * columns[t][rows]
+    return weight
+
+
+def fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
+    target = histos[key]
+    slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
+    for channel, rows in channel_block(exclude, pass_state):
+        dense = {name: v[rows] for name, v in values.items()}
+        for k, label in enumerate(labels):
+            target.fill(channel=channel, **dict(zip(slot_names, label)), **dense, weight=weight(k, rows))
+
+
 class wzinclusive_processor(processor.ProcessorABC):
     # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing
     # NEED
@@ -1503,13 +1571,13 @@ class wzinclusive_processor(processor.ProcessorABC):
         dilep_deta = np.abs(lead_lep.eta - subl_lep.eta)
         dilep_dR   = lead_lep.delta_r(subl_lep)
 
-        delta_R = ak.where(ntight_lep==2, dilep_p4.delta_r(lead_tau_vtight), dilep_p4.delta_r(lead_tau_vtight))
+        delta_R = dilep_p4.delta_r(lead_tau_vtight)
         dilep_dphi_met  = ak.where(ntight_lep==2, dilep_p4.delta_phi(p4_met), dilep_p4.delta_phi(emu_met))
         #scalar_balance = ak.where(ntight_lep==3, emu_met.pt/dilep_p4.pt, p4_met.pt/dilep_p4.pt)
         delta_tau_met_phi = ak.where(ntight_lep==2, lead_tau_vtight.delta_phi(p4_met), lead_tau_vtight.delta_phi(emu_met))
-        dilep_dphi_tau = ak.where(ntight_lep==2, dilep_p4.delta_phi(lead_tau_vtight), dilep_p4.delta_phi(lead_tau_vtight))
+        dilep_dphi_tau = dilep_p4.delta_phi(lead_tau_vtight)
         delta_tau_loose_met_phi = ak.where(ntight_lep==2, lead_tau_loose.delta_phi(p4_met), lead_tau_loose.delta_phi(emu_met))
-        dilep_dphi_tau_loose = ak.where(ntight_lep==2, dilep_p4.delta_phi(lead_tau_loose), dilep_p4.delta_phi(lead_tau_loose))
+        dilep_dphi_tau_loose = dilep_p4.delta_phi(lead_tau_loose)
 
 
 
@@ -1569,8 +1637,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         lead_jet = ak.firsts(good_jets)
         subl_jet = ak.firsts(good_jets[lead_jet.delta_r(good_jets)>0.01])
         third_jet = ak.firsts(good_jets[(lead_jet.delta_r(good_jets)>0.01) & (subl_jet.delta_r(good_jets)>0.01)])
-        delta_R_jet_dilep = ak.where(ntight_lep==2, dilep_p4.delta_r(lead_jet), dilep_p4.delta_r(lead_jet))
-        delta_R_jet_tau = ak.where(ntight_lep==2, lead_tau_vtight.delta_r(lead_jet), lead_tau_vtight.delta_r(lead_jet))
+        delta_R_jet_dilep = dilep_p4.delta_r(lead_jet)
+        delta_R_jet_tau = lead_tau_vtight.delta_r(lead_jet)
         dphi_jet_met = ak.where(ntight_lep==2, lead_jet.delta_phi(p4_met), lead_jet.delta_phi(emu_met))
 
         dijet_mass = (lead_jet + subl_jet).mass
@@ -1986,100 +2054,6 @@ class wzinclusive_processor(processor.ProcessorABC):
             for field in collection.fields:
                 coffea_console.print(f"\t{field:<{longest_field}}={getattr(collection, field)}")
 
-        def _histogram_filler(ch, syst, var, _weight=None, pol_weights=None):
-            sel_ = channels[ch]
-            sel_args_ = {
-                s.replace('~',''): (False if '~' in s else True) for s in sel_ if var not in s
-            }
-            cut =  selection.require(**sel_args_)
-
-            systname = 'nominal' if syst is None else syst
-
-            if syst in weights.variations:
-                weight = weights.weight(modifier=syst)[cut]
-            else:
-                weight = weights.weight()[cut]
-            if _weight is not None:
-                weight = weight * _weight[cut]
-
-            fill_var = _format_variable(event[var], cut)
-
-            # SMEFT structure constants.  Both the EFT decomposition and the
-            # systematic weight are per-event multiplicative factors, so filling
-            # with their product is exact -- no approximation that the systematic
-            # is EFT-independent.  That matters here because cW is energy-growing
-            # and the JES/tau-ES uncertainties grow with pT, so the relative
-            # effect of a systematic genuinely differs between the SM and
-            # quadratic templates in the tail where the sensitivity sits.
-            if eft_theta is not None:
-                eft_key = var + "_eft"
-                if eft_key not in histos:
-                    # lazily cloned from the nominal histogram's value axes, so
-                    # only variables actually filled get an EFT counterpart
-                    histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
-                w_eft = ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
-                for term, col in eft_theta.items():
-                    histos[eft_key].fill(
-                        **{
-                            "channel": ch,
-                            "systematic": systname,
-                            "eft": term,
-                            var: fill_var,
-                            "weight": w_eft * col[cut],
-                        }
-                    )
-
-            if pol_weights is None:
-                histos[var].fill(
-                    **{
-                        "channel": ch,
-                        "systematic": systname,
-                        var: fill_var,
-                        "weight": ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
-                    }
-                )
-            else:
-                # one weight + one fill-value computation reused across all the
-                # pure-state clones; pol weight is gen-level / detector-stable.
-                for postfix, pol_w in pol_weights.items():
-                    pw = ak.to_numpy(ak.fill_none(pol_w[cut], 1.0))
-                    w = weight * pw
-                    histos[var + postfix].fill(
-                        **{
-                            "channel": ch,
-                            "systematic": systname,
-                            var: fill_var,
-                            "weight": ak.nan_to_num(w, nan=1.0, posinf=1.0, neginf=1.0)
-                        }
-                    )
-
-
-        def _hist2d_filler(ch, syst, xvar, yvar, hist_key, extra_weight=None):
-            # gen-vs-reco migration map; hist_key picks the explicit 2D histo
-            # (axis names = xvar, yvar). Used for qcos_theta_w_reco_gen etc.
-            sel_ = channels[ch]
-            sel_args_ = {
-                s.replace('~',''): (False if '~' in s else True) for s in sel_ if xvar not in s and yvar not in s
-            }
-            cut = selection.require(**sel_args_)
-            systname = 'nominal' if syst is None else syst
-            if syst in weights.variations:
-                weight = weights.weight(modifier=syst)[cut]
-            else:
-                weight = weights.weight()[cut]
-            if extra_weight is not None:
-                # e.g. a 0/1 gen-matching flag -> fills only matched pairs
-                weight = weight * ak.to_numpy(ak.fill_none(extra_weight, 0.0))[cut]
-            histos[hist_key].fill(
-                **{
-                    "channel": ch,
-                    "systematic": systname,
-                    xvar: _format_variable(event[xvar], cut),
-                    yvar: _format_variable(event[yvar], cut),
-                    "weight": ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
-                }
-            )
-
         def _histogram_filler2D(ch, syst, var1, var2, _weight=None):
             sel_ = channels[ch]
             sel_args_ = {
@@ -2115,106 +2089,83 @@ class wzinclusive_processor(processor.ProcessorABC):
         else:
             systematics = [shift_name]
 
-        if self._pol:
-            for ch in channels:
-                for sys in systematics:
-                    for var in self.pol_reco_vars:
-                        if var in histos:
-                            _histogram_filler(ch, sys, var)
+        pass_state = {
+            "selection": selection,
+            "channels": channels,
+            "block_cache": {},
+        }
+        raw = np.stack(
+            [weights.weight(modifier=s) if s in weights.variations else weights.weight() for s in systematics],
+            axis=0,
+        )
+        labels = [('nominal' if s is None else s,) for s in systematics]
+        nominal_labels = [('nominal',)]
+        standard_weight = standard_weights(raw)
+        if eft_theta is not None:
+            eft_labels = [(label, term) for (label,) in labels for term in eft_theta]
+            eft_weight = eft_term_weights(raw, [eft_theta[term] for term in eft_theta])
 
-            
+        def event_values(*names):
+            return {name: ak.to_numpy(ak.fill_none(event[name], np.nan)) for name in names}
+
+        def fill_variable(var, key=None, weight=standard_weight, slot_labels=labels):
+            values = event_values(var)
+            if eft_theta is not None:
+                eft_key = var + "_eft"
+                if eft_key not in histos:
+                    histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
+                fill_histogram(histos, eft_key, values, eft_labels, eft_weight, (var,), pass_state)
+            fill_histogram(histos, var if key is None else key, values, slot_labels, weight, (var,), pass_state)
+
+        def fill_map(xvar, yvar, key, weight=standard_weight):
+            fill_histogram(histos, key, event_values(xvar, yvar), nominal_labels, weight, (xvar, yvar), pass_state)
+
+        if self._pol:
+            for var in self.pol_reco_vars:
+                if var in histos:
+                    fill_variable(var)
+
             if is_signal and (not is_data):
-                for ch in channels:
-                    for sys in systematics:
-                        gv = event['gen_valid']
-                        for var in self.pol_template_vars:
-                            wpref = _pol_wpref_for(var)
-                            if f'{var}_{wpref}_long' not in histos:
-                                continue
-                            wdict = {f'_{wpref}_{pol}': event[f'{wpref}_{pol}'] * gv
-                                     for pol in ('long', 'left', 'right')}
-                            _histogram_filler(ch, sys, var, pol_weights=wdict)
-                        for var in self.pol_gen_vars:
-                            if var in histos:
-                                _histogram_filler(ch, sys, var)
-                        _histogram_filler(ch, sys, 'qcos_theta_w_gen',
-                                           pol_weights={'_onshell': ak.values_astype(event['rescued'] < 0.5, np.float32)})
-                        if sys is None:
-                            for wk in self.pol_weight_keys:
-                                _histogram_filler(ch, None, wk)
-                            _hist2d_filler(ch, None, 'qcos_theta_w_gen', 'qcos_theta_w_reco', 'qcos_theta_w_reco_gen')
-                            _hist2d_filler(ch, None, 'cos_theta_z_gen',  'cos_theta_z_reco',  'cos_theta_z_reco_gen')
-                            # tau pT response (slope) and the resolution handle for f0
-                            _hist2d_filler(ch, None, 'tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco')
-                            # matched-only version: fit the tau pT slope on THIS one
-                            _hist2d_filler(ch, None, 'tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco_matched', extra_weight=event['tau_matched'])
-                            _hist2d_filler(ch, None, 'qcos_theta_w_reco', 'tau_corr_pt', 'qcos_w_vs_tau_pt')
-                            _hist2d_filler(ch, None, 'tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco')
-                            _hist2d_filler(ch, None, 'tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco_matched', extra_weight=event['tau_matched'])
+                gv = event['gen_valid']
+                pol_factors = {
+                    f'_{wpref}_{pol}': ak.to_numpy(ak.fill_none(event[f'{wpref}_{pol}'] * gv, 1.0))
+                    for wpref in dict.fromkeys(_pol_wpref_for(var) for var in self.pol_template_vars)
+                    for pol in ('long', 'left', 'right')
+                }
+                for var in self.pol_template_vars:
+                    wpref = _pol_wpref_for(var)
+                    if f'{var}_{wpref}_long' not in histos:
+                        continue
+                    for pol in ('long', 'left', 'right'):
+                        postfix = f'_{wpref}_{pol}'
+                        fill_variable(var, var + postfix, scaled_weights(raw, pol_factors[postfix]))
+                for var in self.pol_gen_vars:
+                    if var in histos:
+                        fill_variable(var)
+                onshell = ak.to_numpy(ak.fill_none(ak.values_astype(event['rescued'] < 0.5, np.float32), 1.0))
+                fill_variable('qcos_theta_w_gen', 'qcos_theta_w_gen_onshell', scaled_weights(raw, onshell))
+                if None in systematics:
+                    matched = ak.to_numpy(ak.fill_none(event['tau_matched'], 0.0))
+                    for wk in self.pol_weight_keys:
+                        fill_variable(wk, slot_labels=nominal_labels)
+                    fill_map('qcos_theta_w_gen', 'qcos_theta_w_reco', 'qcos_theta_w_reco_gen')
+                    fill_map('cos_theta_z_gen',  'cos_theta_z_reco',  'cos_theta_z_reco_gen')
+                    # tau pT response (slope) and the resolution handle for f0
+                    fill_map('tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco')
+                    # matched-only version: fit the tau pT slope on THIS one
+                    fill_map('tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco_matched', scaled_weights(raw, matched))
+                    fill_map('qcos_theta_w_reco', 'tau_corr_pt', 'qcos_w_vs_tau_pt')
+                    fill_map('tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco')
+                    fill_map('tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco_matched', scaled_weights(raw, matched))
         else:
             # ── standard inclusive analysis ────────────────────────────────────
-            for ch in channels:
-                for sys in systematics:
-                    _histogram_filler(ch, sys, 'leading_lep_pt')
-                    _histogram_filler(ch, sys, 'leading_lep_phi')
-                    _histogram_filler(ch, sys, 'leading_lep_eta')
-                    _histogram_filler(ch, sys, 'trailing_lep_pt')
-                    _histogram_filler(ch, sys, 'trailing_lep_phi')
-                    _histogram_filler(ch, sys, 'trailing_lep_eta')
-                    _histogram_filler(ch, sys, 'met_pt')
-                    _histogram_filler(ch, sys, 'met_phi')
-                    _histogram_filler(ch, sys, 'tau_pt_vtight')
-                    _histogram_filler(ch, sys, 'tau_pt_tight')
-                    _histogram_filler(ch, sys, 'taus_phi')
-                    _histogram_filler(ch, sys, 'taus_eta')
-                    _histogram_filler(ch, sys, 'tau_upsilon_vtight')
-                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt20to40')
-                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt40to60')
-                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt60to100')
-                    _histogram_filler(ch, sys, 'tau_upsilon_vtight_pt100toInf')
-                    _histogram_filler(ch, sys, 'tau_upsilon_tight')
-                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt20to40')
-                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt40to60')
-                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt60to100')
-                    _histogram_filler(ch, sys, 'tau_upsilon_tight_pt100toInf')
-                    _histogram_filler(ch, sys, 'tau_upsilon_loose')
-                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt20to40')
-                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt40to60')
-                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt60to100')
-                    _histogram_filler(ch, sys, 'tau_upsilon_loose_pt100toInf')
-                    # Nominal only: this is a CONDITIONAL shape P(Upsilon | pT), crosscheck, pT shifts ignored
-                    if sys is None:
-                        _hist2d_filler(ch, None, 'tau_upsilon_vtight', 'tau_pt_vtight', 'tau_upsilon_vtight_vs_tau_pt')
-                        _hist2d_filler(ch, None, 'tau_upsilon_tight', 'tau_pt_tight', 'tau_upsilon_tight_vs_tau_pt')
-                        _hist2d_filler(ch, None, 'tau_upsilon_loose', 'tau_pt_loose', 'tau_upsilon_loose_vs_tau_pt')
-                    _histogram_filler(ch, sys, 'tau_pt_loose')
-                    _histogram_filler(ch, sys, 'taus_phi_loose')
-                    _histogram_filler(ch, sys, 'taus_eta_loose')
-                    _histogram_filler(ch, sys, 'lead_jet_pt')
-                    _histogram_filler(ch, sys, 'lead_jet_phi')
-                    _histogram_filler(ch, sys, 'lead_jet_eta')
-                    _histogram_filler(ch, sys, 'njets')
-                    _histogram_filler(ch, sys, 'nhtaus_loose')
-                    _histogram_filler(ch, sys, 'nhtaus_tight')
-                    _histogram_filler(ch, sys, 'nhtaus_vtight')
-                    _histogram_filler(ch, sys, 'dilep_pt')
-                    _histogram_filler(ch, sys, 'pt_llt')
-                    _histogram_filler(ch, sys, 'ptv_llt')
-                    _histogram_filler(ch, sys, 'dilep_dphi')
-                    _histogram_filler(ch, sys, 'dilep_deta')
-                    _histogram_filler(ch, sys, 'dilep_m')
-                    _histogram_filler(ch, sys, 'dilep_dR')
-                    _histogram_filler(ch, sys, 'delta_R')
-                    _histogram_filler(ch, sys, 'dphi_met_ll')
-                    _histogram_filler(ch, sys, 'dilep_dphi_tau')
-                    _histogram_filler(ch, sys, 'dphi_jet_met')
-                    _histogram_filler(ch, sys, 'mT_W')
-                    _histogram_filler(ch, sys, 'inv_m_WZ')
-                    _histogram_filler(ch, sys, 'm_lep')
-                    _histogram_filler(ch, sys, 'dilep_tau_loose_met_hadron_mt')
-                    _histogram_filler(ch, sys, 'dilep_mt_llnunu')
-                    _histogram_filler(ch, sys, 'HTl')
-                    _histogram_filler(ch, sys, 'ST')
+            for var in STANDARD_FILL_VARIABLES:
+                fill_variable(var)
+            # Nominal only: this is a CONDITIONAL shape P(Upsilon | pT), crosscheck, pT shifts ignored
+            if None in systematics:
+                fill_map('tau_upsilon_vtight', 'tau_pt_vtight', 'tau_upsilon_vtight_vs_tau_pt')
+                fill_map('tau_upsilon_tight', 'tau_pt_tight', 'tau_upsilon_tight_vs_tau_pt')
+                fill_map('tau_upsilon_loose', 'tau_pt_loose', 'tau_upsilon_loose_vs_tau_pt')
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         return {dataset: histos}
