@@ -1,11 +1,14 @@
 import argparse
 import collections
 import fnmatch
+import functools
 import getpass
 import glob
 import gzip
+import math
 import os
 import pickle
+from multiprocessing import Pool
 
 import psutil
 import rich
@@ -62,6 +65,13 @@ def read_whole_file(filename):
     return pickle.loads(gzip.decompress(raw))
 
 
+def add_into(accumulator, key, value):
+    if key in accumulator:
+        accumulator[key] += value
+    else:
+        accumulator[key] = value.copy() if hasattr(value, "copy") else value
+
+
 def merge_files(filenames, merged, load):
     empty = []
     for filename in filenames:
@@ -72,12 +82,11 @@ def merge_files(filenames, merged, load):
         try:
             for dataset, content in load(filename).items():
                 target = merged.setdefault(dataset, {"hist": {}, "sumw": 0.0})
-                hists = target["hist"]
                 for name, histogram in content["hist"].items():
                     if isinstance(histogram, dict):
                         continue
                     key = f"{dataset}/{name}"
-                    hists[name] = hists[name] + histogram if name in hists else histogram
+                    add_into(target["hist"], name, histogram)
                     key = None
                 target["sumw"] += content["sumw"]
         except Exception as err:
@@ -85,6 +94,22 @@ def merge_files(filenames, merged, load):
                 raise RuntimeError(f"cannot merge {filename}: {err}") from err
             raise RuntimeError(f"cannot add {key} from {filename} to the histograms merged before it: {err}") from err
     return empty
+
+
+def merge_chunk(filenames, load):
+    merged = {}
+    empty = merge_files(filenames, merged, load)
+    return merged, empty
+
+
+def merge_into(merged, partial):
+    for dataset, content in partial.items():
+        if dataset not in merged:
+            merged[dataset] = content
+            continue
+        for name, histogram in content["hist"].items():
+            add_into(merged[dataset]["hist"], name, histogram)
+        merged[dataset]["sumw"] += content["sumw"]
 
 
 def main():
@@ -107,6 +132,8 @@ def main():
     parser.add_argument("--outdir", type=str, default=".",
                         help="path to directory where files should be written, defaults to '.'")
     parser.add_argument("-f", "--filename", type=str, default="latest", help="output file name suffix")
+    parser.add_argument("--ncores", type=int, default=4,
+                        help="number of worker processes (default 4); 1 or less merges in the main process")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     options = parser.parse_args()
 
@@ -135,12 +162,24 @@ def main():
             print(f"{directory}: {n} files")
 
     load = read_whole_file if options.eos else read_gzip
+    ncores = max(1, options.ncores)
     merged, empty = {}, []
-    with progress_bar() as progress:
-        task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
-        for filename in filenames:
-            empty += merge_files([filename], merged, load)
-            progress.advance(task)
+    if ncores == 1:
+        with progress_bar() as progress:
+            task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
+            for filename in filenames:
+                empty += merge_files([filename], merged, load)
+                progress.advance(task)
+    else:
+        nchunks = min(len(filenames), ncores * 4)
+        size = math.ceil(len(filenames) / nchunks)
+        chunks = [filenames[i:i + size] for i in range(0, len(filenames), size)]
+        with Pool(processes=ncores) as pool, progress_bar() as progress:
+            task = progress.add_task("[cyan]Merging chunks...", total=len(chunks))
+            for partial, chunk_empty in pool.imap_unordered(functools.partial(merge_chunk, load=load), chunks):
+                merge_into(merged, partial)
+                empty += chunk_empty
+                progress.advance(task)
 
     for directory, n in collections.Counter(os.path.dirname(f) for f in empty).items():
         rich.print(f"[red]{os.path.basename(directory)} contains {n} empty pkl.gz files!")
