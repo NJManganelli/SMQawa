@@ -67,6 +67,28 @@ def dd_targetdddy_tag(compound_name):
     tag = tag[len("Target"):] if tag.startswith("Target") else tag
     return "closure" if tag == "Closure" else tag
 
+# tau_loosetovtight: leading tau from the highest available ID working point (VTight, else Tight, else Loose)
+POL_TAU_NAMES = {
+    'W_mass': 'tau_loosetovtight_W_mass',
+    'mT': 'tau_loosetovtight_mT',
+    'mT_pre': 'tau_loosetovtight_mT_pre',
+    'W_E': 'tau_loosetovtight_W_E',
+    'nu_pz': 'tau_loosetovtight_nu_pz',
+    'disc': 'tau_loosetovtight_disc',
+    'disc_sign': 'tau_loosetovtight_disc_sign',
+    'rescued': 'tau_loosetovtight_rescued',
+    'tau_corr_pt': 'tau_loosetovtight_corr_pt',
+    'cos_theta_w_reco': 'tau_loosetovtight_cos_theta_w_reco',
+    'qcos_theta_w_reco': 'tau_loosetovtight_qcos_theta_w_reco',
+    'cos_theta_wp_reco': 'tau_loosetovtight_cos_theta_wp_reco',
+    'cos_theta_wm_reco': 'tau_loosetovtight_cos_theta_wm_reco',
+    'cos_theta_wpz_reco': 'tau_loosetovtight_cos_theta_wpz_reco',
+    'cos_theta_wmz_reco': 'tau_loosetovtight_cos_theta_wmz_reco',
+    'tau_pt_ratio': 'tau_loosetovtight_pt_ratio',
+    'tau_gen_dR': 'tau_loosetovtight_dR_gentau',
+    'dilep_tau_loose_met_hadron_mt': 'tau_loosetovtight_dilep_met_hadron_mt',
+}
+
 _POL_ERA_KEY = {"2016": "Run2", "2016APV": "Run2", "2017": "Run2", "2018": "Run2",
                 "2024": "2024"}
 
@@ -344,11 +366,11 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wps=("VTight",), tauI
         raise NotImplementedError
 
     if tauIDvse_wp not in tau_e_id_cuts:
-        raise ValueError(f"Available levels for tauIDvse_wp: {list(tauIDvse_wp.keys())}")
+        raise ValueError(f"Available levels for tauIDvse_wp: {list(tau_e_id_cuts.keys())}")
     else:
         tau_e_subid = (tau_e_branch >= tau_e_id_cuts[tauIDvse_wp])
     if tauIDvsmu_wp not in tau_mu_id_cuts:
-        raise ValueError(f"Available levels for tauIDvmu_wp: {list(tauIDvsmu_wp.keys())}")
+        raise ValueError(f"Available levels for tauIDvsmu_wp: {list(tau_mu_id_cuts.keys())}")
     else:
         tau_mu_subid = (tau_mu_branch >= tau_mu_id_cuts[tauIDvsmu_wp])
     for tauIDvsj_wp in tauIDvsj_wps:
@@ -436,26 +458,30 @@ STANDARD_FILL_VARIABLES = (
     'leading_lep_pt', 'leading_lep_phi', 'leading_lep_eta',
     'trailing_lep_pt', 'trailing_lep_phi', 'trailing_lep_eta',
     'met_pt', 'met_phi',
-    'tau_pt_vtight', 'tau_pt_tight', 'taus_phi', 'taus_eta',
-    'tau_upsilon_vtight', 'tau_upsilon_vtight_pt20to40', 'tau_upsilon_vtight_pt40to60',
-    'tau_upsilon_vtight_pt60to100', 'tau_upsilon_vtight_pt100toInf',
-    'tau_upsilon_tight', 'tau_upsilon_tight_pt20to40', 'tau_upsilon_tight_pt40to60',
-    'tau_upsilon_tight_pt60to100', 'tau_upsilon_tight_pt100toInf',
-    'tau_upsilon_loose', 'tau_upsilon_loose_pt20to40', 'tau_upsilon_loose_pt40to60',
-    'tau_upsilon_loose_pt60to100', 'tau_upsilon_loose_pt100toInf',
-    'tau_pt_loose', 'taus_phi_loose', 'taus_eta_loose',
+    'tau_vtight_pt', 'tau_tight_pt', 'tau_vtight_phi', 'tau_vtight_eta',
+    'tau_vtight_upsilon', 'tau_vtight_upsilon_pt20to40', 'tau_vtight_upsilon_pt40to60',
+    'tau_vtight_upsilon_pt60to100', 'tau_vtight_upsilon_pt100toInf',
+    'tau_tight_upsilon', 'tau_tight_upsilon_pt20to40', 'tau_tight_upsilon_pt40to60',
+    'tau_tight_upsilon_pt60to100', 'tau_tight_upsilon_pt100toInf',
+    'tau_loose_upsilon', 'tau_loose_upsilon_pt20to40', 'tau_loose_upsilon_pt40to60',
+    'tau_loose_upsilon_pt60to100', 'tau_loose_upsilon_pt100toInf',
+    'tau_loose_pt', 'tau_loose_phi', 'tau_loose_eta',
     'lead_jet_pt', 'lead_jet_phi', 'lead_jet_eta',
     'njets', 'nhtaus_loose', 'nhtaus_tight', 'nhtaus_vtight',
-    'dilep_pt', 'pt_llt', 'ptv_llt', 'dilep_dphi', 'dilep_deta', 'dilep_m', 'dilep_dR',
-    'delta_R', 'dphi_met_ll', 'dilep_dphi_tau', 'dphi_jet_met',
-    'mT_W', 'inv_m_WZ', 'm_lep', 'dilep_tau_loose_met_hadron_mt', 'dilep_mt_llnunu',
-    'HTl', 'ST',
+    'dilep_pt', 'tau_loosetovtight_pt_llt', 'tau_loosetovtight_ptv_llt', 'dilep_ll_dphi', 'dilep_deta', 'dilep_m', 'dilep_dR',
+    'tau_vtight_dR_dilep', 'dphi_met_ll', 'tau_vtight_dphi_dilep', 'dphi_jet_met',
+    'tau_loosetovtight_mT_W', 'tau_loosetovtight_inv_m_WZ', 'tau_loosetovtight_m_lep', 'tau_loosetovtight_dilep_met_hadron_mt', 'dilep_mt_llnunu',
+    'tau_loose_HTl', 'tau_loose_ST',
 )
 
 
 def n_minus_one_key(requirements, exclude):
     sel_args = {s.replace('~', ''): '~' not in s for s in requirements if all(e not in s for e in exclude)}
     return tuple(sorted(sel_args.items()))
+
+
+def n_minus_one_collisions(variables, selection_names):
+    return sorted({(v, s) for v in variables for s in selection_names if v != s and v in s})
 
 
 def channel_block(exclude, pass_state):
@@ -690,22 +716,22 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         self.pol_weight_keys   = list(POL_WEIGHT_KEYS)
         self.pol_template_vars = [
-            v for v in POL_TEMPLATE_VARS
+            POL_TAU_NAMES.get(v, v) for v in POL_TEMPLATE_VARS
             if v not in ("cos_theta_w_reco", "cos_theta_w_gen")
         ]
         self.pol_reco_vars = [
-            "cos_theta_w_reco", "cos_theta_z_reco", "qcos_theta_w_reco",
-            "cos_theta_wp_reco", "cos_theta_wm_reco",
-            "cos_theta_wpz_reco", "cos_theta_wmz_reco",          
-            "W_mass", "mT", "W_E", "nu_pz", "tau_corr_pt",
-            'dilep_tau_loose_met_hadron_mt',
-            "disc", "rescued", "disc_sign", "tau_pt_vtight", "mT_pre",
+            "tau_loosetovtight_cos_theta_w_reco", "cos_theta_z_reco", "tau_loosetovtight_qcos_theta_w_reco",
+            "tau_loosetovtight_cos_theta_wp_reco", "tau_loosetovtight_cos_theta_wm_reco",
+            "tau_loosetovtight_cos_theta_wpz_reco", "tau_loosetovtight_cos_theta_wmz_reco",          
+            "tau_loosetovtight_W_mass", "tau_loosetovtight_mT", "tau_loosetovtight_W_E", "tau_loosetovtight_nu_pz", "tau_loosetovtight_corr_pt",
+            'tau_loosetovtight_dilep_met_hadron_mt',
+            "tau_loosetovtight_disc", "tau_loosetovtight_rescued", "tau_loosetovtight_disc_sign", "tau_vtight_pt", "tau_loosetovtight_mT_pre",
         ]
         self.pol_gen_vars = [
             "cos_theta_z_gen", "cos_theta_wm_gen", "cos_theta_wp_gen",
             "cos_theta_wpz_gen", "cos_theta_wmz_gen",            
             "qcos_theta_w_gen",
-            "tau_pt_gen", "W_pt_gen", "tau_gen_dR",
+            "tau_pt_gen", "W_pt_gen", "tau_loosetovtight_dR_gentau",
         ]  
        
         ### polarization part ####
@@ -761,143 +787,137 @@ class wzinclusive_processor(processor.ProcessorABC):
             'dilep_pt': _wh(
                 hist.axis.Regular(60, 0, 600, name="dilep_pt", label=r"$p_{T}^{\ell\ell}$ (GeV)"),
             ),
-            'pt_llt': _wh(
-                hist.axis.Regular(60, 0, 600, name="pt_llt", label=r"$p_{T}^{\ell\ell \tau}$ (GeV)"),
+            'tau_loosetovtight_pt_llt': _wh(
+                hist.axis.Regular(60, 0, 600, name="tau_loosetovtight_pt_llt", label=r"$p_{T}^{\ell\ell \tau}$ (GeV)"),
             ),
-            'ptv_llt': _wh(
-                hist.axis.Regular(60, 0, 600, name="ptv_llt", label=r"$|\vec{p}_{T}^{\,\ell\ell\tau}|$ (GeV)"),
+            'tau_loosetovtight_ptv_llt': _wh(
+                hist.axis.Regular(60, 0, 600, name="tau_loosetovtight_ptv_llt", label=r"$|\vec{p}_{T}^{\,\ell\ell\tau}|$ (GeV)"),
             ), 
             'dilep_deta': _wh(
                 hist.axis.Regular(20, 0, 8, name="dilep_deta", label=r"$Delta\eta_{\ell\ell}$"),
             ),
-            'HTl': _wh(
-                hist.axis.Regular(100, 0, 1000, name="HTl", label=r"$H_{Tl}$ (GeV)"),
+            'tau_loose_HTl': _wh(
+                hist.axis.Regular(100, 0, 1000, name="tau_loose_HTl", label=r"$H_{Tl}$ (GeV)"),
             ), 
-            'ST': _wh(
-                hist.axis.Regular(100, 0, 1000, name="ST", label=r"$S_{T}$ (GeV)"),
+            'tau_loose_ST': _wh(
+                hist.axis.Regular(100, 0, 1000, name="tau_loose_ST", label=r"$S_{T}$ (GeV)"),
             ), 
-            'dilep_tau_pt': _wh(
-                hist.axis.Regular(60, 0, 600, name="dilep_tau_pt", label=r"$p_{T}^{\tau \ell\ell}$ (GeV)"),
-            ), 
-            'dilep_loose_tau_pt': _wh(
-                hist.axis.Regular(60, 0, 600, name="dilep_loose_tau_pt", label=r"$p_{T}^{\ell\ell, \tau}$ (GeV)"),
-            ),
             'dilep_m': _wh(
                 hist.axis.Regular(60, 0, 180, name="dilep_m", label=r"$M_{\ell\ell}$ (GeV)"),
             ), 
             'met_pt': _wh(
                 hist.axis.Regular(60, 0, 600, name="met_pt", label=r"$p_{T}^{miss}$ (GeV)"),
             ),
-            'mT_W': _wh(
-                hist.axis.Regular(100, 0, 1000, name="mT_W", label=r"$m_{T}^{W}$ (GeV)"),
+            'tau_loosetovtight_mT_W': _wh(
+                hist.axis.Regular(100, 0, 1000, name="tau_loosetovtight_mT_W", label=r"$m_{T}^{W}$ (GeV)"),
             ),
-            'dilep_tau_loose_met_hadron_mt': _wh(
-                hist.axis.Regular(150, 0, 1500, name="dilep_tau_loose_met_hadron_mt", label=r"$M_{T}^{WZ}$ (GeV)"),
+            'tau_loosetovtight_dilep_met_hadron_mt': _wh(
+                hist.axis.Regular(150, 0, 1500, name="tau_loosetovtight_dilep_met_hadron_mt", label=r"$M_{T}^{WZ}$ (GeV)"),
             ),
-            'mT_WZ': _wh(
-                hist.axis.Regular(150, 0, 1500, name="mT_WZ", label=r"$m_{T}^{WZ}$ (GeV)"),
+            'tau_loosetovtight_mT_WZ': _wh(
+                hist.axis.Regular(150, 0, 1500, name="tau_loosetovtight_mT_WZ", label=r"$m_{T}^{WZ}$ (GeV)"),
             ),
-            'inv_m_WZ': _wh(
-                hist.axis.Regular(150, 0, 1500, name="inv_m_WZ", label=r"$m_{inv}^{WZ}$ (GeV)"),
+            'tau_loosetovtight_inv_m_WZ': _wh(
+                hist.axis.Regular(150, 0, 1500, name="tau_loosetovtight_inv_m_WZ", label=r"$m_{inv}^{WZ}$ (GeV)"),
             ),
-            'm_lep': _wh(
-                hist.axis.Regular(150, 0, 1500, name="m_lep", label=r"$m^{lep}$ (GeV)"),
+            'tau_loosetovtight_m_lep': _wh(
+                hist.axis.Regular(150, 0, 1500, name="tau_loosetovtight_m_lep", label=r"$m^{lep}$ (GeV)"),
             ),
-            'tau_pt_vtight': _wh(
-                hist.axis.Regular(120, 0, 600, name="tau_pt_vtight", label=r"$p_{T}^{tau_vtight}$ (GeV)"), 
+            'tau_vtight_pt': _wh(
+                hist.axis.Regular(120, 0, 600, name="tau_vtight_pt", label=r"$p_{T}^{tau_vtight}$ (GeV)"), 
             ),
-            'tau_pt_tight': _wh(
-                hist.axis.Regular(120, 0, 600, name="tau_pt_tight", label=r"$p_{T}^{tau_tight}$ (GeV)"), 
+            'tau_tight_pt': _wh(
+                hist.axis.Regular(120, 0, 600, name="tau_tight_pt", label=r"$p_{T}^{tau_tight}$ (GeV)"), 
             ),
-            'taus_eta': _wh(
-                hist.axis.Regular(50, -5, 5, name="taus_eta", label=r"$\eta(\tau)$"),
+            'tau_vtight_eta': _wh(
+                hist.axis.Regular(50, -5, 5, name="tau_vtight_eta", label=r"$\eta(\tau)$"),
             ),
-            'tau_upsilon_vtight': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight", label=r"$\Upsilon_{\tau}$"),
+            'tau_vtight_upsilon': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon", label=r"$\Upsilon_{\tau}$"),
             ),
-            'tau_upsilon_vtight_pt20to40': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            'tau_vtight_upsilon_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
             ),
-            'tau_upsilon_vtight_pt40to60': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            'tau_vtight_upsilon_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
             ),
-            'tau_upsilon_vtight_pt60to100': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            'tau_vtight_upsilon_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
             ),
-            'tau_upsilon_vtight_pt100toInf': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            'tau_vtight_upsilon_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
             ),
-            'tau_upsilon_vtight_vs_tau_pt': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_vtight", label=r"$\Upsilon_{\tau}$"),
+            'tau_vtight_upsilon_vs_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_vtight_upsilon", label=r"$\Upsilon_{\tau}$"),
                 hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
-                                   name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV)"),
+                                   name="tau_vtight_pt", label=r"$p_{T}^{\tau}$ (GeV)"),
             ), # Upsilon vs tau pT, for extracting the fixed-helicity decay templates T_h(Upsilon | pT).
-            'tau_upsilon_tight': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight", label=r"$\Upsilon_{\tau}$"),
+            'tau_tight_upsilon': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon", label=r"$\Upsilon_{\tau}$"),
             ),
-            'tau_upsilon_tight_pt20to40': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            'tau_tight_upsilon_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
             ),
-            'tau_upsilon_tight_pt40to60': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            'tau_tight_upsilon_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
             ),
-            'tau_upsilon_tight_pt60to100': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            'tau_tight_upsilon_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
             ),
-            'tau_upsilon_tight_pt100toInf': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            'tau_tight_upsilon_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
             ),
-            'tau_upsilon_tight_vs_tau_pt': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_tight", label=r"$\Upsilon_{\tau}$"),
+            'tau_tight_upsilon_vs_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_tight_upsilon", label=r"$\Upsilon_{\tau}$"),
                 hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
-                                   name="tau_pt_tight", label=r"$p_{T}^{\tau}$ (GeV)"),
+                                   name="tau_tight_pt", label=r"$p_{T}^{\tau}$ (GeV)"),
             ),
-            'tau_upsilon_loose': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose", label=r"$\Upsilon_{\tau}$"),
+            'tau_loose_upsilon': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon", label=r"$\Upsilon_{\tau}$"),
             ),
-            'tau_upsilon_loose_pt20to40': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
+            'tau_loose_upsilon_pt20to40': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon_pt20to40", label=r"$\Upsilon_{\tau}$, $20<p_{T}^{\tau}<40$"),
             ),
-            'tau_upsilon_loose_pt40to60': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
+            'tau_loose_upsilon_pt40to60': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon_pt40to60", label=r"$\Upsilon_{\tau}$, $40<p_{T}^{\tau}<60$"),
             ),
-            'tau_upsilon_loose_pt60to100': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
+            'tau_loose_upsilon_pt60to100': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon_pt60to100", label=r"$\Upsilon_{\tau}$, $60<p_{T}^{\tau}<100$"),
             ),
-            'tau_upsilon_loose_pt100toInf': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
+            'tau_loose_upsilon_pt100toInf': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon_pt100toInf", label=r"$\Upsilon_{\tau}$, $p_{T}^{\tau}>100$"),
             ),
-            'tau_upsilon_loose_vs_tau_pt': _wh(
-                hist.axis.Regular(40, -1, 1, name="tau_upsilon_loose", label=r"$\Upsilon_{\tau}$"),
+            'tau_loose_upsilon_vs_pt': _wh(
+                hist.axis.Regular(40, -1, 1, name="tau_loose_upsilon", label=r"$\Upsilon_{\tau}$"),
                 hist.axis.Variable([0, 20, 25, 30, 35, 40, 60, 80, 100, 600],
-                                   name="tau_pt_loose", label=r"$p_{T}^{\tau}$ (GeV)"),
+                                   name="tau_loose_pt", label=r"$p_{T}^{\tau}$ (GeV)"),
             ),
-            'taus_phi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="taus_phi", label=r"$\phi(\tau)$"),
+            'tau_vtight_phi': _wh(
+                hist.axis.Regular(50, -np.pi, np.pi, name="tau_vtight_phi", label=r"$\phi(\tau)$"),
             ),
-            'tau_pt_loose': _wh(
-                hist.axis.Regular(120, 0, 600, name="tau_pt_loose", label=r"$p_{T}^{tau_loose}$ (GeV)"), 
+            'tau_loose_pt': _wh(
+                hist.axis.Regular(120, 0, 600, name="tau_loose_pt", label=r"$p_{T}^{tau_loose}$ (GeV)"), 
             ),
-            'taus_eta_loose': _wh(
-                hist.axis.Regular(50, -5, 5, name="taus_eta_loose", label=r"$\eta(\tau loose)$"),
+            'tau_loose_eta': _wh(
+                hist.axis.Regular(50, -5, 5, name="tau_loose_eta", label=r"$\eta(\tau loose)$"),
             ),
-            'taus_phi_loose': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="taus_phi_loose", label=r"$\phi(\tau loose)$"),
+            'tau_loose_phi': _wh(
+                hist.axis.Regular(50, -np.pi, np.pi, name="tau_loose_phi", label=r"$\phi(\tau loose)$"),
             ),
             'met_phi': _wh(
                 hist.axis.Regular(50, -np.pi, np.pi, name="met_phi", label=r"$\phi(p_{T}^{miss})$"),
             ),
-            'delta_tau_met_phi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="delta_tau_met_phi", label=r"$\Delta \phi(\tau, p_{T}^{miss})$"),
+            'tau_vtight_dphi_met': _wh(
+                hist.axis.Regular(50, -np.pi, np.pi, name="tau_vtight_dphi_met", label=r"$\Delta \phi(\tau, p_{T}^{miss})$"),
             ),
-            'deep_tau_jet': _wh(
-                hist.axis.Regular(100, 0, 1, name="deep_tau_jet", label=r"$deep_{\tau}^{jet}$"),
+            'tau_loose_deeptau_vsjet': _wh(
+                hist.axis.Regular(100, 0, 1, name="tau_loose_deeptau_vsjet", label=r"$deep_{\tau}^{jet}$"),
             ),
-            'deep_tau_e': _wh(
-                hist.axis.Regular(100, 0, 1, name="deep_tau_e", label=r"$deep_{\tau}^{e}$"),
+            'tau_loose_deeptau_vse': _wh(
+                hist.axis.Regular(100, 0, 1, name="tau_loose_deeptau_vse", label=r"$deep_{\tau}^{e}$"),
             ),
-            'deep_tau_mu': _wh(
-                hist.axis.Regular(100, 0, 1, name="deep_tau_mu", label=r"$deep_{\tau}^{mu}$"),
+            'tau_loose_deeptau_vsmu': _wh(
+                hist.axis.Regular(100, 0, 1, name="tau_loose_deeptau_vsmu", label=r"$deep_{\tau}^{mu}$"),
             ),
             'dphi_met_ll': _wh(
                 hist.axis.Regular(50, -np.pi, np.pi, name="dphi_met_ll", label=r"$\Delta \phi(\ell\ell,p_{T}^{miss})$"),
@@ -905,26 +925,17 @@ class wzinclusive_processor(processor.ProcessorABC):
             'dphi_jet_met': _wh(
                 hist.axis.Regular(50, -np.pi, np.pi, name="dphi_jet_met", label=r"$\Delta \phi(j,p_{T}^{miss})$"),
             ),
-            'dilep_dphi_tau': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_dphi_tau", label=r"$\Delta \phi(\ell\ell,\tau)$"),
+            'tau_vtight_dphi_dilep': _wh(
+                hist.axis.Regular(50, -np.pi, np.pi, name="tau_vtight_dphi_dilep", label=r"$\Delta \phi(\ell\ell,\tau)$"),
             ),
-            'dilep_loose_tau_met_dphi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_loose_tau_met_dphi", label=r"$\Delta \phi(\ell\ell\tau, p_{T}^{miss})$"),
-            ),
-            'dilep_loose_tau_phi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_loose_tau_phi", label=r"$\phi(\ell\ell\tau)$"),
-            ),
-            'dilep_tau_phi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_tau_phi", label=r"$\phi(\ell\ell\tau)$"),
-            ),
-            'dilep_dphi': _wh(
-                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_dphi", label=r"$\Delta \phi(\ell\ell)$"),
+            'dilep_ll_dphi': _wh(
+                hist.axis.Regular(50, -np.pi, np.pi, name="dilep_ll_dphi", label=r"$\Delta \phi(\ell\ell)$"),
             ),
             'baseweight': _wh(
                 hist.axis.Regular(400, -100, 100, name="baseweight", label=r"baseweight"),
             ),
-            'delta_R': _wh(
-                hist.axis.Regular(50, 0, 5, name="delta_R", label=r"$\Delta R (ll, \tau)$"),
+            'tau_vtight_dR_dilep': _wh(
+                hist.axis.Regular(50, 0, 5, name="tau_vtight_dR_dilep", label=r"$\Delta R (ll, \tau)$"),
             ),
             'lead_jet_pt': _wh(
                 hist.axis.Regular(50, 30, 530, name="lead_jet_pt", label="$p_T^{j_1}$ (GeV)"),
@@ -938,8 +949,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             'delta_R_jet_dilep': _wh(
                 hist.axis.Regular(50, 0, np.pi, name="delta_R_jet_dilep", label=r"$\Delta R(\ell\ell,j)$"),
             ),
-            'delta_R_jet_tau': _wh(
-                hist.axis.Regular(50, 0, np.pi, name="delta_R_jet_tau", label=r"$\Delta R(\tau,j)$"),
+            'tau_vtight_dR_leadjet': _wh(
+                hist.axis.Regular(50, 0, np.pi, name="tau_vtight_dR_leadjet", label=r"$\Delta R(\tau,j)$"),
             ),
             'dilep_dR': _wh(
                 hist.axis.Regular(50, 0, 5, name="dilep_dR", label=r"$\Delta R(\ell\ell)$"),
@@ -977,24 +988,24 @@ class wzinclusive_processor(processor.ProcessorABC):
             'nhtaus_loose': _wh(
                 hist.axis.Regular(5, 0, 5, name="nhtaus_loose", label=r"$N_{taus}$ (loose)"),
             ),
-            'delta_R_non_iso_lep_loose_tau': _wh(
-                hist.axis.Regular(50, 0, np.pi, name="delta_R_non_iso_lep_loose_tau", label=r"$\Delta R(\tau (loose),non_iso_lep)$"),
+            'tau_loose_dR_nonisolep': _wh(
+                hist.axis.Regular(50, 0, np.pi, name="tau_loose_dR_nonisolep", label=r"$\Delta R(\tau (loose),non_iso_lep)$"),
             ),
-            'delta_R_non_iso_lep_vtight_tau': _wh(
-                hist.axis.Regular(50, 0, np.pi, name="delta_R_non_iso_lep_vtight_tau", label=r"$\Delta R(\tau (loose),tightlep)$"),
+            'tau_loose_dR_tightlep': _wh(
+                hist.axis.Regular(50, 0, np.pi, name="tau_loose_dR_tightlep", label=r"$\Delta R(\tau (loose),tightlep)$"),
             ),
-            'delta_R_non_iso_lep_tight_tau': _wh(
-                hist.axis.Regular(50, 0, np.pi, name="delta_R_non_iso_lep_tight_tau", label=r"$\Delta R(\tau (loose),looselep)$"),
+            'tau_loose_dR_looselep': _wh(
+                hist.axis.Regular(50, 0, np.pi, name="tau_loose_dR_looselep", label=r"$\Delta R(\tau (loose),looselep)$"),
             ),
         }
         self.build_histos_pol = lambda: {
-            'tau_pt_ratio_vs_reco': _wh(
-                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
-                hist.axis.Regular(100, 0, 3, name="tau_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
+            'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt': _wh(
+                hist.axis.Regular(100, 0, 800, name="tau_vtight_pt", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 3, name="tau_loosetovtight_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
             ),
-            'tau_pt_ratio_vs_reco_matched': _wh(
-                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
-                hist.axis.Regular(100, 0, 3, name="tau_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
+            'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt_matched': _wh(
+                hist.axis.Regular(100, 0, 800, name="tau_vtight_pt", label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 3, name="tau_loosetovtight_pt_ratio", label=r"$p_{T}^{\tau,gen}/p_{T}^{\tau,reco}$"),
             ),
             'cos_theta_z_gen': _wh(
                 hist.axis.Regular(20, -1, 1, name="cos_theta_z_gen", label=r"$\cos\theta_{Helicity}$ (Z_gen)"),
@@ -1017,88 +1028,88 @@ class wzinclusive_processor(processor.ProcessorABC):
             'cos_theta_wmz_gen': _wh(
                 hist.axis.Regular(20, -1, 1, name="cos_theta_wmz_gen", label=r"$\cos\theta^*_Z$ (gen, $W^-Z$)"),
             ),
-            'cos_theta_wpz_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="cos_theta_wpz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^+Z$)"),
+            'tau_loosetovtight_cos_theta_wpz_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_cos_theta_wpz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^+Z$)"),
             ),
-            'cos_theta_wmz_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="cos_theta_wmz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^-Z$)"),
+            'tau_loosetovtight_cos_theta_wmz_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_cos_theta_wmz_reco", label=r"$\cos\theta^*_Z$ (reco, $W^-Z$)"),
             ),
-            'qcos_theta_w_gen_onshell': _wh(
+            'tau_loosetovtight_qcos_theta_w_gen_onshell': _wh(
                 hist.axis.Regular(20, -1, 1, name="qcos_theta_w_gen", label=r"$\cos\theta_{Helicity}$ (qW_gen_onshell)"),
             ),
-            'W_mass': _wh(
-                hist.axis.Regular(100, 0, 500, name="W_mass", label=r"$M_W^{reco}$ (GeV)"),
+            'tau_loosetovtight_W_mass': _wh(
+                hist.axis.Regular(100, 0, 500, name="tau_loosetovtight_W_mass", label=r"$M_W^{reco}$ (GeV)"),
             ),
-            'mT': _wh(
-                hist.axis.Regular(100, 0, 500, name="mT", label=r"$m_T^{W}$ (GeV)"),
+            'tau_loosetovtight_mT': _wh(
+                hist.axis.Regular(100, 0, 500, name="tau_loosetovtight_mT", label=r"$m_T^{W}$ (GeV)"),
             ),
-            'mT_pre': _wh(
-                hist.axis.Regular(100, 0, 500, name="mT_pre", label=r"$m_T^{W}$ (GeV)"),
+            'tau_loosetovtight_mT_pre': _wh(
+                hist.axis.Regular(100, 0, 500, name="tau_loosetovtight_mT_pre", label=r"$m_T^{W}$ (GeV)"),
             ),
-            'W_E': _wh(
-                hist.axis.Regular(100, 0, 500, name="W_E", label=r"$E_W^{reco}$ (GeV)"),
+            'tau_loosetovtight_W_E': _wh(
+                hist.axis.Regular(100, 0, 500, name="tau_loosetovtight_W_E", label=r"$E_W^{reco}$ (GeV)"),
             ),
-            'nu_pz': _wh(
-                hist.axis.Regular(100, -500, 500, name="nu_pz", label=r"$p_z^\nu$ (GeV)"),
+            'tau_loosetovtight_nu_pz': _wh(
+                hist.axis.Regular(100, -500, 500, name="tau_loosetovtight_nu_pz", label=r"$p_z^\nu$ (GeV)"),
             ),
-            'tau_corr_pt': _wh(
-                hist.axis.Regular(60, 0, 600, name="tau_corr_pt", label=r"$p_T^{\tau,corr}$ (GeV)"),
+            'tau_loosetovtight_corr_pt': _wh(
+                hist.axis.Regular(60, 0, 600, name="tau_loosetovtight_corr_pt", label=r"$p_T^{\tau,corr}$ (GeV)"),
             ),
-            'cos_theta_w_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="cos_theta_w_reco", label=r"$\cos\theta^*_W$ (reco)"),
+            'tau_loosetovtight_cos_theta_w_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_cos_theta_w_reco", label=r"$\cos\theta^*_W$ (reco)"),
             ),
             'cos_theta_z_reco': _wh(
                 hist.axis.Regular(20, -1, 1, name="cos_theta_z_reco", label=r"$\cos\theta^*_Z$ (reco)"),
             ),
-            'qcos_theta_w_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="qcos_theta_w_reco", label=r"$q_W\cos\theta^*_W$ (reco)"),
+            'tau_loosetovtight_qcos_theta_w_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_qcos_theta_w_reco", label=r"$q_W\cos\theta^*_W$ (reco)"),
             ),
-            'cos_theta_wp_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="cos_theta_wp_reco", label=r"$\cos\theta^*_{W^+}$ (reco)"),
+            'tau_loosetovtight_cos_theta_wp_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_cos_theta_wp_reco", label=r"$\cos\theta^*_{W^+}$ (reco)"),
             ),
-            'cos_theta_wm_reco': _wh(
-                hist.axis.Regular(20, -1, 1, name="cos_theta_wm_reco", label=r"$\cos\theta^*_{W^-}$ (reco)"),
+            'tau_loosetovtight_cos_theta_wm_reco': _wh(
+                hist.axis.Regular(20, -1, 1, name="tau_loosetovtight_cos_theta_wm_reco", label=r"$\cos\theta^*_{W^-}$ (reco)"),
             ),
-            'qcos_theta_w_reco_gen': _wh(
+            'tau_loosetovtight_qcos_theta_w_reco_gen': _wh(
                 hist.axis.Regular(20, -1, 1,  name="qcos_theta_w_gen", label=r"$\cos\theta_{Helicity}$ (qW_gen)"),
-                hist.axis.Regular(20, -1, 1,  name="qcos_theta_w_reco", label=r"$q_W\cos\theta^*_W$ (reco)"),
+                hist.axis.Regular(20, -1, 1,  name="tau_loosetovtight_qcos_theta_w_reco", label=r"$q_W\cos\theta^*_W$ (reco)"),
             ),
             'cos_theta_z_reco_gen': _wh(
                 hist.axis.Regular(20, -1, 1, name="cos_theta_z_gen",  label=r"$\cos\theta^*_Z$ (gen)"),
                 hist.axis.Regular(20, -1, 1, name="cos_theta_z_reco", label=r"$\cos\theta^*_Z$ (reco)"),
             ),
-            'dilep_tau_loose_met_hadron_mt': _wh(
-                hist.axis.Regular(60, 0, 1200, name="dilep_tau_loose_met_hadron_mt", label=r"$M_{T}^{WZ}$ (GeV)"),
+            'tau_loosetovtight_dilep_met_hadron_mt': _wh(
+                hist.axis.Regular(60, 0, 1200, name="tau_loosetovtight_dilep_met_hadron_mt", label=r"$M_{T}^{WZ}$ (GeV)"),
             ),
             'tau_pt_gen': _wh(
                 hist.axis.Regular(100, 0, 800, name="tau_pt_gen", label=r"$p_{T}^{\tau}$ (GeV, gen)"),
             ),
-            'tau_pt_gen_vs_reco': _wh(
+            'tau_pt_gen_vs_tau_vtight_pt': _wh(
                 hist.axis.Regular(100, 0, 800, name="tau_pt_gen", label=r"$p_{T}^{\tau}$ (GeV, gen)"),
-                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight",     label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 800, name="tau_vtight_pt",     label=r"$p_{T}^{\tau}$ (GeV, reco)"),
             ),
             'W_pt_gen': _wh(
                 hist.axis.Regular(60, 0, 600, name="W_pt_gen", label=r"$p_{T}^{W}$ (GeV, gen)"),
             ),
-            'disc': _wh(
-                hist.axis.Regular(80, -2e5, 2e5, name="disc", label=r"$\nu\ p_z$ discriminant"),
+            'tau_loosetovtight_disc': _wh(
+                hist.axis.Regular(80, -2e5, 2e5, name="tau_loosetovtight_disc", label=r"$\nu\ p_z$ discriminant"),
             ),
-            'disc_sign': _wh(
-                hist.axis.Regular(2, -1, 1, name="disc_sign", label="sign of the $\\nu$ $p_z$ discriminant"),
+            'tau_loosetovtight_disc_sign': _wh(
+                hist.axis.Regular(2, -1, 1, name="tau_loosetovtight_disc_sign", label="sign of the $\\nu$ $p_z$ discriminant"),
             ),
-            'rescued': _wh(
-                hist.axis.Regular(2, 0, 2, name="rescued", label="off-shell (no real nu_pz solution)"),
+            'tau_loosetovtight_rescued': _wh(
+                hist.axis.Regular(2, 0, 2, name="tau_loosetovtight_rescued", label="off-shell (no real nu_pz solution)"),
             ),
-            'tau_gen_dR': _wh(
-                hist.axis.Regular(50, 0, 5, name="tau_gen_dR", label=r"$\Delta R(\tau_{reco},\tau_{gen})$"),
+            'tau_loosetovtight_dR_gentau': _wh(
+                hist.axis.Regular(50, 0, 5, name="tau_loosetovtight_dR_gentau", label=r"$\Delta R(\tau_{reco},\tau_{gen})$"),
             ),
-            'tau_pt_gen_vs_reco_matched': _wh(
+            'tau_pt_gen_vs_tau_vtight_pt_tau_loosetovtight_matched': _wh(
                 hist.axis.Regular(100, 0, 800, name="tau_pt_gen", label=r"$p_{T}^{\tau}$ (GeV, gen)"),
-                hist.axis.Regular(100, 0, 800, name="tau_pt_vtight",     label=r"$p_{T}^{\tau}$ (GeV, reco)"),
+                hist.axis.Regular(100, 0, 800, name="tau_vtight_pt",     label=r"$p_{T}^{\tau}$ (GeV, reco)"),
             ),
-            'qcos_w_vs_tau_pt': _wh(
-                hist.axis.Regular(20, -1, 1,  name="qcos_theta_w_reco", label=r"$q\cos\theta^*_W$ (reco)"),
-                hist.axis.Regular(20, 0, 400, name="tau_corr_pt",       label=r"$p_T^{\tau,corr}$ (GeV)"),
+            'tau_loosetovtight_qcos_theta_w_reco_vs_corr_pt': _wh(
+                hist.axis.Regular(20, -1, 1,  name="tau_loosetovtight_qcos_theta_w_reco", label=r"$q\cos\theta^*_W$ (reco)"),
+                hist.axis.Regular(20, 0, 400, name="tau_loosetovtight_corr_pt",       label=r"$p_T^{\tau,corr}$ (GeV)"),
             ),
         }
         
@@ -1655,7 +1666,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 )
                 for _d in ("angles", "extras", "weights"):
                     for _k, _v in polq[_d].items():
-                        ntuple[_k] = _v
+                        ntuple[POL_TAU_NAMES.get(_k, _k)] = _v
             else:
                 reco = compute_reco_angles(
                     p4_met, lead_tau_for_vars, dilep_p4, lead_lep, subl_lep,
@@ -1664,7 +1675,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 )
                 for _d in ("angles", "extras"):
                     for _k, _v in reco[_d].items():
-                        ntuple[_k] = _v
+                        ntuple[POL_TAU_NAMES.get(_k, _k)] = _v
         # # ── Polarization block end ────────────────────────────────────────────
 
 
@@ -1700,18 +1711,18 @@ class wzinclusive_processor(processor.ProcessorABC):
                 (ntight_lep_fv==2) & (nloose_lep_fv==0) &
                 (ak.firsts(tight_lep_fv).pt>25) 
             )
-            selection.add('met_pt_fv', ak.fill_none((p4_met_fv.pt > 30), False)) 
-            selection.add('low_met_pt_fv', ak.fill_none((p4_met_fv.pt < 20) & (p4_met_fv.pt > 0), False))
-            selection.add('dilep_m_fv', ak.fill_none(np.abs(dilep_m_fv - self.zmass) < 15, False))
-            selection.add('dilep_pt_fv', ak.fill_none(dilep_pt_fv>30, False))
+            selection.add('fv_high_met', ak.fill_none((p4_met_fv.pt > 30), False)) 
+            selection.add('fv_low_met', ak.fill_none((p4_met_fv.pt < 20) & (p4_met_fv.pt > 0), False))
+            selection.add('fv_mll', ak.fill_none(np.abs(dilep_m_fv - self.zmass) < 15, False))
+            selection.add('fv_ptll', ak.fill_none(dilep_pt_fv>30, False))
 
-            selection.add('0njets_fv' , ngood_jets_fv  == 0 )
-            selection.add('1njets_fv' , ngood_jets_fv  <= 1 )
-            selection.add('1njets_only_fv' , ngood_jets_fv  == 1 )
+            selection.add('0nfvjets' , ngood_jets_fv  == 0 )
+            selection.add('1nfvjets' , ngood_jets_fv  <= 1 )
+            selection.add('1nfvjets_only' , ngood_jets_fv  == 1 )
             selection.add('1nhtaus_fv', ntight_tau_fv  == 1 )
 
             # selection.add('select_FV01', (ntight_lep_fv==2) & (nloose_lep_fv==0) & (ak.firsts(tight_lep_fv).pt>25) & (ak.fill_none((lead_lep_fv.pdgId + subl_lep_fv.pdgId)==0, False)) & (ntight_tau_fv  == 1) & (ak.fill_none(np.abs(dilep_m_fv - self.zmass) < 15, False)) & (ak.fill_none(dilep_pt_fv>30, False) & (ngood_jets_fv  <= 1)))
-            select_FV01 = ['require-ossf-fv', 'require-2lep_fv', '1nhtaus_fv', 'dilep_m_fv', 'dilep_pt_fv', '1njets_fv']
+            select_FV01 = ['require-ossf-fv', 'require-2lep_fv', '1nhtaus_fv', 'fv_mll', 'fv_ptll', '1nfvjets']
             selection.add('inside_FV01', selection.all(*select_FV01))
         #### FV selections ####
 
@@ -1736,17 +1747,17 @@ class wzinclusive_processor(processor.ProcessorABC):
             (ak.firsts(tight_lep).pt>25) 
         )
 
-        selection.add('met_pt', ak.fill_none((reco_met_pt > 30), False))
+        selection.add('high_met_pt', ak.fill_none((reco_met_pt > 30), False))
         selection.add('low_met_pt', ak.fill_none((reco_met_pt < 20) & (reco_met_pt > 0), False))
-        selection.add('val_met_pt', ak.fill_none((reco_met_pt < 30) & (reco_met_pt > 20), False))
+        selection.add('medium_met_pt', ak.fill_none((reco_met_pt < 30) & (reco_met_pt > 20), False))
         selection.add('dilep_m'   , ak.fill_none(np.abs(dilep_m - self.zmass) < 15, False))
         selection.add('dilep_pt', ak.fill_none(dilep_pt > 30, False))
-        selection.add('high_mTwz', ak.fill_none(dilep_tau_loose_met_hadron_mt >= 250, False))
+        selection.add('tau_loosetovtight_high_wz_mt', ak.fill_none(dilep_tau_loose_met_hadron_mt >= 250, False))
         selection.add("dilep_dphi_met", ak.fill_none(np.abs(dilep_dphi_met)>1.0, False))
-        selection.add("dilep_dphi_tau", ak.fill_none(np.abs(dilep_dphi_tau)>1.0, False))
-        selection.add("delta_tau_met_phi", ak.fill_none(np.abs(delta_tau_met_phi)>1.0, False))
-        selection.add("dilep_dphi_tau_loose", ak.fill_none(np.abs(dilep_dphi_tau_loose)>1.0, False))
-        selection.add("delta_tau_loose_met_phi", ak.fill_none(np.abs(delta_tau_loose_met_phi)>1.0, False))
+        selection.add("tau_vtight_dphi_dilep", ak.fill_none(np.abs(dilep_dphi_tau)>1.0, False))
+        selection.add("tau_vtight_dphi_met", ak.fill_none(np.abs(delta_tau_met_phi)>1.0, False))
+        selection.add("tau_loose_dphi_dilep", ak.fill_none(np.abs(dilep_dphi_tau_loose)>1.0, False))
+        selection.add("tau_loose_dphi_met", ak.fill_none(np.abs(delta_tau_loose_met_phi)>1.0, False))
         selection.add(
             "min_dphi_met_j",
             ak.where(
@@ -1767,8 +1778,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         selection.add('2plusnhtaus_vtight', nhtaus_lep_vtight  >= 2 )
         selection.add('2plusnhtaus_tight', nhtaus_lep_tight  >= 2 )
         selection.add('2plusnhtaus_loose', nhtaus_lep_loose  >= 2 )
-        selection.add('lead_tau_plus', lead_tau_plus_tag )
-        selection.add('lead_tau_minus', lead_tau_minus_tag )
+        selection.add('tau_loosetovtight_plus', lead_tau_plus_tag )
+        selection.add('tau_loosetovtight_minus', lead_tau_minus_tag )
         # selection.add('1nhtaus_plus', nhtaus_plus == 1)
         # selection.add('1nhtaus_minus', nhtuaus_minus == 1)
         # selection.add('1nhtaus_loose_plus', nhtaus_loose_plus == 1)
@@ -1791,56 +1802,56 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # Define all variables for the BDT
         ntuple['met_pt'  ] = ak.fill_none(reco_met_pt,-99)
-        ntuple['mT_W'  ] = ak.fill_none(mT_W,-99)
-        ntuple['m_lep'  ] = ak.fill_none(m_lep,-99)
-        ntuple['mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
-        ntuple['pt_llt'] = ak.fill_none(pt_llt,-99)
-        ntuple['ptv_llt'] = ak.fill_none(ptv_llt,-99)
-        ntuple['inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
-        ntuple['dilep_tau_loose_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
+        ntuple['tau_loosetovtight_mT_W'  ] = ak.fill_none(mT_W,-99)
+        ntuple['tau_loosetovtight_m_lep'  ] = ak.fill_none(m_lep,-99)
+        ntuple['tau_loosetovtight_mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
+        ntuple['tau_loosetovtight_pt_llt'] = ak.fill_none(pt_llt,-99)
+        ntuple['tau_loosetovtight_ptv_llt'] = ak.fill_none(ptv_llt,-99)
+        ntuple['tau_loosetovtight_inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
+        ntuple['tau_loosetovtight_dilep_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
         ntuple['met_phi' ] = ak.fill_none(reco_met_phi,-99)
         ntuple['dilep_mt_llnunu'] = ak.fill_none(dilep_mt_llnunu,-99)
         ntuple['dilep_m'] = ak.fill_none(dilep_m,-99)
         ntuple['dilep_pt'] = ak.fill_none(dilep_pt,-99)
-        ntuple['HTl'] = ak.fill_none(HTl,-99)
-        ntuple['ST'] = ak.fill_none(ST,-99)
-        ntuple['dilep_dphi'] = ak.fill_none(dilep_dphi,-99)
+        ntuple['tau_loose_HTl'] = ak.fill_none(HTl,-99)
+        ntuple['tau_loose_ST'] = ak.fill_none(ST,-99)
+        ntuple['dilep_ll_dphi'] = ak.fill_none(dilep_dphi,-99)
         ntuple['njets'   ] = ak.fill_none(ngood_jets,-99)
         # ntuple['nbjets'   ] = ak.fill_none(ngood_bjets,-99)
         ntuple['nhtaus_vtight'   ] = ak.fill_none(nhtaus_lep_vtight,-99)
         ntuple['nhtaus_tight'   ] = ak.fill_none(nhtaus_lep_tight,-99)
         ntuple['nhtaus_loose'   ] = ak.fill_none(nhtaus_lep_loose,-99)
         ntuple['dphi_met_ll'] = ak.fill_none(dilep_dphi_met,-99)
-        ntuple['dilep_dphi_tau'] = ak.fill_none(dilep_dphi_tau,-99)
+        ntuple['tau_vtight_dphi_dilep'] = ak.fill_none(dilep_dphi_tau,-99)
         ntuple['dijet_mass'] = ak.fill_none(dijet_mass,-99)
         ntuple['dijet_deta'] = ak.fill_none(dijet_deta,-99)
         ntuple['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
-        ntuple['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
-        ntuple['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
-        ntuple['taus_phi'] = ak.fill_none(taus_phi,-99)
-        ntuple['taus_eta'] = ak.fill_none(taus_eta,-99)
-        ntuple['tau_upsilon_vtight'] = ak.fill_none(tau_upsilon_vtight,-99)
-        ntuple['tau_upsilon_vtight_pt20to40'] = ak.fill_none(tau_upsilon_vtight_pt20to40,-99)
-        ntuple['tau_upsilon_vtight_pt40to60'] = ak.fill_none(tau_upsilon_vtight_pt40to60,-99)
-        ntuple['tau_upsilon_vtight_pt60to100'] = ak.fill_none(tau_upsilon_vtight_pt60to100,-99)
-        ntuple['tau_upsilon_vtight_pt100toInf'] = ak.fill_none(tau_upsilon_vtight_pt100toInf,-99)
-        ntuple['tau_upsilon_tight'] = ak.fill_none(tau_upsilon_tight,-99)
-        ntuple['tau_upsilon_tight_pt20to40'] = ak.fill_none(tau_upsilon_tight_pt20to40,-99)
-        ntuple['tau_upsilon_tight_pt40to60'] = ak.fill_none(tau_upsilon_tight_pt40to60,-99)
-        ntuple['tau_upsilon_tight_pt60to100'] = ak.fill_none(tau_upsilon_tight_pt60to100,-99)
-        ntuple['tau_upsilon_tight_pt100toInf'] = ak.fill_none(tau_upsilon_tight_pt100toInf,-99)
-        ntuple['tau_upsilon_loose'] = ak.fill_none(tau_upsilon_loose,-99)
-        ntuple['tau_upsilon_loose_pt20to40'] = ak.fill_none(tau_upsilon_loose_pt20to40,-99)
-        ntuple['tau_upsilon_loose_pt40to60'] = ak.fill_none(tau_upsilon_loose_pt40to60,-99)
-        ntuple['tau_upsilon_loose_pt60to100'] = ak.fill_none(tau_upsilon_loose_pt60to100,-99)
-        ntuple['tau_upsilon_loose_pt100toInf'] = ak.fill_none(tau_upsilon_loose_pt100toInf,-99)
-        ntuple['delta_R'] = ak.fill_none(delta_R,-99)
+        ntuple['tau_vtight_pt'] = ak.fill_none(tau_pt_vtight,-99)
+        ntuple['tau_tight_pt'] = ak.fill_none(tau_pt_tight,-99)
+        ntuple['tau_vtight_phi'] = ak.fill_none(taus_phi,-99)
+        ntuple['tau_vtight_eta'] = ak.fill_none(taus_eta,-99)
+        ntuple['tau_vtight_upsilon'] = ak.fill_none(tau_upsilon_vtight,-99)
+        ntuple['tau_vtight_upsilon_pt20to40'] = ak.fill_none(tau_upsilon_vtight_pt20to40,-99)
+        ntuple['tau_vtight_upsilon_pt40to60'] = ak.fill_none(tau_upsilon_vtight_pt40to60,-99)
+        ntuple['tau_vtight_upsilon_pt60to100'] = ak.fill_none(tau_upsilon_vtight_pt60to100,-99)
+        ntuple['tau_vtight_upsilon_pt100toInf'] = ak.fill_none(tau_upsilon_vtight_pt100toInf,-99)
+        ntuple['tau_tight_upsilon'] = ak.fill_none(tau_upsilon_tight,-99)
+        ntuple['tau_tight_upsilon_pt20to40'] = ak.fill_none(tau_upsilon_tight_pt20to40,-99)
+        ntuple['tau_tight_upsilon_pt40to60'] = ak.fill_none(tau_upsilon_tight_pt40to60,-99)
+        ntuple['tau_tight_upsilon_pt60to100'] = ak.fill_none(tau_upsilon_tight_pt60to100,-99)
+        ntuple['tau_tight_upsilon_pt100toInf'] = ak.fill_none(tau_upsilon_tight_pt100toInf,-99)
+        ntuple['tau_loose_upsilon'] = ak.fill_none(tau_upsilon_loose,-99)
+        ntuple['tau_loose_upsilon_pt20to40'] = ak.fill_none(tau_upsilon_loose_pt20to40,-99)
+        ntuple['tau_loose_upsilon_pt40to60'] = ak.fill_none(tau_upsilon_loose_pt40to60,-99)
+        ntuple['tau_loose_upsilon_pt60to100'] = ak.fill_none(tau_upsilon_loose_pt60to100,-99)
+        ntuple['tau_loose_upsilon_pt100toInf'] = ak.fill_none(tau_upsilon_loose_pt100toInf,-99)
+        ntuple['tau_vtight_dR_dilep'] = ak.fill_none(delta_R,-99)
         ntuple['dilep_dR'] = ak.fill_none(dilep_dR,-99)
         ntuple['dilep_deta'] = ak.fill_none(dilep_deta,-99)
-        ntuple['delta_tau_met_phi'] = ak.fill_none(delta_tau_met_phi,-99)
-        ntuple['tau_pt_loose'] = ak.fill_none(tau_pt_loose,-99)
-        ntuple['taus_phi_loose'] = ak.fill_none(taus_phi_loose,-99)
-        ntuple['taus_eta_loose'] = ak.fill_none(taus_eta_loose,-99)
+        ntuple['tau_vtight_dphi_met'] = ak.fill_none(delta_tau_met_phi,-99)
+        ntuple['tau_loose_pt'] = ak.fill_none(tau_pt_loose,-99)
+        ntuple['tau_loose_phi'] = ak.fill_none(taus_phi_loose,-99)
+        ntuple['tau_loose_eta'] = ak.fill_none(taus_eta_loose,-99)
         ntuple['leading_lep_pt'  ] = ak.fill_none(lead_lep.pt,-99)
         ntuple['leading_lep_eta' ] = ak.fill_none(lead_lep.eta,-99)
         ntuple['leading_lep_phi' ] = ak.fill_none(lead_lep.phi,-99)
@@ -1850,15 +1861,15 @@ class wzinclusive_processor(processor.ProcessorABC):
         ntuple['lead_jet_pt'  ] = ak.fill_none(lead_jet.pt,-99)
         ntuple['lead_jet_eta' ] = ak.fill_none(lead_jet.eta,-99)
         ntuple['lead_jet_phi' ] = ak.fill_none(lead_jet.phi,-99)
-        ntuple['delta_R_jet_tau'] = ak.fill_none(delta_R_jet_tau,-99)
+        ntuple['tau_vtight_dR_leadjet'] = ak.fill_none(delta_R_jet_tau,-99)
         ntuple['delta_R_jet_dilep'] = ak.fill_none(delta_R_jet_dilep,-99)
         ntuple['dphi_jet_met'] = ak.fill_none(dphi_jet_met,-99)
-        ntuple['deep_tau_e'] = ak.fill_none(deep_tau_e,-99)
-        ntuple['deep_tau_mu'] = ak.fill_none(deep_tau_mu,-99)
-        ntuple['deep_tau_jet'] = ak.fill_none(deep_tau_jet,-99)
-        ntuple['delta_R_non_iso_lep_loose_tau'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
-        ntuple['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
-        ntuple['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
+        ntuple['tau_loose_deeptau_vse'] = ak.fill_none(deep_tau_e,-99)
+        ntuple['tau_loose_deeptau_vsmu'] = ak.fill_none(deep_tau_mu,-99)
+        ntuple['tau_loose_deeptau_vsjet'] = ak.fill_none(deep_tau_jet,-99)
+        ntuple['tau_loose_dR_nonisolep'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
+        ntuple['tau_loose_dR_tightlep'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
+        ntuple['tau_loose_dR_looselep'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
 
 
         # Now adding weights
@@ -1952,41 +1963,41 @@ class wzinclusive_processor(processor.ProcessorABC):
             common_sel += ["jetveto"]
         channels = {
             "inc-SR0": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'met_pt',
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'high_met_pt',
         ],
             "inc-SR1": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_vtight' ,'met_pt',
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_vtight' ,'high_met_pt',
         ],
             "inc-SR01": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'high_met_pt'
         ],
             "inc-VR0": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'medium_met_pt'
         ],
             "inc-VR1": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_vtight' , 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_vtight' , 'medium_met_pt'
         ],
             "inc-VR01": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight' , 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight' , 'medium_met_pt'
         ],
             "inc-VB0": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'medium_met_pt'
         ],
 
             "inc-VB1": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'medium_met_pt'
         ],
             "inc-VB01": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'medium_met_pt'
         ],
             "inc-B0": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt'
         ],
             "inc-B1": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt'
         ],
             "inc-B01": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt'
         ],
             "inc-C0": common_sel + [
                 'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', 'low_met_pt', '1nhtaus_loose', '0njets', '~1nhtaus_tight', '~1nhtaus_vtight'
@@ -2016,24 +2027,24 @@ class wzinclusive_processor(processor.ProcessorABC):
                 'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'low_met_pt'
         ],
             "inc-IR0M": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'medium_met_pt'
         ],
 
             "inc-IR1M": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'medium_met_pt'
         ],
              "inc-IR01M": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'val_met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'medium_met_pt'
         ],
             "inc-IR0H": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'high_met_pt'
         ],
             "inc-IR01H": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'high_met_pt'
         ],
 
             "inc-IR1H": common_sel + [
-                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'met_pt'
+                'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets_only', '1nhtaus_tight', '~2plusnhtaus_loose', '~1nhtaus_vtight', 'high_met_pt'
         ],            
 
         }
@@ -2042,8 +2053,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         if self._split_by_charge:
             charged_channels = {}
             for channel, reqs in channels.items():
-                reqs_plus = reqs + ["lead_tau_plus"]
-                reqs_minus = reqs + ["lead_tau_minus"]
+                reqs_plus = reqs + ["tau_loosetovtight_plus"]
+                reqs_minus = reqs + ["tau_loosetovtight_minus"]
                 charged_channels[f"{channel}_p"] = reqs_plus
                 charged_channels[f"{channel}_m"] = reqs_minus
             # Replace channels with charge-separated channels
@@ -2062,8 +2073,8 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         if self._pol:
             channels = {
-            "inc-SR01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'met_pt', 'high_mTwz'],
-            "inc-B01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'met_pt', 'high_mTwz'],
+            "inc-SR01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'high_met_pt', 'tau_loosetovtight_high_wz_mt'],
+            "inc-B01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt', 'tau_loosetovtight_high_wz_mt'],
             "Pol_reg": [],
             }
             
@@ -2174,30 +2185,30 @@ class wzinclusive_processor(processor.ProcessorABC):
                 for var in self.pol_gen_vars:
                     if var in histos:
                         fill_variable(var)
-                onshell = ak.to_numpy(ak.fill_none(ak.values_astype(ntuple['rescued'] < 0.5, np.float32), 1.0))
-                fill_variable('qcos_theta_w_gen', 'qcos_theta_w_gen_onshell', scaled_weights(raw, onshell))
+                onshell = ak.to_numpy(ak.fill_none(ak.values_astype(ntuple['tau_loosetovtight_rescued'] < 0.5, np.float32), 1.0))
+                fill_variable('qcos_theta_w_gen', 'tau_loosetovtight_qcos_theta_w_gen_onshell', scaled_weights(raw, onshell))
                 if None in systematics:
                     matched = ak.to_numpy(ak.fill_none(ntuple['tau_matched'], 0.0))
                     for wk in self.pol_weight_keys:
                         fill_variable(wk, slot_labels=nominal_labels)
-                    fill_map('qcos_theta_w_gen', 'qcos_theta_w_reco', 'qcos_theta_w_reco_gen')
+                    fill_map('qcos_theta_w_gen', 'tau_loosetovtight_qcos_theta_w_reco', 'tau_loosetovtight_qcos_theta_w_reco_gen')
                     fill_map('cos_theta_z_gen',  'cos_theta_z_reco',  'cos_theta_z_reco_gen')
                     # tau pT response (slope) and the resolution handle for f0
-                    fill_map('tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco')
+                    fill_map('tau_pt_gen', 'tau_vtight_pt', 'tau_pt_gen_vs_tau_vtight_pt')
                     # matched-only version: fit the tau pT slope on THIS one
-                    fill_map('tau_pt_gen', 'tau_pt_vtight', 'tau_pt_gen_vs_reco_matched', scaled_weights(raw, matched))
-                    fill_map('qcos_theta_w_reco', 'tau_corr_pt', 'qcos_w_vs_tau_pt')
-                    fill_map('tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco')
-                    fill_map('tau_pt_vtight', 'tau_pt_ratio', 'tau_pt_ratio_vs_reco_matched', scaled_weights(raw, matched))
+                    fill_map('tau_pt_gen', 'tau_vtight_pt', 'tau_pt_gen_vs_tau_vtight_pt_tau_loosetovtight_matched', scaled_weights(raw, matched))
+                    fill_map('tau_loosetovtight_qcos_theta_w_reco', 'tau_loosetovtight_corr_pt', 'tau_loosetovtight_qcos_theta_w_reco_vs_corr_pt')
+                    fill_map('tau_vtight_pt', 'tau_loosetovtight_pt_ratio', 'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt')
+                    fill_map('tau_vtight_pt', 'tau_loosetovtight_pt_ratio', 'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt_matched', scaled_weights(raw, matched))
         else:
             # ── standard inclusive analysis ────────────────────────────────────
             for var in STANDARD_FILL_VARIABLES:
                 fill_variable(var)
             # Nominal only: this is a CONDITIONAL shape P(Upsilon | pT), crosscheck, pT shifts ignored
             if None in systematics:
-                fill_map('tau_upsilon_vtight', 'tau_pt_vtight', 'tau_upsilon_vtight_vs_tau_pt')
-                fill_map('tau_upsilon_tight', 'tau_pt_tight', 'tau_upsilon_tight_vs_tau_pt')
-                fill_map('tau_upsilon_loose', 'tau_pt_loose', 'tau_upsilon_loose_vs_tau_pt')
+                fill_map('tau_vtight_upsilon', 'tau_vtight_pt', 'tau_vtight_upsilon_vs_pt')
+                fill_map('tau_tight_upsilon', 'tau_tight_pt', 'tau_tight_upsilon_vs_pt')
+                fill_map('tau_loose_upsilon', 'tau_loose_pt', 'tau_loose_upsilon_vs_pt')
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         return {dataset: histos}
