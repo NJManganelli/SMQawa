@@ -31,3 +31,22 @@ Navigate to the installation location (where shell and .*rc files are created, p
 cd SMQawa
 python brewer-remote-inclusive.py --isMC=1 --era=2018 --infile=/store/mc/RunIISummer20UL16NanoAODAPVv9/DYJetsToLL_0J_TuneCP5_13TeV-amcatnloFXFX-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_preVFP_v11-v1/130000/9FBF4AF1-D77E-4648-916B-097401C9544B.root --executor=IterativeExecutor --copyInput
 ```
+
+## Merging histograms
+```bash
+python hist-merger.py --dir <dir with jobs_<tag>_<era>_*> -t <tag> --era <era> --outdir <out>
+python hist-merger.py --eos [--dir /eos/user/u/user/WZtotau2lnu] -t <tag> --era <era> --sample 'WZ*'
+```
+The tag is matched exactly (`-t WZ` does not read `jobs_WZ_DD_*`) and names the output. To read more directories,
+give a glob for the tag part with `--match`, e.g. `-t WZ --match '*WZ*'`; the output is still named after `-t`.
+The output is `merged-histogram-Inc-<tag>-<era>-<suffix>.pkl.gz`, with `-f` setting the suffix (default `latest`).
+`--ncores` sets the worker processes (default 4). Each holds a partial merge and a decompressed job file, so when
+the largest job file is 10 MiB or more (EFT-size outputs) the merge runs in the main process unless `--ncores` is
+given. Unreadable or unmergeable job files are an error naming the file (and the dataset and histogram that
+disagree); empty ones are skipped and reported. A worker that dies, for example killed for memory, ends the merge
+with an error. A dataset's `lumi` record (processed run and luminosity-block pairs) is merged as a union.
+`--splitByKind` writes the Data, MC-backgrounds and MC-signal datasets (and EFT ones) to separate files
+`...-<suffix>-<part>.pkl.gz`, using each dataset's `kind` (data, mc, signal, eft); without `kind`, a negative
+`sumw` means data, and anything else is an error. On a terminal the merger shows its progress per directory, file
+and chunk and the memory of all its processes; `--noProgress` turns this off, and it is off in batch logs. Every run ends with a line giving the elapsed time and
+the peak memory (RSS) of the main process and of the largest worker.
