@@ -28,6 +28,8 @@ FAILING_DUMP = (
     "sys.argv = sys.argv[1:]\n"
     "runpy.run_path(sys.argv[0], run_name='__main__')\n"
 )
+PROTOCOL_RUNNER = ("import pickle, runpy, sys; pickle.HIGHEST_PROTOCOL = pickle.DEFAULT_PROTOCOL - 1; "
+                   "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
 POOL_SPY = (
     "import concurrent.futures, runpy, sys, threading\n"
     "real = concurrent.futures.ProcessPoolExecutor\n"
@@ -693,3 +695,17 @@ def test_tree_memory_counts_children():
     finally:
         child.kill()
         child.join()
+
+
+def test_output_compression_and_protocol(tmp_path):
+    three_files(tmp_path)
+    out = tmp_path / "out"
+    name = out / "merged-histogram-Inc-tagX-2024-latest.pkl.gz"
+    merge(tmp_path, tmp_path)
+    assert name.read_bytes()[8] == 0
+    merge(tmp_path, tmp_path, "--compressionLevel", "9")
+    assert name.read_bytes()[8] == 2
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   runner=PROTOCOL_RUNNER)
+    assert r.returncode == 0, r.stderr
+    assert gzip.decompress(name.read_bytes())[1] == pickle.DEFAULT_PROTOCOL - 1
