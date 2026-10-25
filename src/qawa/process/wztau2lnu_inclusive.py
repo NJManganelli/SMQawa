@@ -1077,7 +1077,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 histos[f'{v}_{wpref}_{pol}'] = copy.deepcopy(base)
         return histos
     
-    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None):
+    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None, variations=True):
         mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)
         mask_BE = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta >= 1.5), False)
@@ -1098,6 +1098,9 @@ class wzinclusive_processor(processor.ProcessorABC):
             sf_em_nom = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
             sf_ee_nom = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
             sf_nom = ak.where(mask_mm, sf_mm_nom, ak.where(mask_me, sf_me_nom, ak.where(mask_em, sf_em_nom, ak.where(mask_ee, sf_ee_nom, ak.ones_like(sf_ee_nom) ) ) ) )
+            if not variations:
+                weights.add('triggerSF', sf_nom)
+                return
             sf_mm_up = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "up")
             sf_me_up = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "up")
             sf_em_up = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "up")
@@ -1147,6 +1150,9 @@ class wzinclusive_processor(processor.ProcessorABC):
             lep_1_bin[lep_1_bin>6] = -1
             lep_2_bin[lep_2_bin>6] = -1
             center_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,0]
+            if not variations:
+                weights.add('triggerSF', center_value)
+                return
             errors_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,1]
 
             weights.add(
@@ -1165,6 +1171,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         selection = PackedSelection(dtype="uint64")
         weights = Weights(len(event), storeIndividual=True)
         ntuple = {}
+        variations = shift_name is None
         
         if self._pol:
             if is_signal and (not is_data):
@@ -1320,8 +1327,8 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # Electrons and Muons and Taus
         # Adding scale factors to Muon and Electron fields, post-Scale/Smearing
-        muonSFs = self._leSF.muonSF(event.Muon)
-        elecSFs = self._leSF.electronSF(event.Electron)
+        muonSFs = self._leSF.muonSF(event.Muon, variations=variations)
+        elecSFs = self._leSF.electronSF(event.Electron, variations=variations)
         # keys: eff_m_(id|iso)(Nominal|Up|Down) (Muon) or eff_e_(reco|id)(Nominal|Up|Down) (Electron)
         for k, v in muonSFs.items():
             event["Muon", k] = v
@@ -1834,18 +1841,18 @@ class wzinclusive_processor(processor.ProcessorABC):
             # self._btag.append_btag_sf(jets, weights)
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
-                self._jpSF.append_jetPU_sf(good_jets, weights)
+                self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)
             else:
                 if self._process_shift_warnings:
                     coffea_console.print("[red]JET PU ID SFs DISABLED[/red]")
-            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
+            self._purw.append_pileup_weight(weights, event.Pileup.nTrueInt, variations=variations) # fix: https://github.com/9GaoHong/SMQawa_update/commit/d6cdebda4856593162c03365eb9d9a91ceb1a185
             self._tauID.append_tauID_multiwp_sf(had_taus, had_taus_tight, had_taus_loose,
                                                 tau_mask_vtight, tau_mask_tight, tau_mask_loose,
-                                                weights
+                                                weights, variations=variations
                                                 )
             # self._tauID.append_tauID_sf(had_taus, weights)
-            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler)
-            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights)
+            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler, variations=variations)
+            self._leSF.append_lepton_sf(lead_lep, subl_lep, weights, variations=variations)
             if self.ewk_process_name:
                 self.ewk_corr.get_weight(
                         event.GenPart,
@@ -1853,35 +1860,36 @@ class wzinclusive_processor(processor.ProcessorABC):
                         event.Generator.x2,
                         weights
                 )
-            else:
+            elif variations:
                 weights.add("kEW", _ones, _ones, _ones)
 
-            if "PSWeight" in event.fields:
-                theory_ps_weight(weights, event.PSWeight)
-            else:
-                theory_ps_weight(weights, None)
-
-            if "LHEPdfWeight" in event.fields:
-                theory_pdf_weight(weights, event.LHEPdfWeight)
-            else:
-                theory_pdf_weight(weights, None)
-
-            if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
-                if len(event.LHEScaleWeight[0]) == 9:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
-                elif len(event.LHEScaleWeight[0]) == 8:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
-                elif len(event.LHEScaleWeight[0]) == 18:
-                    weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
-                    weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
-                    weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+            if variations:
+                if "PSWeight" in event.fields:
+                    theory_ps_weight(weights, event.PSWeight)
                 else:
-                    if self._process_shift_warnings:
-                        coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
+                    theory_ps_weight(weights, None)
+
+                if "LHEPdfWeight" in event.fields:
+                    theory_pdf_weight(weights, event.LHEPdfWeight)
+                else:
+                    theory_pdf_weight(weights, None)
+
+                if ('LHEScaleWeight' in event.fields) and (len(event.LHEScaleWeight[0]) > 0):
+                    if len(event.LHEScaleWeight[0]) == 9:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 7])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 5])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 8])
+                    elif len(event.LHEScaleWeight[0]) == 8:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 1], event.LHEScaleWeight[:, 6])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 3], event.LHEScaleWeight[:, 4])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 7])
+                    elif len(event.LHEScaleWeight[0]) == 18:
+                        weights.add('QCDScale0w'  , _ones, event.LHEScaleWeight[:, 2], event.LHEScaleWeight[:, 14])
+                        weights.add('QCDScale1w'  , _ones, event.LHEScaleWeight[:, 6], event.LHEScaleWeight[:, 10])
+                        weights.add('QCDScale2w'  , _ones, event.LHEScaleWeight[:, 0], event.LHEScaleWeight[:, 16])
+                    else:
+                        if self._process_shift_warnings:
+                            coffea_console.print("WARNING: QCD scale variation type not recongnised ... ")
 
             if 'LHEReweightingWeight' in event.fields and 'aQGC' in dataset:
                 for i in range(1057):
