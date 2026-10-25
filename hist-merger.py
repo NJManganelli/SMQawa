@@ -43,8 +43,11 @@ def progress_bar():
 
 def find_files(options):
     match = options.match or options.tag
-    pattern = os.path.join(options.dir, f"jobs_{match}_{options.era}_*", "histogram_*.pkl.gz")
-    return sorted(glob.glob(pattern))
+    if options.eos:
+        pattern = os.path.join(options.dir, match, options.era, options.sample, "histogram_*.pkl.gz")
+    else:
+        pattern = os.path.join(options.dir, f"jobs_{match}_{options.era}_{options.sample}", "histogram_*.pkl.gz")
+    return pattern, sorted(glob.glob(pattern))
 
 
 def read_gzip(filename):
@@ -52,7 +55,13 @@ def read_gzip(filename):
         return pickle.load(f)
 
 
-def merge_files(filenames, merged):
+def read_whole_file(filename):
+    with open(filename, "rb") as f:
+        raw = f.read()
+    return pickle.loads(gzip.decompress(raw))
+
+
+def merge_files(filenames, merged, load):
     empty = []
     for filename in filenames:
         if os.path.getsize(filename) == 0:
@@ -60,7 +69,7 @@ def merge_files(filenames, merged):
             continue
         key = None
         try:
-            for dataset, content in read_gzip(filename).items():
+            for dataset, content in load(filename).items():
                 target = merged.setdefault(dataset, {"hist": {}, "sumw": 0.0})
                 hists = target["hist"]
                 for name, histogram in content["hist"].items():
@@ -86,7 +95,14 @@ def main():
                         help="glob for the tag part of the input directories instead of the exact tag, e.g. '*WZ*'; "
                              "the output name still uses -t")
     parser.add_argument("--era", type=str, default="2018", help="")
-    parser.add_argument("--dir", type=str, default=".", help="path to directory where files are stored, defaults to '.'")
+    parser.add_argument("--dir", type=str, default=None,
+                        help="base directory holding the outputs (default '.', with --eos "
+                             "/eos/user/<u>/<user>/WZtotau2lnu)")
+    parser.add_argument("--eos", action="store_true",
+                        help="read <dir>/<tag>/<era>/<sample>/histogram_*.pkl.gz instead of "
+                             "<dir>/jobs_<tag>_<era>_<sample>/histogram_*.pkl.gz")
+    parser.add_argument("--sample", type=str, default="*",
+                        help="glob pattern to merge only matching sample directories (default: all)")
     parser.add_argument("--outdir", type=str, default=".",
                         help="path to directory where files should be written, defaults to '.'")
     parser.add_argument("-f", "--filename", type=str, default="latest", help="output file name suffix")
@@ -101,16 +117,28 @@ def main():
         print(f"warning: -t {options.tag} does not match --match {options.match}; the output is still named after "
               f"{options.tag}")
 
-    filenames = find_files(options)
+    if options.dir is None:
+        if options.eos:
+            user = os.environ["USER"]
+            options.dir = f"/eos/user/{user[0]}/{user}/WZtotau2lnu"
+        else:
+            options.dir = "."
+    pattern, filenames = find_files(options)
+    print(f"globbing: {pattern}")
+    if not filenames:
+        raise SystemExit("no input pickle files found -- check --dir/--tag/--era/--sample "
+                         "(and that /eos is mounted on this machine)")
+    print(f"found {len(filenames)} files from {len({os.path.dirname(f) for f in filenames})} sample directories")
     if options.verbose:
         for directory, n in collections.Counter(os.path.dirname(f) for f in filenames).items():
             print(f"{directory}: {n} files")
 
+    load = read_whole_file if options.eos else read_gzip
     merged, empty = {}, []
     with progress_bar() as progress:
         task = progress.add_task("[cyan]Merging histograms...", total=len(filenames))
         for filename in filenames:
-            empty += merge_files([filename], merged)
+            empty += merge_files([filename], merged, load)
             progress.advance(task)
 
     for directory, n in collections.Counter(os.path.dirname(f) for f in empty).items():
