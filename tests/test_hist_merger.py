@@ -692,7 +692,8 @@ def test_serial_display_does_not_scan_processes(monkeypatch):
 def hold(ready):
     block = os.urandom(200 * 2**20)
     ready.set()
-    time.sleep(60 + len(block) * 0)
+    time.sleep(60)
+    return block
 
 
 def test_tree_memory_counts_children():
@@ -890,7 +891,9 @@ def test_unknown_or_missing_kind_in_one_file_fails(tmp_path):
     assert r.returncode != 0 and "DY/kind" in r.stderr and "histogram_1.pkl.gz" in r.stderr
     (tmp_path / "jobs_tagX_2024_DY" / "histogram_1.pkl.gz").unlink()
     r = run_merger(tmp_path, *args)
-    assert r.returncode != 0 and "WZ/kind" in r.stderr and "unknown kind 'background'" in r.stderr
+    assert r.returncode != 0 and "WZ/kind: unknown kind 'background'" in r.stderr
+    assert f"cannot merge {tmp_path / 'jobs_tagX_2024_WZ' / 'histogram_0.pkl.gz'}" in r.stderr
+    assert "merged before it" not in r.stderr
     assert outputs(out) == []
 
 

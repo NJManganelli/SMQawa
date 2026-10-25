@@ -212,8 +212,6 @@ def add_lumi(target, lumi):
 
 
 def add_kind(target, kind, new):
-    if kind is not None and kind not in KIND_FILES:
-        raise ValueError(f"unknown kind {kind!r}, expected one of {', '.join(KIND_FILES)}")
     if new:
         if kind is not None:
             target["kind"] = kind
@@ -243,8 +241,11 @@ def merge_files(filenames, merged, load):
                     key = f"{dataset}/lumi"
                     add_lumi(target, content["lumi"])
                     key = None
+                kind = content.get("kind")
+                if kind is not None and kind not in KIND_FILES:
+                    raise ValueError(f"{dataset}/kind: unknown kind {kind!r}, expected one of {', '.join(KIND_FILES)}")
                 key = f"{dataset}/kind"
-                add_kind(target, content.get("kind"), new)
+                add_kind(target, kind, new)
                 key = None
         except Exception as err:
             if key is None:
