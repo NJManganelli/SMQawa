@@ -888,3 +888,18 @@ def test_failed_split_write_keeps_every_previous_output(tmp_path):
     r = run_merger(tmp_path, *args, "--splitByKind", runner=SECOND_DUMP_FAILS)
     assert r.returncode != 0 and "disk full" in r.stderr
     assert {name: (out / name).read_bytes() for name in outputs(out)} == before
+
+
+def test_empty_split_part_never_replaces_an_existing_file(tmp_path):
+    args, out = kind_layout(tmp_path)
+    assert run_merger(tmp_path, *args, "--splitByKind").returncode == 0
+    name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
+    kept = {part: (out / name.format(part)).read_bytes() for part in ("MC-backgrounds", "MC-signal", "EFT")}
+    write_job(tmp_path / "jobs_tagX_2024_D", 2, kind_job("D", 12, -1, "data"))
+    r = run_merger(tmp_path, *args, "--sample", "D", "--splitByKind")
+    assert r.returncode == 0, r.stderr
+    assert {part: (out / name.format(part)).read_bytes() for part in kept} == kept
+    for part in ("MC-backgrounds", "MC-signal"):
+        assert f"{name.format(part)}: no {part} datasets in this merge, so the existing file is kept" in r.stdout
+    data = load_output(out / name.format("Data"))
+    assert sorted(data) == ["D"] and data["D"]["sumw"] == -3

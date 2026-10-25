@@ -370,7 +370,13 @@ def main():
 
     name = f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}"
     if options.splitByKind:
-        outputs = {f"{name}-{part}.pkl.gz": content for part, content in split_by_kind(merged).items()}
+        outputs = {}
+        for part, content in split_by_kind(merged).items():
+            basename = f"{name}-{part}.pkl.gz"
+            if not content and os.path.exists(os.path.join(options.outdir, basename)):
+                print(f"{basename}: no {part} datasets in this merge, so the existing file is kept")
+            else:
+                outputs[basename] = content
     else:
         for content in merged.values():
             content.pop("kind", None)
