@@ -1111,6 +1111,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         eft_theta = None
         if not is_data:
             eft_par, eft_points = points_from_events(event)
+            if eft_par is not None and self._pol:
+                raise NotImplementedError("polarization templates with EFT weights are not supported")
             if eft_par is not None:
                 theta = eft_par.decompose(stack_named_weights(event, eft_points))
                 problems = eft_par.validate(theta)
