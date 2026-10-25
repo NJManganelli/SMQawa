@@ -312,7 +312,7 @@ def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-base
 
     return tight_leptons, loose_leptons, non_iso_leptons
 
-def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse_wp="VTight", tauIDvsmu_wp="Tight"):
+def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wps=("VTight",), tauIDvse_wp="VTight", tauIDvsmu_wp="Tight"):
     tau_e_branch = None
     tau_e_subid = None
     tau_mu_subid = None
@@ -351,10 +351,9 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         raise ValueError(f"Available levels for tauIDvmu_wp: {list(tauIDvsmu_wp.keys())}")
     else:
         tau_mu_subid = (tau_mu_branch >= tau_mu_id_cuts[tauIDvsmu_wp])
-    if tauIDvsj_wp not in tau_j_id_cuts:
-        raise ValueError(f"Available levels for tauIDvj_wp: {list(tauIDvsj_wp.keys())}")
-    else:
-        tau_j_subid = (tau_j_branch >= tau_j_id_cuts[tauIDvsj_wp])
+    for tauIDvsj_wp in tauIDvsj_wps:
+        if tauIDvsj_wp not in tau_j_id_cuts:
+            raise ValueError(f"Available levels for tauIDvsj_wps: {list(tau_j_id_cuts.keys())}")
 
     base_selection = (
         (tau.pt         > 20 ) & 
@@ -363,7 +362,7 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         (tau.decayMode != 2   ) &
         (tau.decayMode != 5   ) &
         (tau.decayMode != 6   ) &
-        tau_e_subid & tau_mu_subid & tau_j_subid
+        tau_e_subid & tau_mu_subid
     )
 
     overlap_leptons = ak.any(
@@ -371,7 +370,8 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
         axis=2
     )
 
-    return tau[base_selection & ~overlap_leptons]
+    keep = base_selection & ~overlap_leptons
+    return {wp: tau[keep & (tau_j_branch >= tau_j_id_cuts[wp])] for wp in tauIDvsj_wps}
 
 def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9", *, era):
 
@@ -1347,9 +1347,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         nloose_lep = ak.num(loose_lep)
 
         
-        had_taus = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="VTight", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
-        had_taus_tight = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="Tight", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
-        had_taus_loose = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wp="Loose", tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
+        taus_by_wp = build_htaus(event.Tau, tight_lep, nanoAODversion=self._ver, tauIDvsj_wps=("VTight", "Tight", "Loose"), tauIDvse_wp=self.tauIDvse_wp, tauIDvsmu_wp=self.tauIDvsmu_wp)
+        had_taus, had_taus_tight, had_taus_loose = taus_by_wp["VTight"], taus_by_wp["Tight"], taus_by_wp["Loose"]
 
         # sort tau collections
         vtight_tau_sorter = ak.argsort(had_taus.pt, axis=1, ascending=False)
