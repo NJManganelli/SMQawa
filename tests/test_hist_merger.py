@@ -322,3 +322,34 @@ def test_output_name(tmp_path):
     (out / "merged-histogram-Inc-tagX-2024-latest.pkl.gz").unlink()
     merge(tmp_path, tmp_path, "-f", "mysuffix")
     assert outputs(out) == ["merged-histogram-Inc-tagX-2024-mysuffix.pkl.gz"]
+
+
+def test_eos_layout_and_sample_filter(tmp_path):
+    base = tmp_path / "eosbase"
+    for i, weight in enumerate([10, 20]):
+        write_job(base / "tagX" / "2024" / "DY", i, dy_job(weight, 100))
+        write_job(base / "tagX" / "2024" / "WZ", i, {"WZ": dy_job(weight, 100)["DY"]})
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--eos", "--dir", str(base), "-t", "tagX", "--era", "2024", "--sample", "DY",
+                   "--outdir", str(out))
+    assert r.returncode == 0, r.stderr
+    assert "found 2 files from 1 sample directories" in r.stdout
+    merged = merged_output(out)
+    assert sorted(merged) == ["DY"] and merged["DY"]["sumw"] == 200
+    assert_same(merged["DY"]["hist"]["x"], make_hist([("nominal", 0.5, 10), ("nominal", 0.5, 20)]))
+
+
+def test_sample_filter_jobs_layout(tmp_path):
+    three_files(tmp_path)
+    write_job(tmp_path / "jobs_tagX_2024_WZ", 0, {"WZ": dy_job(5, 5)["DY"]})
+    merged = merge(tmp_path, tmp_path, "--sample", "D*")
+    assert sorted(merged) == ["DY"]
+    assert_three_files(merged)
+
+
+def test_no_input_files_fails(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    assert r.returncode != 0 and "no input pickle files found" in r.stderr and outputs(out) == []
