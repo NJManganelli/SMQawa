@@ -128,3 +128,84 @@ def test_getsf_skips_tau_energy_scale():
         assert np.array_equal(ak.to_numpy(vsjet), ak.to_numpy(exp_vsjet))
         assert np.array_equal(ak.to_numpy(vse), ak.to_numpy(exp_vse))
         assert np.array_equal(ak.to_numpy(vsmu), ak.to_numpy(exp_vsmu))
+
+
+PROC_CASES = [
+    pytest.param(M1_FILE, "2024", "v15", marks=pytest.mark.skipif(not os.path.exists(M1_FILE), reason="local 2024 file not available")),
+    pytest.param(M9_FILE, "2018", "v9", marks=pytest.mark.skipif(not os.path.exists(M9_FILE), reason="local 2018 file not available")),
+]
+
+
+def lepton_sfs(proc, events, variations):
+    sfs = dict(proc._leSF.muonSF(events.Muon, variations=variations))
+    sfs.update(proc._leSF.electronSF(events.Electron, variations=variations))
+    return sfs
+
+
+def leading_pair(events):
+    muons = events.Muon[ak.num(events.Muon) >= 2]
+    return muons[:, 0], muons[:, 1]
+
+
+def lepton_pair(sfs):
+    def lepton(index):
+        return ak.zip({key: ak.fill_none(ak.firsts(value[:, index:index + 1]), 1.0) for key, value in sfs.items()})
+    return lepton(0), lepton(1)
+
+
+def tau_inputs(events, version):
+    taus = wzmod.build_htaus(events.Tau, events.Muon, nanoAODversion=version, tauIDvsj_wps=WPS,
+                             tauIDvse_wp="VTight", tauIDvsmu_wp="Tight")
+    return [taus[wp] for wp in WPS] + [ak.num(taus[wp]) >= 1 for wp in WPS]
+
+
+def appenders(proc, events, era, version):
+    calls = {
+        "pileup": (len(events), lambda w, v: proc._purw.append_pileup_weight(w, events.Pileup.nTrueInt, variations=v)),
+    }
+    lead, subl = leading_pair(events)
+    if "trigger_sf" in proc.clibhandler.keys():
+        calls["trigger"] = (len(lead), lambda w, v: proc._add_trigger_sf(w, lead, subl, clibhandler=proc.clibhandler,
+                                                                        variations=v))
+    sfs = lepton_sfs(proc, events, True)
+    lead_sf, subl_sf = lepton_pair(sfs)
+    calls["lepton"] = (len(events), lambda w, v: proc._leSF.append_lepton_sf(lead_sf, subl_sf, w, variations=v))
+    if era == "2018":
+        taus = tau_inputs(events, version)
+        calls["tauID"] = (len(events), lambda w, v: proc._tauID.append_tauID_multiwp_sf(*taus, w, variations=v))
+        jets = events.Jet[(events.Jet.pt > 30) & (np.abs(events.Jet.eta) < 4.7)]
+        calls["jetPU"] = (len(events), lambda w, v: proc._jpSF.append_jetPU_sf(jets, w, variations=v))
+    return calls
+
+
+@pytest.mark.parametrize("path, era, version", PROC_CASES)
+def test_appenders_nominal_only(path, era, version):
+    from coffea.analysis_tools import Weights
+    events = load_events(path)
+    proc = wzmod.wzinclusive_processor(era=era, version=version)
+    calls = appenders(proc, events, era, version)
+    if era == "2024":
+        assert "trigger" in calls
+    else:
+        assert {"tauID", "jetPU"} <= set(calls)
+    for name, (size, append) in calls.items():
+        full = Weights(size, storeIndividual=True)
+        append(full, True)
+        nominal = Weights(size, storeIndividual=True)
+        append(nominal, False)
+        assert full.variations, name
+        assert nominal.variations == set(), name
+        assert np.array_equal(nominal.weight(), full.weight(), equal_nan=True), name
+
+
+@pytest.mark.parametrize("path, era, version", PROC_CASES)
+def test_lepton_sf_nominal_keys(path, era, version):
+    events = load_events(path)
+    proc = wzmod.wzinclusive_processor(era=era, version=version)
+    full = lepton_sfs(proc, events, True)
+    nominal = lepton_sfs(proc, events, False)
+    assert set(nominal) == {"eff_m_idNominal", "eff_m_isoNominal", "eff_e_recoNominal", "eff_e_idNominal"}
+    assert set(nominal) < set(full)
+    for key, value in nominal.items():
+        assert ak.to_list(ak.num(value)) == ak.to_list(ak.num(full[key]))
+        assert np.array_equal(ak.to_numpy(ak.flatten(value)), ak.to_numpy(ak.flatten(full[key])))
