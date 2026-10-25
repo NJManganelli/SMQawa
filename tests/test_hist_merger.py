@@ -7,6 +7,7 @@ from pathlib import Path
 
 import hist
 import numpy
+import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "hist-merger.py"
 FAILING_DUMP = (
@@ -34,9 +35,10 @@ def write_job(directory, index, content):
         pickle.dump(content, f)
 
 
-def run_merger(cwd, *args, runner=None, env=None):
+def run_merger(cwd, *args, runner=None, env=None, ncores=1):
     prefix = [sys.executable] if runner is None else [sys.executable, "-c", runner]
-    return subprocess.run([*prefix, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True, env=env)
+    extra = [] if ncores is None else ["--ncores", str(ncores)]
+    return subprocess.run([*prefix, str(SCRIPT), *args, *extra], cwd=cwd, capture_output=True, text=True, env=env)
 
 
 def merged_output(outdir):
@@ -194,12 +196,14 @@ def test_no_cache_files_written(tmp_path):
     assert len(outputs(out)) == 1 and outputs(out)[0].startswith("merged-histogram-")
 
 
-def test_unreadable_file_fails(tmp_path):
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_unreadable_file_fails(tmp_path, ncores):
     write_job(tmp_path / "jobs_tagX_2024_DY", 0, dy_job(10, 100))
     (tmp_path / "jobs_tagX_2024_DY" / "histogram_1.pkl.gz").write_bytes(gzip.compress(b"not a pickle")[:12])
     out = tmp_path / "out"
     out.mkdir()
-    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
     assert r.returncode != 0 and "histogram_1.pkl.gz" in r.stderr and outputs(out) == []
 
 
@@ -276,12 +280,14 @@ def test_two_datasets_in_one_directory(tmp_path):
     assert_same(merged["B"]["hist"]["x"], make_hist([("up", 3.5, 2)] * 3))
 
 
-def test_empty_file_is_skipped_and_reported(tmp_path):
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_empty_file_is_skipped_and_reported(tmp_path, ncores):
     three_files(tmp_path)
     (tmp_path / "jobs_tagX_2024_DY" / "histogram_3.pkl.gz").write_bytes(b"")
     out = tmp_path / "out"
     out.mkdir()
-    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
     assert r.returncode == 0, r.stderr
     assert "1 empty" in r.stdout
     assert_three_files(merged_output(out))
@@ -363,3 +369,44 @@ def test_eos_default_dir_without_user_variable(tmp_path):
     r = run_merger(tmp_path, "--eos", "-t", "tagX", "--era", "2024", "--outdir", str(out), env=env)
     assert r.returncode != 0 and "globbing: /eos/user/" in r.stdout
     assert "no input pickle files found" in r.stderr and "KeyError" not in r.stderr
+
+
+def merged_values(merged):
+    return {dataset: (content["sumw"],
+                      {name: {label: (h[{"syst": label}].values(flow=True).tolist(),
+                                      h[{"syst": label}].variances(flow=True).tolist()) for label in h.axes[0]}
+                       for name, h in content["hist"].items()})
+            for dataset, content in merged.items()}
+
+
+def test_parallel_equals_serial(tmp_path):
+    for dataset in ("DY", "WZ"):
+        for i in range(10):
+            write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i,
+                      {dataset: {"hist": {"x": make_hist([(f"c{i % 3}", i % 4 + 0.5, i + 1)]),
+                                          "y": make_hist([("nominal", 1.5, 2 * i + 1)])}, "sumw": i + 1}})
+    results = {}
+    for ncores in (1, 2, 4):
+        out = tmp_path / f"out{ncores}"
+        out.mkdir()
+        r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                       ncores=ncores)
+        assert r.returncode == 0, r.stderr
+        results[ncores] = merged_values(merged_output(out))
+    assert results[1] == results[2] == results[4]
+    assert results[1]["DY"][0] == 55 and results[1]["WZ"][0] == 55
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_shared_reference_in_one_file_is_not_double_counted(tmp_path, ncores):
+    shared = make_hist([("nominal", 0.5, 1)])
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, {"DY": {"hist": {"h1": shared, "h2": shared}, "sumw": 1}})
+    write_job(tmp_path / "jobs_tagX_2024_DY", 1, {"DY": {"hist": {"h1": make_hist([("nominal", 0.5, 1)]),
+                                                                  "h2": make_hist([("nominal", 0.5, 1)])}, "sumw": 1}})
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
+    assert r.returncode == 0, r.stderr
+    merged = merged_output(out)
+    assert merged["DY"]["hist"]["h1"].sum().value == 2 and merged["DY"]["hist"]["h2"].sum().value == 2
