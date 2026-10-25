@@ -89,6 +89,10 @@ def test_build_htaus_api_errors(path, version, ids):
         wzmod.build_htaus(events.Tau, events.Muon, nanoAODversion=version, tauIDvsj_wp="VTight")
     with pytest.raises(ValueError, match="VVTight"):
         wzmod.build_htaus(events.Tau, events.Muon, nanoAODversion=version, tauIDvsj_wps=("Tight", "Bogus"))
+    with pytest.raises(ValueError, match=r"tauIDvse_wp: \['VVVLoose'.*'VVTight'\]"):
+        wzmod.build_htaus(events.Tau, events.Muon, nanoAODversion=version, tauIDvse_wp="Bogus")
+    with pytest.raises(ValueError, match=r"tauIDvsmu_wp: \['VLoose', 'Loose', 'Medium', 'Tight'\]"):
+        wzmod.build_htaus(events.Tau, events.Muon, nanoAODversion=version, tauIDvsmu_wp="Bogus")
     assert not hasattr(wzmod, "build_htaus_wps")
 
 

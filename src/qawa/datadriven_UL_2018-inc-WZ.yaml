@@ -200,52 +200,52 @@ groups:
 
 plotting:
     inc-DY0:
-        tau_pt_vtight:
+        tau_vtight_pt:
             rebin: 2 
             range: [0, 300]
             blind: false
     inc-DY1:
-        tau_pt_loose:
+        tau_loose_pt:
             rebin: 2 
             range: [0, 300]
             blind: false
     inc-SR0:
-        tau_pt_vtight:
+        tau_vtight_pt:
             rebin: 2 
             range: [0, 300]
             blind: true
     inc-SR1:
-        tau_pt_vtight:
+        tau_vtight_pt:
             rebin: 2 
             range: [0, 300]
             blind: true
     inc-B0:
-        tau_pt_loose:
+        tau_loose_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
     inc-B1:
-        tau_pt_loose:
+        tau_loose_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
     inc-C0:
-        tau_pt_loose:
+        tau_loose_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
     inc-C1:
-        tau_pt_loose:
+        tau_loose_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
     inc-D0:
-        tau_pt_vtight:
+        tau_vtight_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
     inc-D1:
-        tau_pt_vtight:
+        tau_vtight_pt:
             rebin: 1 
             range: [0, 300]
             blind: false
@@ -266,10 +266,10 @@ datadriven:
                 correctionset_output_label: fake_rate
                 correctionset_output_description: fake rate for Drell-Yan
                 channels:
-                    inc-D0: tau_pt_vtight
-                    inc-D1: tau_pt_vtight
-                    inc-C0: tau_pt_loose
-                    inc-C1: tau_pt_loose
+                    inc-D0: tau_vtight_pt
+                    inc-D1: tau_vtight_pt
+                    inc-C0: tau_loose_pt
+                    inc-C1: tau_loose_pt
                 channel_ratios:
                     0:
                         numerator: inc-D0
@@ -278,10 +278,10 @@ datadriven:
                         numerator: inc-D1
                         denominator: inc-C1
                 update_axes_meta:
-                    # rename tau_pt_loose axis name so that histograms can be added consistently
-                    tau_pt_loose:
+                    # rename tau_loose_pt axis name so that histograms can be added consistently
+                    tau_loose_pt:
                         name: tau_pt
-                    tau_pt_vtight:
+                    tau_vtight_pt:
                         name: tau_pt
                 dict_to_hist_axis:
                     axis_name: jet_multiplicity
@@ -301,16 +301,16 @@ datadriven:
                 correctionset_output_label: prob_dy
                 correctionset_output_description: probability event comes from Drell-Yan
                 channels:
-                    inc-B0: tau_pt_loose
-                    inc-B1: tau_pt_loose
+                    inc-B0: tau_loose_pt
+                    inc-B1: tau_loose_pt
                 channel_absolutes:
                     0: inc-B0
                     1: inc-B1
                 update_axes_meta:
-                    # rename tau_pt_loose axis name so that histograms can be added consistently
-                    tau_pt_loose:
+                    # rename tau_loose_pt axis name so that histograms can be added consistently
+                    tau_loose_pt:
                         name: tau_pt
-                    tau_pt_vtight:
+                    tau_vtight_pt:
                         name: tau_pt
                 dict_to_hist_axis:
                     axis_name: jet_multiplicity
@@ -330,16 +330,16 @@ datadriven:
                 correctionset_output_label: prob_dy
                 correctionset_output_description: probability event comes from Drell-Yan
                 channels:
-                    inc-C0: tau_pt_loose
-                    inc-C1: tau_pt_loose
+                    inc-C0: tau_loose_pt
+                    inc-C1: tau_loose_pt
                 channel_absolutes:
                     0: inc-C0
                     1: inc-C1
                 update_axes_meta:
-                    # rename tau_pt_loose axis name so that histograms can be added consistently
-                    tau_pt_loose:
+                    # rename tau_loose_pt axis name so that histograms can be added consistently
+                    tau_loose_pt:
                         name: tau_pt
-                    tau_pt_vtight:
+                    tau_vtight_pt:
                         name: tau_pt
                 dict_to_hist_axis:
                     axis_name: jet_multiplicity

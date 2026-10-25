@@ -4,12 +4,12 @@ Split the WZ polarization templates into standalone DCTools datasets.
 Six boson combinations x three helicity states = 18 templates:
 
     boson   observable            weight prefix   meaning
-    W       qcos_theta_w_reco     wZW             W polarization, inclusive WZ
-    Wp      cos_theta_wp_reco     wZWp            W+ polarization
-    Wm      cos_theta_wm_reco     wZWm            W- polarization
-    Z       cos_theta_z_reco      wWZ             Z polarization, inclusive WZ
-    Z_WpZ   cos_theta_wpz_reco    wWpZ            Z polarization in W+Z
-    Z_WmZ   cos_theta_wmz_reco    wWmZ            Z polarization in W-Z
+    W       tau_loosetovtight_qcos_theta_w_reco   wZW             W polarization, inclusive WZ
+    Wp      tau_loosetovtight_cos_theta_wp_reco   wZWp            W+ polarization
+    Wm      tau_loosetovtight_cos_theta_wm_reco   wZWm            W- polarization
+    Z       cos_theta_z_reco                      wWZ             Z polarization, inclusive WZ
+    Z_WpZ   tau_loosetovtight_cos_theta_wpz_reco  wWpZ            Z polarization in W+Z
+    Z_WmZ   tau_loosetovtight_cos_theta_wmz_reco  wWmZ            Z polarization in W-Z
 
 Each template <obs>_<wpref>_<pol> (pol = long, left, right) is written as its
 own dataset <wz_dataset>_<boson>_<pol>, holding one histogram under the key <obs>.
@@ -29,14 +29,14 @@ from typing import Dict, List, Optional
 
 POLS = ("long", "left", "right")
 
-# boson -> observable and weight prefix, as named by qawa.polarization
+# boson -> observable and weight prefix, as named in the processor output
 BOSON_CONFIG = {
-    "W":     dict(obs="qcos_theta_w_reco",  wpref="wZW"),
-    "Wp":    dict(obs="cos_theta_wp_reco",  wpref="wZWp"),
-    "Wm":    dict(obs="cos_theta_wm_reco",  wpref="wZWm"),
-    "Z":     dict(obs="cos_theta_z_reco",   wpref="wWZ"),
-    "Z_WpZ": dict(obs="cos_theta_wpz_reco", wpref="wWpZ"),
-    "Z_WmZ": dict(obs="cos_theta_wmz_reco", wpref="wWmZ"),
+    "W":     dict(obs="tau_loosetovtight_qcos_theta_w_reco",  wpref="wZW"),
+    "Wp":    dict(obs="tau_loosetovtight_cos_theta_wp_reco",  wpref="wZWp"),
+    "Wm":    dict(obs="tau_loosetovtight_cos_theta_wm_reco",  wpref="wZWm"),
+    "Z":     dict(obs="cos_theta_z_reco",                     wpref="wWZ"),
+    "Z_WpZ": dict(obs="tau_loosetovtight_cos_theta_wpz_reco", wpref="wWpZ"),
+    "Z_WmZ": dict(obs="tau_loosetovtight_cos_theta_wmz_reco", wpref="wWmZ"),
 }
 
 
