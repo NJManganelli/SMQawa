@@ -1,6 +1,7 @@
 import argparse
 import collections
 import fnmatch
+import getpass
 import glob
 import gzip
 import os
@@ -119,7 +120,7 @@ def main():
 
     if options.dir is None:
         if options.eos:
-            user = os.environ["USER"]
+            user = getpass.getuser()
             options.dir = f"/eos/user/{user[0]}/{user}/WZtotau2lnu"
         else:
             options.dir = "."

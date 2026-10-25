@@ -1,4 +1,5 @@
 import gzip
+import os
 import pickle
 import subprocess
 import sys
@@ -33,9 +34,9 @@ def write_job(directory, index, content):
         pickle.dump(content, f)
 
 
-def run_merger(cwd, *args, runner=None):
+def run_merger(cwd, *args, runner=None, env=None):
     prefix = [sys.executable] if runner is None else [sys.executable, "-c", runner]
-    return subprocess.run([*prefix, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run([*prefix, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True, env=env)
 
 
 def merged_output(outdir):
@@ -353,3 +354,12 @@ def test_no_input_files_fails(tmp_path):
     out.mkdir()
     r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
     assert r.returncode != 0 and "no input pickle files found" in r.stderr and outputs(out) == []
+
+
+def test_eos_default_dir_without_user_variable(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k not in ("USER", "LOGNAME")}
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--eos", "-t", "tagX", "--era", "2024", "--outdir", str(out), env=env)
+    assert r.returncode != 0 and "globbing: /eos/user/" in r.stdout
+    assert "no input pickle files found" in r.stderr and "KeyError" not in r.stderr
