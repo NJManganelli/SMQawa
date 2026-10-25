@@ -28,6 +28,7 @@ from rich.text import Text
 LARGE_INPUT_MIB = 10
 LABEL_WIDTH = 20
 BAR_WIDTH = 24
+KIND_FILES = {"data": "Data", "mc": "MC-backgrounds", "signal": "MC-signal", "eft": "EFT"}
 
 
 def tree_memory(processes):
@@ -154,6 +155,16 @@ def add_lumi(target, lumi):
     target["lumi"] = numpy.unique(blocks, axis=0)
 
 
+def add_kind(target, kind, new):
+    if kind is not None and kind not in KIND_FILES:
+        raise ValueError(f"unknown kind {kind!r}, expected one of {', '.join(KIND_FILES)}")
+    if new:
+        if kind is not None:
+            target["kind"] = kind
+    elif target.get("kind") != kind:
+        raise ValueError(f"kind {kind!r} disagrees with kind {target.get('kind')!r}")
+
+
 def merge_files(filenames, merged, load):
     empty = []
     for filename in filenames:
@@ -163,6 +174,7 @@ def merge_files(filenames, merged, load):
         key = None
         try:
             for dataset, content in load(filename).items():
+                new = dataset not in merged
                 target = merged.setdefault(dataset, {"hist": {}, "sumw": 0.0})
                 for name, histogram in content["hist"].items():
                     if isinstance(histogram, dict):
@@ -175,6 +187,9 @@ def merge_files(filenames, merged, load):
                     key = f"{dataset}/lumi"
                     add_lumi(target, content["lumi"])
                     key = None
+                key = f"{dataset}/kind"
+                add_kind(target, content.get("kind"), new)
+                key = None
         except Exception as err:
             if key is None:
                 raise RuntimeError(f"cannot merge {filename}: {err}") from err
@@ -206,6 +221,24 @@ def merge_into(merged, partial, source):
             except Exception as err:
                 raise RuntimeError(f"cannot add {dataset}/lumi from {source} to the histograms merged "
                                    f"before it: {err}") from err
+        try:
+            add_kind(merged[dataset], content.get("kind"), False)
+        except Exception as err:
+            raise RuntimeError(f"cannot add {dataset}/kind from {source} to the histograms merged "
+                               f"before it: {err}") from err
+
+
+def split_by_kind(merged):
+    parts = {"Data": {}, "MC-backgrounds": {}, "MC-signal": {}}
+    for dataset, content in merged.items():
+        kind = content.get("kind")
+        if kind is None:
+            if content["sumw"] >= 0:
+                raise SystemExit(f"--splitByKind: dataset {dataset} has no kind and sumw {content['sumw']} >= 0, so "
+                                 f"it is not data; cannot tell signal from background without kind")
+            kind = "data"
+        parts.setdefault(KIND_FILES[kind], {})[dataset] = content
+    return parts
 
 
 def make_chunks(filenames, ncores):
@@ -269,6 +302,10 @@ def main():
                              "1 or less merges in the main process; memory grows with --ncores")
     parser.add_argument("--compressionLevel", type=int, default=4,
                         help="gzip level for the OUTPUT file (1=fast/larger .. 9=slow/smaller)")
+    parser.add_argument("--splitByKind", action="store_true",
+                        help="write the Data, MC-backgrounds and MC-signal datasets (and EFT ones, if any) to "
+                             "separate files ...-<filename>-<part>.pkl.gz, by each dataset's kind; without kind, "
+                             "a negative sumw means data")
     parser.add_argument("--verbose", action="store_true", help="list the matched directories with file counts")
     parser.add_argument("--noProgress", action="store_true",
                         help="do not show the progress display; it is also off when stdout is not a terminal")
@@ -328,11 +365,19 @@ def main():
     for directory, n in collections.Counter(os.path.dirname(f) for f in empty).items():
         rich.print(f"[red]{os.path.basename(directory)} contains {n} empty pkl.gz files!")
 
-    output = os.path.join(options.outdir, f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}.pkl.gz")
-    with gzip.open(output + ".tmp", "wb", compresslevel=options.compressionLevel) as f:
-        pickle.dump(merged, f, protocol=pickle.HIGHEST_PROTOCOL)
-    os.replace(output + ".tmp", output)
-    print(output)
+    name = f"merged-histogram-Inc-{options.tag}-{options.era}-{options.filename}"
+    if options.splitByKind:
+        outputs = {f"{name}-{part}.pkl.gz": content for part, content in split_by_kind(merged).items()}
+    else:
+        for content in merged.values():
+            content.pop("kind", None)
+        outputs = {f"{name}.pkl.gz": merged}
+    for basename, content in outputs.items():
+        output = os.path.join(options.outdir, basename)
+        with gzip.open(output + ".tmp", "wb", compresslevel=options.compressionLevel) as f:
+            pickle.dump(content, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(output + ".tmp", output)
+        print(output)
     summary = (f"merged {len(filenames)} files from {ndirectories} directories in {time.monotonic() - start:.1f} s; "
                f"peak RSS: main process {peak_rss(resource.RUSAGE_SELF) / 2**30:.2f} GiB")
     if ncores > 1:

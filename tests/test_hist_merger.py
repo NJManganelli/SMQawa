@@ -746,3 +746,104 @@ def test_malformed_lumi_names_the_file(tmp_path):
     out.mkdir()
     r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
     assert r.returncode != 0 and "DY/lumi" in r.stderr and "histogram_1.pkl.gz" in r.stderr and outputs(out) == []
+
+
+def kind_job(dataset, weight, sumw, kind):
+    content = {dataset: dy_job(weight, sumw)["DY"]}
+    if kind is not None:
+        content[dataset]["kind"] = kind
+    return content
+
+
+def kind_layout(tmp_path):
+    for dataset, sumw, kind in (("D", -1, "data"), ("B", 100, "mc"), ("S", 50, "signal"), ("E", 20, "eft"),
+                                ("O", -1, None)):
+        for i in range(2):
+            write_job(tmp_path / f"jobs_tagX_2024_{dataset}", i, kind_job(dataset, 10 + i, sumw, kind))
+    out = tmp_path / "out"
+    out.mkdir()
+    return ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out)), out
+
+
+def load_output(path):
+    with gzip.open(path) as f:
+        return pickle.load(f)
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_split_by_kind_writes_one_file_per_kind(tmp_path, ncores):
+    args, out = kind_layout(tmp_path)
+    r = run_merger(tmp_path, *args, "--splitByKind", ncores=ncores)
+    assert r.returncode == 0, r.stderr
+    name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
+    parts = {"Data": ["D", "O"], "MC-backgrounds": ["B"], "MC-signal": ["S"], "EFT": ["E"]}
+    assert outputs(out) == sorted(name.format(part) for part in parts)
+    for part, datasets in parts.items():
+        merged = load_output(out / name.format(part))
+        assert sorted(merged) == datasets
+        for dataset in datasets:
+            assert_same(merged[dataset]["hist"]["x"], make_hist([("nominal", 0.5, 10), ("nominal", 0.5, 11)]))
+    assert load_output(out / name.format("Data"))["D"]["sumw"] == -2
+    signal = load_output(out / name.format("MC-signal"))["S"]
+    assert signal["kind"] == "signal" and signal["sumw"] == 100
+    assert "kind" not in load_output(out / name.format("Data"))["O"]
+
+
+def test_without_split_the_output_is_unchanged(tmp_path):
+    args, out = kind_layout(tmp_path)
+    r = run_merger(tmp_path, *args)
+    assert r.returncode == 0, r.stderr
+    merged = merged_output(out)
+    assert sorted(merged) == ["B", "D", "E", "O", "S"]
+    assert all(sorted(content) == ["hist", "sumw"] for content in merged.values())
+
+
+def test_split_without_eft_writes_the_three_files(tmp_path):
+    for dataset, sumw, kind in (("D", -1, "data"), ("B", 100, "mc")):
+        write_job(tmp_path / f"jobs_tagX_2024_{dataset}", 0, kind_job(dataset, 10, sumw, kind))
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   "--splitByKind")
+    assert r.returncode == 0, r.stderr
+    name = "merged-histogram-Inc-tagX-2024-latest-{}.pkl.gz"
+    assert outputs(out) == sorted(name.format(part) for part in ("Data", "MC-backgrounds", "MC-signal"))
+    assert load_output(out / name.format("MC-signal")) == {}
+
+
+def test_split_refuses_to_guess_signal_without_kind(tmp_path):
+    write_job(tmp_path / "jobs_tagX_2024_D", 0, kind_job("D", 10, -1, "data"))
+    write_job(tmp_path / "jobs_tagX_2024_X", 0, kind_job("X", 10, 100, None))
+    out = tmp_path / "out"
+    out.mkdir()
+    args = ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    r = run_merger(tmp_path, *args, "--splitByKind")
+    assert r.returncode != 0 and "cannot tell signal from background" in r.stderr and "X" in r.stderr
+    assert outputs(out) == []
+    assert run_merger(tmp_path, *args).returncode == 0
+
+
+@pytest.mark.parametrize("ncores", [1, 2])
+def test_kind_disagreement_names_the_file(tmp_path, ncores):
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, kind_job("DY", 10, 100, "mc"))
+    write_job(tmp_path / "jobs_tagX_2024_DY_ext", 1, kind_job("DY", 10, 100, "signal"))
+    out = tmp_path / "out"
+    out.mkdir()
+    r = run_merger(tmp_path, "--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out),
+                   ncores=ncores)
+    assert r.returncode != 0 and "DY/kind" in r.stderr and "histogram_1.pkl.gz" in r.stderr and outputs(out) == []
+
+
+def test_unknown_or_missing_kind_in_one_file_fails(tmp_path):
+    write_job(tmp_path / "jobs_tagX_2024_DY", 0, kind_job("DY", 10, 100, "mc"))
+    write_job(tmp_path / "jobs_tagX_2024_DY", 1, kind_job("DY", 10, 100, None))
+    write_job(tmp_path / "jobs_tagX_2024_WZ", 0, kind_job("WZ", 10, 100, "background"))
+    out = tmp_path / "out"
+    out.mkdir()
+    args = ("--dir", str(tmp_path), "-t", "tagX", "--era", "2024", "--outdir", str(out))
+    r = run_merger(tmp_path, *args)
+    assert r.returncode != 0 and "DY/kind" in r.stderr and "histogram_1.pkl.gz" in r.stderr
+    (tmp_path / "jobs_tagX_2024_DY" / "histogram_1.pkl.gz").unlink()
+    r = run_merger(tmp_path, *args)
+    assert r.returncode != 0 and "WZ/kind" in r.stderr and "unknown kind 'background'" in r.stderr
+    assert outputs(out) == []
