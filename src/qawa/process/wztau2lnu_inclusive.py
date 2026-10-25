@@ -1164,6 +1164,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         is_signal = event.metadata.get('is_signal')
         selection = PackedSelection(dtype="uint64")
         weights = Weights(len(event), storeIndividual=True)
+        ntuple = {}
         
         if self._pol:
             if is_signal and (not is_data):
@@ -1502,8 +1503,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         ngood_jets  = ak.num(good_jets)
         ngood_bjets = ak.num(good_bjets)
 
-        event['ngood_bjets'] = ngood_bjets
-        event['ngood_jets']  = ngood_jets
+        ntuple['ngood_bjets'] = ngood_bjets
+        ntuple['ngood_jets']  = ngood_jets
 
         # lepton quantities
         def z_lepton_pair(leptons):
@@ -1620,7 +1621,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 )
                 for _d in ("angles", "extras", "weights"):
                     for _k, _v in polq[_d].items():
-                        event[_k] = _v
+                        ntuple[_k] = _v
             else:
                 reco = compute_reco_angles(
                     p4_met, lead_tau_for_vars, dilep_p4, lead_lep, subl_lep,
@@ -1629,7 +1630,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 )
                 for _d in ("angles", "extras"):
                     for _k, _v in reco[_d].items():
-                        event[_k] = _v
+                        ntuple[_k] = _v
         # # ── Polarization block end ────────────────────────────────────────────
 
 
@@ -1643,8 +1644,6 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         dijet_mass = (lead_jet + subl_jet).mass
         dijet_deta = np.abs(lead_jet.eta - subl_jet.eta)
-        event['dijet_mass'] = dijet_mass
-        event['dijet_deta'] = dijet_deta 
 
         min_dphi_met_j = ak.min(np.abs(
             ak.where(
@@ -1653,7 +1652,6 @@ class wzinclusive_processor(processor.ProcessorABC):
                 good_jets.delta_phi(p4_met)
             )
         ), axis=1)
-        event['min_dphi_met_j'] = min_dphi_met_j
 
         ### FV selections ####
         if is_signal:
@@ -1744,90 +1742,89 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         ### FV adding FV fields to the events ####
         if is_signal:
-            event['ngood_jets_fv'  ] = ak.fill_none(ngood_jets_fv,-99)
-            event['dilep_tau_met_hadron_mt_fv'  ] = ak.fill_none(dilep_tau_met_hadron_mt_fv,-99)
-            event['met_sigma'  ] = ak.fill_none(ptmiss_sigma,-99)
-            event['met_uncertainty'  ] = ak.fill_none(ptmiss_unc,-99)
-            event['met_pt_fv'  ] = ak.fill_none(p4_met_fv.pt,-99)
-            event['dilep_m_fv'] = ak.fill_none(dilep_m_fv,-99)
-            event['dilep_pt_fv'] = ak.fill_none(dilep_pt_fv,-99)
-            event['leading_lep_pt_fv'] = ak.fill_none(lead_lep_fv.pt,-99)
-            event['trailing_lep_pt_fv'] = ak.fill_none(subl_lep_fv.pt,-99)
-            event['tau_pt_fv'] = ak.fill_none(tau_pt_fv,-99)
-            event['lead_jet_pt_fv'] = ak.fill_none(lead_jet_fv.pt,-99)
-            event['trail_jet_pt_fv'] = ak.fill_none(subl_jet_fv.pt,-99)
+            ntuple['ngood_jets_fv'  ] = ak.fill_none(ngood_jets_fv,-99)
+            ntuple['dilep_tau_met_hadron_mt_fv'  ] = ak.fill_none(dilep_tau_met_hadron_mt_fv,-99)
+            ntuple['met_sigma'  ] = ak.fill_none(ptmiss_sigma,-99)
+            ntuple['met_uncertainty'  ] = ak.fill_none(ptmiss_unc,-99)
+            ntuple['met_pt_fv'  ] = ak.fill_none(p4_met_fv.pt,-99)
+            ntuple['dilep_m_fv'] = ak.fill_none(dilep_m_fv,-99)
+            ntuple['dilep_pt_fv'] = ak.fill_none(dilep_pt_fv,-99)
+            ntuple['leading_lep_pt_fv'] = ak.fill_none(lead_lep_fv.pt,-99)
+            ntuple['trailing_lep_pt_fv'] = ak.fill_none(subl_lep_fv.pt,-99)
+            ntuple['tau_pt_fv'] = ak.fill_none(tau_pt_fv,-99)
+            ntuple['lead_jet_pt_fv'] = ak.fill_none(lead_jet_fv.pt,-99)
+            ntuple['trail_jet_pt_fv'] = ak.fill_none(subl_jet_fv.pt,-99)
 
         # Define all variables for the BDT
-        event['met_pt'  ] = ak.fill_none(reco_met_pt,-99)
-        event['met_phi'  ] = ak.fill_none(reco_met_phi,-99)
-        event['mT_W'  ] = ak.fill_none(mT_W,-99)
-        event['m_lep'  ] = ak.fill_none(m_lep,-99)
-        event['mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
-        event['pt_llt'] = ak.fill_none(pt_llt,-99)
-        event['ptv_llt'] = ak.fill_none(ptv_llt,-99)
-        event['inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
-        event['dilep_tau_loose_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
-        event['met_phi' ] = ak.fill_none(reco_met_phi,-99)
-        event['dilep_mt_llnunu'] = ak.fill_none(dilep_mt_llnunu,-99)
-        event['dilep_m'] = ak.fill_none(dilep_m,-99)
-        event['dilep_pt'] = ak.fill_none(dilep_pt,-99)
-        event['HTl'] = ak.fill_none(HTl,-99)
-        event['ST'] = ak.fill_none(ST,-99)
-        event['dilep_dphi'] = ak.fill_none(dilep_dphi,-99)
-        event['njets'   ] = ak.fill_none(ngood_jets,-99)
-        # event['nbjets'   ] = ak.fill_none(ngood_bjets,-99)
-        event['nhtaus_vtight'   ] = ak.fill_none(nhtaus_lep_vtight,-99)
-        event['nhtaus_tight'   ] = ak.fill_none(nhtaus_lep_tight,-99)
-        event['nhtaus_loose'   ] = ak.fill_none(nhtaus_lep_loose,-99)
-        event['dphi_met_ll'] = ak.fill_none(dilep_dphi_met,-99)
-        event['dilep_dphi_tau'] = ak.fill_none(dilep_dphi_tau,-99)
-        event['dijet_mass'] = ak.fill_none(dijet_mass,-99)
-        event['dijet_deta'] = ak.fill_none(dijet_deta,-99)
-        event['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
-        event['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
-        event['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
-        event['taus_phi'] = ak.fill_none(taus_phi,-99)
-        event['taus_eta'] = ak.fill_none(taus_eta,-99)
-        event['tau_upsilon_vtight'] = ak.fill_none(tau_upsilon_vtight,-99)
-        event['tau_upsilon_vtight_pt20to40'] = ak.fill_none(tau_upsilon_vtight_pt20to40,-99)
-        event['tau_upsilon_vtight_pt40to60'] = ak.fill_none(tau_upsilon_vtight_pt40to60,-99)
-        event['tau_upsilon_vtight_pt60to100'] = ak.fill_none(tau_upsilon_vtight_pt60to100,-99)
-        event['tau_upsilon_vtight_pt100toInf'] = ak.fill_none(tau_upsilon_vtight_pt100toInf,-99)
-        event['tau_upsilon_tight'] = ak.fill_none(tau_upsilon_tight,-99)
-        event['tau_upsilon_tight_pt20to40'] = ak.fill_none(tau_upsilon_tight_pt20to40,-99)
-        event['tau_upsilon_tight_pt40to60'] = ak.fill_none(tau_upsilon_tight_pt40to60,-99)
-        event['tau_upsilon_tight_pt60to100'] = ak.fill_none(tau_upsilon_tight_pt60to100,-99)
-        event['tau_upsilon_tight_pt100toInf'] = ak.fill_none(tau_upsilon_tight_pt100toInf,-99)
-        event['tau_upsilon_loose'] = ak.fill_none(tau_upsilon_loose,-99)
-        event['tau_upsilon_loose_pt20to40'] = ak.fill_none(tau_upsilon_loose_pt20to40,-99)
-        event['tau_upsilon_loose_pt40to60'] = ak.fill_none(tau_upsilon_loose_pt40to60,-99)
-        event['tau_upsilon_loose_pt60to100'] = ak.fill_none(tau_upsilon_loose_pt60to100,-99)
-        event['tau_upsilon_loose_pt100toInf'] = ak.fill_none(tau_upsilon_loose_pt100toInf,-99)
-        event['delta_R'] = ak.fill_none(delta_R,-99)
-        event['dilep_dR'] = ak.fill_none(dilep_dR,-99)
-        event['dilep_deta'] = ak.fill_none(dilep_deta,-99)
-        event['delta_tau_met_phi'] = ak.fill_none(delta_tau_met_phi,-99)
-        event['tau_pt_loose'] = ak.fill_none(tau_pt_loose,-99)
-        event['taus_phi_loose'] = ak.fill_none(taus_phi_loose,-99)
-        event['taus_eta_loose'] = ak.fill_none(taus_eta_loose,-99)
-        event['leading_lep_pt'  ] = ak.fill_none(lead_lep.pt,-99)
-        event['leading_lep_eta' ] = ak.fill_none(lead_lep.eta,-99)
-        event['leading_lep_phi' ] = ak.fill_none(lead_lep.phi,-99)
-        event['trailing_lep_pt' ] = ak.fill_none(subl_lep.pt,-99)
-        event['trailing_lep_eta'] = ak.fill_none(subl_lep.eta,-99)
-        event['trailing_lep_phi'] = ak.fill_none(subl_lep.phi,-99)       
-        event['lead_jet_pt'  ] = ak.fill_none(lead_jet.pt,-99)
-        event['lead_jet_eta' ] = ak.fill_none(lead_jet.eta,-99)
-        event['lead_jet_phi' ] = ak.fill_none(lead_jet.phi,-99)
-        event['delta_R_jet_tau'] = ak.fill_none(delta_R_jet_tau,-99)
-        event['delta_R_jet_dilep'] = ak.fill_none(delta_R_jet_dilep,-99)
-        event['dphi_jet_met'] = ak.fill_none(dphi_jet_met,-99)
-        event['deep_tau_e'] = ak.fill_none(deep_tau_e,-99)
-        event['deep_tau_mu'] = ak.fill_none(deep_tau_mu,-99)
-        event['deep_tau_jet'] = ak.fill_none(deep_tau_jet,-99)
-        event['delta_R_non_iso_lep_loose_tau'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
-        event['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
-        event['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
+        ntuple['met_pt'  ] = ak.fill_none(reco_met_pt,-99)
+        ntuple['mT_W'  ] = ak.fill_none(mT_W,-99)
+        ntuple['m_lep'  ] = ak.fill_none(m_lep,-99)
+        ntuple['mT_WZ'  ] = ak.fill_none(mT_WZ,-99)
+        ntuple['pt_llt'] = ak.fill_none(pt_llt,-99)
+        ntuple['ptv_llt'] = ak.fill_none(ptv_llt,-99)
+        ntuple['inv_m_WZ'  ] = ak.fill_none(inv_m_WZ,-99)
+        ntuple['dilep_tau_loose_met_hadron_mt'  ] = ak.fill_none(dilep_tau_loose_met_hadron_mt,-99)
+        ntuple['met_phi' ] = ak.fill_none(reco_met_phi,-99)
+        ntuple['dilep_mt_llnunu'] = ak.fill_none(dilep_mt_llnunu,-99)
+        ntuple['dilep_m'] = ak.fill_none(dilep_m,-99)
+        ntuple['dilep_pt'] = ak.fill_none(dilep_pt,-99)
+        ntuple['HTl'] = ak.fill_none(HTl,-99)
+        ntuple['ST'] = ak.fill_none(ST,-99)
+        ntuple['dilep_dphi'] = ak.fill_none(dilep_dphi,-99)
+        ntuple['njets'   ] = ak.fill_none(ngood_jets,-99)
+        # ntuple['nbjets'   ] = ak.fill_none(ngood_bjets,-99)
+        ntuple['nhtaus_vtight'   ] = ak.fill_none(nhtaus_lep_vtight,-99)
+        ntuple['nhtaus_tight'   ] = ak.fill_none(nhtaus_lep_tight,-99)
+        ntuple['nhtaus_loose'   ] = ak.fill_none(nhtaus_lep_loose,-99)
+        ntuple['dphi_met_ll'] = ak.fill_none(dilep_dphi_met,-99)
+        ntuple['dilep_dphi_tau'] = ak.fill_none(dilep_dphi_tau,-99)
+        ntuple['dijet_mass'] = ak.fill_none(dijet_mass,-99)
+        ntuple['dijet_deta'] = ak.fill_none(dijet_deta,-99)
+        ntuple['min_dphi_met_j'] = ak.fill_none(min_dphi_met_j,-99)
+        ntuple['tau_pt_vtight'] = ak.fill_none(tau_pt_vtight,-99)
+        ntuple['tau_pt_tight'] = ak.fill_none(tau_pt_tight,-99)
+        ntuple['taus_phi'] = ak.fill_none(taus_phi,-99)
+        ntuple['taus_eta'] = ak.fill_none(taus_eta,-99)
+        ntuple['tau_upsilon_vtight'] = ak.fill_none(tau_upsilon_vtight,-99)
+        ntuple['tau_upsilon_vtight_pt20to40'] = ak.fill_none(tau_upsilon_vtight_pt20to40,-99)
+        ntuple['tau_upsilon_vtight_pt40to60'] = ak.fill_none(tau_upsilon_vtight_pt40to60,-99)
+        ntuple['tau_upsilon_vtight_pt60to100'] = ak.fill_none(tau_upsilon_vtight_pt60to100,-99)
+        ntuple['tau_upsilon_vtight_pt100toInf'] = ak.fill_none(tau_upsilon_vtight_pt100toInf,-99)
+        ntuple['tau_upsilon_tight'] = ak.fill_none(tau_upsilon_tight,-99)
+        ntuple['tau_upsilon_tight_pt20to40'] = ak.fill_none(tau_upsilon_tight_pt20to40,-99)
+        ntuple['tau_upsilon_tight_pt40to60'] = ak.fill_none(tau_upsilon_tight_pt40to60,-99)
+        ntuple['tau_upsilon_tight_pt60to100'] = ak.fill_none(tau_upsilon_tight_pt60to100,-99)
+        ntuple['tau_upsilon_tight_pt100toInf'] = ak.fill_none(tau_upsilon_tight_pt100toInf,-99)
+        ntuple['tau_upsilon_loose'] = ak.fill_none(tau_upsilon_loose,-99)
+        ntuple['tau_upsilon_loose_pt20to40'] = ak.fill_none(tau_upsilon_loose_pt20to40,-99)
+        ntuple['tau_upsilon_loose_pt40to60'] = ak.fill_none(tau_upsilon_loose_pt40to60,-99)
+        ntuple['tau_upsilon_loose_pt60to100'] = ak.fill_none(tau_upsilon_loose_pt60to100,-99)
+        ntuple['tau_upsilon_loose_pt100toInf'] = ak.fill_none(tau_upsilon_loose_pt100toInf,-99)
+        ntuple['delta_R'] = ak.fill_none(delta_R,-99)
+        ntuple['dilep_dR'] = ak.fill_none(dilep_dR,-99)
+        ntuple['dilep_deta'] = ak.fill_none(dilep_deta,-99)
+        ntuple['delta_tau_met_phi'] = ak.fill_none(delta_tau_met_phi,-99)
+        ntuple['tau_pt_loose'] = ak.fill_none(tau_pt_loose,-99)
+        ntuple['taus_phi_loose'] = ak.fill_none(taus_phi_loose,-99)
+        ntuple['taus_eta_loose'] = ak.fill_none(taus_eta_loose,-99)
+        ntuple['leading_lep_pt'  ] = ak.fill_none(lead_lep.pt,-99)
+        ntuple['leading_lep_eta' ] = ak.fill_none(lead_lep.eta,-99)
+        ntuple['leading_lep_phi' ] = ak.fill_none(lead_lep.phi,-99)
+        ntuple['trailing_lep_pt' ] = ak.fill_none(subl_lep.pt,-99)
+        ntuple['trailing_lep_eta'] = ak.fill_none(subl_lep.eta,-99)
+        ntuple['trailing_lep_phi'] = ak.fill_none(subl_lep.phi,-99)       
+        ntuple['lead_jet_pt'  ] = ak.fill_none(lead_jet.pt,-99)
+        ntuple['lead_jet_eta' ] = ak.fill_none(lead_jet.eta,-99)
+        ntuple['lead_jet_phi' ] = ak.fill_none(lead_jet.phi,-99)
+        ntuple['delta_R_jet_tau'] = ak.fill_none(delta_R_jet_tau,-99)
+        ntuple['delta_R_jet_dilep'] = ak.fill_none(delta_R_jet_dilep,-99)
+        ntuple['dphi_jet_met'] = ak.fill_none(dphi_jet_met,-99)
+        ntuple['deep_tau_e'] = ak.fill_none(deep_tau_e,-99)
+        ntuple['deep_tau_mu'] = ak.fill_none(deep_tau_mu,-99)
+        ntuple['deep_tau_jet'] = ak.fill_none(deep_tau_jet,-99)
+        ntuple['delta_R_non_iso_lep_loose_tau'] = ak.fill_none(delta_R_non_iso_lep_loose_tau,-99)
+        ntuple['delta_R_non_iso_lep_vtight_tau'] = ak.fill_none(delta_R_non_iso_lep_vtight_tau,-99)
+        ntuple['delta_R_non_iso_lep_tight_tau'] = ak.fill_none(delta_R_non_iso_lep_tight_tau,-99)
 
 
         # Now adding weights
@@ -2079,8 +2076,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 **{
                     "channel": ch, 
                     "systematic": systname, 
-                    var1: _format_variable(event[var1], cut),
-                    var2: _format_variable(event[var2], cut), 
+                    var1: _format_variable(ntuple[var1], cut),
+                    var2: _format_variable(ntuple[var2], cut), 
                     "weight": ak.nan_to_num(weight,nan=1.0, posinf=1.0, neginf=1.0)
                 }
             )
@@ -2106,7 +2103,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             eft_weight = eft_term_weights(raw, [eft_theta[term] for term in eft_theta])
 
         def event_values(*names):
-            return {name: ak.to_numpy(ak.fill_none(event[name], np.nan)) for name in names}
+            return {name: ak.to_numpy(ak.fill_none(ntuple[name], np.nan)) for name in names}
 
         def fill_variable(var, key=None, weight=standard_weight, slot_labels=labels):
             values = event_values(var)
@@ -2126,9 +2123,9 @@ class wzinclusive_processor(processor.ProcessorABC):
                     fill_variable(var)
 
             if is_signal and (not is_data):
-                gv = event['gen_valid']
+                gv = ntuple['gen_valid']
                 pol_factors = {
-                    f'_{wpref}_{pol}': ak.to_numpy(ak.fill_none(event[f'{wpref}_{pol}'] * gv, 1.0))
+                    f'_{wpref}_{pol}': ak.to_numpy(ak.fill_none(ntuple[f'{wpref}_{pol}'] * gv, 1.0))
                     for wpref in dict.fromkeys(_pol_wpref_for(var) for var in self.pol_template_vars)
                     for pol in ('long', 'left', 'right')
                 }
@@ -2142,10 +2139,10 @@ class wzinclusive_processor(processor.ProcessorABC):
                 for var in self.pol_gen_vars:
                     if var in histos:
                         fill_variable(var)
-                onshell = ak.to_numpy(ak.fill_none(ak.values_astype(event['rescued'] < 0.5, np.float32), 1.0))
+                onshell = ak.to_numpy(ak.fill_none(ak.values_astype(ntuple['rescued'] < 0.5, np.float32), 1.0))
                 fill_variable('qcos_theta_w_gen', 'qcos_theta_w_gen_onshell', scaled_weights(raw, onshell))
                 if None in systematics:
-                    matched = ak.to_numpy(ak.fill_none(event['tau_matched'], 0.0))
+                    matched = ak.to_numpy(ak.fill_none(ntuple['tau_matched'], 0.0))
                     for wk in self.pol_weight_keys:
                         fill_variable(wk, slot_labels=nominal_labels)
                     fill_map('qcos_theta_w_gen', 'qcos_theta_w_reco', 'qcos_theta_w_reco_gen')
