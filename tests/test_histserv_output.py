@@ -26,6 +26,7 @@ import qawa.datadriven as datadriven
 import qawa.histserv_output as ho
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as pk
+from qawa import lumi_record
 
 ROOT = os.environ.get("QAWA_EXPECTED_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CAPS = {"OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4", "MKL_NUM_THREADS": "4", "NUMEXPR_MAX_THREADS": "4"}
@@ -138,12 +139,12 @@ def send_pass(reg, key, md, pass_name="nominal", end=True):
     return result
 
 
-def run_chunk(reg, key, md, sumw=1.0, passes=("nominal",)):
+def run_chunk(reg, key, md, sumw=1.0, passes=("nominal",), lumis=None):
     ho.begin_chunk(reg, key, md, list(passes))
     for pass_name in passes:
         send_pass(reg, key, md, pass_name)
     is_data = reg["samples"][key]["kind"] == "data"
-    return ho.end_chunk(reg, key, md, md["entrystop"] - md["entrystart"], sumw=None if is_data else sumw)
+    return ho.end_chunk(reg, key, md, md["entrystop"] - md["entrystart"], sumw=None if is_data else sumw, lumis=lumis)
 
 
 def file_record(i, events=20, runs_sumw=None, runs_count=None, data=False):
@@ -151,7 +152,7 @@ def file_record(i, events=20, runs_sumw=None, runs_count=None, data=False):
             "runs_count": None if data else (events if runs_count is None else runs_count)}
 
 
-def production(reg, key, n_files=2, sumws=(1.25, 2.25), run=True, base=0):
+def production(reg, key, n_files=2, sumws=(1.25, 2.25), run=True, base=0, lumis=None):
     data = reg["samples"][key]["kind"] == "data"
     manifest = []
     total = 0.0
@@ -160,8 +161,9 @@ def production(reg, key, n_files=2, sumws=(1.25, 2.25), run=True, base=0):
         chunks = [ho.chunk_id(file_uuid(i), 0, 10), ho.chunk_id(file_uuid(i), 10, 20)]
         ho.begin_job(reg, key, {name: chunks}, {name: file_record(i, runs_sumw=sum(sumws), data=data)})
         if run:
-            for (start, stop), sumw in zip(((0, 10), (10, 20)), sumws):
-                run_chunk(reg, key, meta(reg, key, file_uuid(i), start, stop), sumw=sumw)
+            for j, ((start, stop), sumw) in enumerate(zip(((0, 10), (10, 20)), sumws)):
+                chunk_lumis = None if lumis is None else lumis[2 * (i - base) + j]
+                run_chunk(reg, key, meta(reg, key, file_uuid(i), start, stop), sumw=sumw, lumis=chunk_lumis)
         manifest.append(name)
         total += sum(sumws)
     return manifest, total
@@ -846,7 +848,7 @@ def test_registered_keys_equal_output_keys(mode, monkeypatch):
     proc = wzmod.wzinclusive_processor(**options, **kwargs)
     dataset = "Muon0_Run2024C" if kind == "data" else "D"
     out = proc.process(file_events(path, 300, dataset, kind == "data", kind in ("signal", "eft")))[dataset]
-    assert set(out) == set(ho.templates(ho.make_processor(options), kind))
+    assert set(out) - {lumi_record.LUMI_KEY} == set(ho.templates(ho.make_processor(options), kind))
 
 
 def assert_close_hist(a, b):
@@ -1426,3 +1428,108 @@ def test_constructor_dd_checks(tmp_path):
                                     dd_file=DD_RUN3, **kwargs)
     proc = wzmod.wzinclusive_processor(histserv_registry=reg, histserv_sample=key, dd_file=DD_RUN3, **kwargs)
     assert proc.dd_file == DD_RUN3 and proc.histserv_sample == key
+
+
+LOCAL_2018 = "/Users/nmangane/vz-main/SMQawa/DoubleMuon_UL2018_NanoAODv9.root"
+
+
+def lumi_fills(monkeypatch, reg, key):
+    counts = []
+
+    def recording(self, fills, **kwargs):
+        if self.hist_id == reg["samples"][key]["lumi"]:
+            counts.append(len(fills))
+        return REAL_FILL_MANY(self, fills, **kwargs)
+    monkeypatch.setattr(histserv.RemoteHist, "fill_many", recording)
+    return counts
+
+
+def test_lumi_record_done_chunks(server, synthetic, tmp_path, capsys):
+    reg = synthetic_registry(server, samples={DAS_C: "data"})
+    chunks = [{(379000, 1), (379000, 2)}, {(379000, 2), (379000, 3)}, {(379001, 1)}, set()]
+    manifest, _ = production(reg, DAS_C, lumis=chunks)
+    straggler = ho.chunk_id(file_uuid(9), 0, 10)
+    ho.send(reg, DAS_C, reg["samples"][DAS_C]["lumi"], [ho.marker_fill(straggler, "379002", "5", names=("chunk", "run", "lumi"))],
+            ["t", DAS_C, "lumi", straggler], ("-", straggler, "done"))
+    assert ho.collect(reg, {DAS_C: manifest}, str(tmp_path / "F")) == 0
+    record = load(tmp_path / "F" / final_name("Data"))["Muon0"]["lumi"]
+    assert record.dtype == np.uint32 and record.tolist() == [[379000, 1], [379000, 2], [379000, 3], [379001, 1]]
+    out = capsys.readouterr().out
+    assert "lumi records of 1 chunks that are not done" in out and straggler in out
+
+
+def test_lumi_record_absent_or_empty(server, synthetic, tmp_path, monkeypatch, capsys):
+    reg = synthetic_registry(server, samples={DAS_C: "data"})
+    manifest, _ = production(reg, DAS_C, n_files=1)
+    assert ho.collect(reg, {DAS_C: manifest}, str(tmp_path / "N")) == 0
+    assert "lumi" not in load(tmp_path / "N" / final_name("Data"))["Muon0"]
+    assert "2 done chunks without a lumi record" in capsys.readouterr().out
+    reg = synthetic_registry(server, samples={DAS_C: "data"})
+    counts = lumi_fills(monkeypatch, reg, DAS_C)
+    manifest, _ = production(reg, DAS_C, n_files=1, lumis=[set(), set()])
+    assert counts == [1, 1]
+    assert ho.collect(reg, {DAS_C: manifest}, str(tmp_path / "E")) == 0
+    record = load(tmp_path / "E" / final_name("Data"))["Muon0"]["lumi"]
+    expected = lumi_record.as_array(set())
+    assert record.shape == (0, 2) and record.dtype == expected.dtype
+    reg = synthetic_registry(server, samples={DAS_C: "data"})
+    manifest, _ = production(reg, DAS_C, n_files=1, lumis=[{(379000, 4)}, set()])
+    assert ho.collect(reg, {DAS_C: manifest}, str(tmp_path / "M")) == 0
+    assert load(tmp_path / "M" / final_name("Data"))["Muon0"]["lumi"].tolist() == [[379000, 4]]
+    assert "without a lumi record" not in capsys.readouterr().out
+
+
+def test_lumi_record_mc_and_entries(server, synthetic, tmp_path):
+    reg = synthetic_registry(server, samples={DAS_S: "mc"})
+    assert "lumi" not in reg["samples"][DAS_S]
+    md = meta(reg, DAS_S, file_uuid(0), 0, 10)
+    ho.begin_job(reg, DAS_S, {"f0": [ho.chunk_id(file_uuid(0), 0, 10)]}, {"f0": file_record(0, events=10, runs_sumw=1.0)})
+    ho.begin_chunk(reg, DAS_S, md, ["nominal"])
+    send_pass(reg, DAS_S, md)
+    for lumis in (set(), {(379000, 1)}):
+        with pytest.raises(RuntimeError, match="lumis are recorded for data only"):
+            ho.end_chunk(reg, DAS_S, md, 10, sumw=1.0, lumis=lumis)
+    reg = synthetic_registry(server, samples={DAS_C: "data", DAS_D: "data"})
+    m_c, _ = production(reg, DAS_C, n_files=1, base=0, lumis=[{(379000, 1)}, {(379000, 2)}])
+    m_d, _ = production(reg, DAS_D, n_files=1, base=1, lumis=[{(380000, 1)}, {(379000, 2)}])
+    assert ho.collect(reg, {DAS_C: m_c, DAS_D: m_d}, str(tmp_path / "F")) == 0
+    record = load(tmp_path / "F" / final_name("Data"))["Muon0"]["lumi"]
+    assert record.tolist() == [[379000, 1], [379000, 2], [380000, 1]]
+
+
+@pytest.mark.skipif(not os.path.exists(LOCAL_2018), reason="local 2018 data file not available")
+def test_process_passes_lumis(server, tmp_path, monkeypatch):
+    import uproot
+    from coffea import processor
+    from coffea.lumi_tools import LumiMask
+    from coffea.nanoevents import NanoAODSchema
+    das = "/DoubleMuon/Run2018C-E2ELocal-v1/NANOAOD"
+    options = dict(OPTIONS, era="2018", version="v9")
+    reg = ho.register(server, "t", options, {das: "data"}, uuid.uuid4().hex)
+    fileset = {"DoubleMuon": {"files": {LOCAL_2018: "Events"}, "metadata": {"is_data": True, "is_signal": False,
+                                                                              "is_flashsim": False}}}
+    runner = processor.Runner(processor.IterativeExecutor(), chunksize=50000, schema=NanoAODSchema, format="root")
+    items = list(runner.preprocess(fileset, treename="Events"))
+    with uproot.open(LOCAL_2018) as f:
+        events = f["Events"].num_entries
+        arrays = f["Events"].arrays(["run", "luminosityBlock"], library="np")
+    record = {"fileuuid": str(uuid.UUID(bytes=items[0].fileuuid)), "events": events, "runs_sumw": None,
+              "runs_count": None}
+    ho.begin_job(reg, das, ho.expected_chunks(items, {LOCAL_2018: LOCAL_2018}), {LOCAL_2018: record})
+    proc = wzmod.wzinclusive_processor(era="2018", version="v9", run_period="C", histserv_registry=reg,
+                                       histserv_sample=das)
+    mask = LumiMask(proc._lumimask_path)(arrays["run"], arrays["luminosityBlock"])
+    independent = {(int(r), int(lumi)) for r, lumi in zip(arrays["run"][mask], arrays["luminosityBlock"][mask])}
+    calls = []
+    real_end_chunk = ho.end_chunk
+
+    def recording(*args, **kwargs):
+        calls.append(kwargs.get("lumis"))
+        return real_end_chunk(*args, **kwargs)
+    monkeypatch.setattr(ho, "end_chunk", recording)
+    assert runner(items, processor_instance=proc) == {"DoubleMuon": {}}
+    assert calls and all(lumis is not None for lumis in calls)
+    assert set().union(*calls) == independent
+    assert ho.collect(reg, {das: [LOCAL_2018]}, str(tmp_path / "F"), per_entry=True) == 0
+    content = load(tmp_path / "F" / (pk.sample_file_stem(das) + "_histograms.pkl.gz"))["DoubleMuon"]
+    assert content["lumi"].tolist() == sorted(map(list, independent))

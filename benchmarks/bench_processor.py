@@ -42,6 +42,8 @@ CANCELLATION_RTOL = 1e-9
 SUMW_RUNS_TOLERANCE = 1e-6
 MAX_LISTED_CELLS = 50
 RANDOM_SEED = 1
+LUMI_KEY = "lumi"
+RECORD_KEYS = (LUMI_KEY,)
 
 
 def maxrss_mb():
@@ -115,10 +117,14 @@ def install_synthetic_eft(module, n_operators, nan_modulus):
 
 # ---------------------------------------------------------------- instrumentation
 
+def hists_of(content):
+    return {k: h for k, h in content.items() if k not in RECORD_KEYS}
+
+
 def histogram_bytes(output, suffix=None):
     total = 0
     for hists in output.values():
-        for key, h in hists.items():
+        for key, h in hists_of(hists).items():
             if suffix is None or key.endswith(suffix):
                 total += h.view(flow=True).nbytes
     return total
@@ -295,12 +301,23 @@ def cmd_run(args):
         "output": output, "expected": inst.expected() if inst else None, "range": (args.start, args.stop),
         "n_events": n_events, "timings": timings, "flags": run_flags(args),
     }
+    if args.is_data:
+        dump["expected_lumis"] = expected_lumis(args.file, args.start, args.stop, processor_instance._lumimask_path)
     if args.dump:
         save_dump(dump, args.dump)
     if args.json:
         with open(args.json, "w") as f:
             json.dump(timings, f, indent=1, default=str)
     return 0
+
+
+def expected_lumis(path, start, stop, golden_json):
+    import uproot
+    from coffea.lumi_tools import LumiMask
+    with uproot.open(path) as f:
+        arrays = f["Events"].arrays(["run", "luminosityBlock"], entry_start=start, entry_stop=stop, library="np")
+    mask = LumiMask(golden_json)(arrays["run"], arrays["luminosityBlock"])
+    return lumi_array(zip(arrays["run"][mask], arrays["luminosityBlock"][mask]))
 
 
 # ---------------------------------------------------------------- comparison
@@ -622,7 +639,7 @@ def check_vacuity(rdump, odump, res, report=True):
     expected = sorted(set(itertools.chain.from_iterable(rexp.values())))
     present = set()
     for hists in rdump["output"].values():
-        for h in hists.values():
+        for h in hists_of(hists).values():
             for ax in h.axes:
                 if ax.name == "systematic":
                     present.update(ax)
@@ -634,7 +651,7 @@ def check_vacuity(rdump, odump, res, report=True):
             continue
         total, nhists, has_nan, same = 0.0, 0, False, True
         for hists in rdump["output"].values():
-            for h in hists.values():
+            for h in hists_of(hists).values():
                 sl = label_slices(h, label)
                 if sl is None:
                     continue
@@ -656,8 +673,50 @@ def check_vacuity(rdump, odump, res, report=True):
             res.note("labels identical to nominal: " + ", ".join(identical_to_nominal))
 
 
+def lumi_array(pairs):
+    return np.unique(np.asarray(list(pairs), dtype=np.uint32).reshape(-1, 2), axis=0)
+
+
+def record_is_data(record):
+    return record["kind"] == "data" if "kind" in record else record["sumw"] < 0
+
+
+def compare_lumi(ds, rlumi, olumi, is_data, res, check=False, require=False, expected=None, records=False):
+    if olumi is not None and is_data is False:
+        res.fail("lumi", ds, "lumi record in MC")
+    if rlumi is not None and olumi is not None:
+        if not np.array_equal(lumi_array(rlumi), lumi_array(olumi)):
+            res.fail("lumi", ds, "lumi record differs between R and O")
+    elif olumi is not None:
+        res.note(f"{ds}: lumi record only in O")
+    elif rlumi is not None:
+        res.note(f"{ds}: lumi record only in R")
+    if not is_data or not (check or require):
+        return
+    if records:
+        if require and olumi is None:
+            res.fail("lumi", ds, "lumi record required, absent")
+        elif require and rlumi is None:
+            res.fail("lumi", ds, "lumi record required, absent in R")
+        elif olumi is None:
+            res.note(f"{ds}: no lumi record")
+        return
+    if expected is None:
+        if require:
+            res.fail("lumi", ds, "expected_lumis missing")
+        else:
+            res.note(f"{ds}: expected_lumis missing")
+    if olumi is None:
+        if require:
+            res.fail("lumi", ds, "lumi record required, absent")
+        else:
+            res.note(f"{ds}: no lumi record")
+    elif expected is not None and not np.array_equal(lumi_array(olumi), lumi_array(expected)):
+        res.fail("lumi", ds, "lumi record differs from expected_lumis")
+
+
 def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), removed=(), restored=(),
-                  identical=False, report=True, order_tolerant=False):
+                  identical=False, report=True, order_tolerant=False, lumi_record=False, require_lumi_record=False):
     hist_map = hist_map or {}
     axis_map = axis_map or {}
     sets = coverage(changed, removed, restored)
@@ -666,14 +725,19 @@ def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), remove
     rout, oout = rdump["output"], odump["output"]
     if set(rout) != set(oout):
         res.fail(1, "-", f"dataset keys differ: {sorted(rout)} vs {sorted(oout)}")
+    is_data = (odump.get("flags") or {}).get("is_data")
     for ds in sorted(set(rout) & set(oout)):
+        compare_lumi(ds, rout[ds].get(LUMI_KEY), oout[ds].get(LUMI_KEY), is_data, res, lumi_record,
+                     require_lumi_record, odump.get("expected_lumis"))
         rmapped = {}
         for k, h in rout[ds].items():
+            if k in RECORD_KEYS:
+                continue
             mk = map_key(k, hist_map)
             if mk in rmapped:
                 res.fail(1, mk, f"two R keys map to {mk}: {rmapped[mk][0]}, {k}")
             rmapped[mk] = (k, h)
-        ohists = oout[ds]
+        ohists = {k: h for k, h in oout[ds].items() if k not in RECORD_KEYS}
         rkeys = set(rmapped) - covered
         okeys = set(ohists) - covered
         for k in sorted(rkeys - okeys):
@@ -762,7 +826,9 @@ def cmd_compare(args):
     hist_map, axis_map = load_map(args.rename_map)
     res = compare_dumps(load_dump(args.ref), load_dump(args.opt), hist_map, axis_map,
                         split_names(args.changed), split_names(args.removed), split_names(args.restored),
-                        identical=args.identical, order_tolerant=args.order_tolerant)
+                        identical=args.identical, order_tolerant=args.order_tolerant,
+                        lumi_record=args.lumi_record or args.require_lumi_record,
+                        require_lumi_record=args.require_lumi_record)
     print_result(res)
     return 0 if res.passed else 1
 
@@ -861,7 +927,7 @@ def modify_values(hists, key):
 
 def drop_label_everywhere(dump, label):
     for hists in dump["output"].values():
-        for key, h in list(hists.items()):
+        for key, h in hists_of(hists).items():
             for i, ax in enumerate(h.axes):
                 if ax.name == "systematic" and label in ax:
                     hists[key] = rebuild(h, i, [lab for lab in ax if lab != label])
@@ -869,7 +935,7 @@ def drop_label_everywhere(dump, label):
 
 def zero_label_everywhere(dump, label, keep_nan=False):
     for hists in dump["output"].values():
-        for key, h in list(hists.items()):
+        for key, h in hists_of(hists).items():
             for i, ax in enumerate(h.axes):
                 if ax.name == "systematic" and label in ax:
                     h2 = copy.deepcopy(h)
@@ -1250,7 +1316,65 @@ def cmd_selftest(args):
         failures += not ok
         print(f"[{'ok' if ok else 'MISMATCH'}] {desc} (synthetic): expected {verdict}, "
               f"got {'PASS' if res.passed else 'FAIL ' + text}")
-    print(f"selftest: {len(rows) + len(sumw_rows)} rows, {failures} mismatches")
+    pairs = {(319450, 1), (319450, 2), (319451, 7)}
+
+    def lumi_dump(lumi=None, expected=None, is_data=True):
+        dump = {"output": {"ds": {} if lumi is None else {LUMI_KEY: set(lumi)}},
+                "expected": {"nominal": [], "shift": [], "weight": []}, "flags": {"is_data": is_data}}
+        if expected is not None:
+            dump["expected_lumis"] = lumi_array(expected)
+        return dump
+
+    def dumps_case(r, o, check=False, require=False):
+        return compare_dumps(r, o, report=False, lumi_record=check or require, require_lumi_record=require)
+
+    def records_case(rrec, orec, require=False):
+        res = Result()
+        compare_lumi("ds", rrec.get(LUMI_KEY), orec.get(LUMI_KEY), record_is_data(orec), res, require, require,
+                     records=True)
+        return res
+
+    fewer = sorted(pairs)[1:]
+    lumi_rows = [
+        ("data record with lumi in O only, no flag", lambda: dumps_case(lumi_dump(), lumi_dump(pairs, pairs)),
+         ("PASS", "lumi record only in O")),
+        ("record removed from O, --lumi-record", lambda: dumps_case(lumi_dump(), lumi_dump(None, pairs), check=True),
+         ("PASS", "no lumi record")),
+        ("O's record equal to expected_lumis, --lumi-record",
+         lambda: dumps_case(lumi_dump(), lumi_dump(pairs, pairs), check=True), ("PASS",)),
+        ("one pair removed from O's record, --lumi-record",
+         lambda: dumps_case(lumi_dump(), lumi_dump(fewer, pairs), check=True),
+         ("FAIL", "lumi", "differs from expected_lumis")),
+        ("record removed from O, --require-lumi-record",
+         lambda: dumps_case(lumi_dump(), lumi_dump(None, pairs), require=True),
+         ("FAIL", "lumi", "lumi record required, absent")),
+        ("O's record equal to expected_lumis, --require-lumi-record",
+         lambda: dumps_case(lumi_dump(), lumi_dump(pairs, pairs), require=True), ("PASS",)),
+        ("MC dump without a record, --require-lumi-record",
+         lambda: dumps_case(lumi_dump(is_data=False), lumi_dump(is_data=False), require=True), ("PASS",)),
+        ("data dump with a record and without expected_lumis, --require-lumi-record",
+         lambda: dumps_case(lumi_dump(), lumi_dump(pairs), require=True), ("FAIL", "lumi", "expected_lumis missing")),
+        ("data dataset record, kind data, sumw > 0, no lumi record, --require-lumi-record",
+         lambda: records_case({"sumw": 1.0, "kind": "data"}, {"sumw": 1.0, "kind": "data"}, require=True),
+         ("FAIL", "lumi", "lumi record required, absent")),
+        ("both records present, differing by one pair",
+         lambda: dumps_case(lumi_dump(pairs, pairs), lumi_dump(fewer, pairs)), ("FAIL", "lumi", "between R and O")),
+        ("lumi record in an MC dataset of O",
+         lambda: records_case({"sumw": 1.0}, {"sumw": 1.0, LUMI_KEY: lumi_array(pairs)}),
+         ("FAIL", "lumi", "lumi record in MC")),
+    ]
+    for desc, case, verdict in lumi_rows:
+        res = case()
+        rules = sorted({f[0] for f in res.failures})
+        text = " | ".join(f"{f[0]}:{f[1]}:{f[2]}" for f in res.failures) + " | " + " | ".join(res.notes)
+        if verdict[0] == "PASS":
+            ok = res.passed and (len(verdict) == 1 or verdict[1] in text)
+        else:
+            ok = (not res.passed) and rules == [verdict[1]] and (len(verdict) < 3 or verdict[2] in text)
+        failures += not ok
+        print(f"[{'ok' if ok else 'MISMATCH'}] {desc} (synthetic): expected {verdict}, "
+              f"got {'PASS' if res.passed else 'FAIL'}: {text}")
+    print(f"selftest: {len(rows) + len(sumw_rows) + len(lumi_rows)} rows, {failures} mismatches")
     return 1 if failures else 0
 
 
@@ -1533,7 +1657,7 @@ def cmd_scale_worker(args):
 
 def native_chunked_size(output):
     from hist.chunked import ChunkedHist
-    natives = {ds: {k: ChunkedHist.from_hist(h) for k, h in hists.items()} for ds, hists in output.items()}
+    natives = {ds: {k: ChunkedHist.from_hist(h) for k, h in hists_of(hists).items()} for ds, hists in output.items()}
     return len(gzip.compress(pickle.dumps(natives, protocol=pickle.HIGHEST_PROTOCOL), 1))
 
 
@@ -1780,6 +1904,10 @@ def main(argv=None):
     p.add_argument("--order-tolerant", action="store_true",
                    help="rule 2t: values within 1e-9 relative (for different summation orders); strict mismatches "
                         "are printed as information and failing cells are classed cancellation or real")
+    p.add_argument("--lumi-record", action="store_true",
+                   help="data dumps: a lumi record present in O must equal the dump's expected_lumis")
+    p.add_argument("--require-lumi-record", action="store_true",
+                   help="as --lumi-record, and every data dump must carry a lumi record and expected_lumis")
     p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("selftest", help="compare against mutated copies of real dumps")

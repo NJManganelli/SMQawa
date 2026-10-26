@@ -170,7 +170,7 @@ class JobCounter:
         self.target_sent = 0
         self.pass_counts = None
         self.totals = {"target": {}, "accounting": {}}
-        self.calls = {"target": 0, "ledger": 0, "sumw": 0}
+        self.calls = {"target": 0, "ledger": 0, "sumw": 0, "lumi": 0}
         self.targets = set()
 
     def line(self, record):
@@ -248,7 +248,7 @@ def install_c4_hooks(ho, histserv, counter, registry, key, args):
 
     def injected_fill_many(self, fills, **kwargs):
         role = "target" if self.hist_id in counter.targets else (
-            "ledger" if self.hist_id == entry["ledger"] else "sumw")
+            "ledger" if self.hist_id == entry["ledger"] else "lumi" if self.hist_id == entry.get("lumi") else "sumw")
         counter.calls[role] += 1
         if role == "ledger" and state["failed"] and args.fail_ledger_after_poison:
             raise InjectedRpcError(grpc.StatusCode.UNAVAILABLE, "injected ledger UNAVAILABLE after the poison")
@@ -399,8 +399,8 @@ def cmd_job(args):
         record.update(counts=counter.totals, calls=counter.calls, returned=sorted(out),
                       returned_empty=all(not v for v in out.values()))
     else:
-        write_pickle(f"histogram_{args.job_num}.pkl.gz",
-                     {ds: {"hist": content, "sumw": float(sumw)} for ds, content in out.items()})
+        record_of = getattr(wzmod, "dataset_record", lambda content, sumw: {"hist": content, "sumw": sumw})
+        write_pickle(f"histogram_{args.job_num}.pkl.gz", {ds: record_of(content, float(sumw)) for ds, content in out.items()})
         record["output_bytes"] = os.path.getsize(f"histogram_{args.job_num}.pkl.gz")
     record["write"] = time.perf_counter() - t2
     if inst is not None:
@@ -764,7 +764,8 @@ def sent_in_first_passes(result, n):
 
 
 def compare_outputs(ref_paths, opt_paths, identical=False, order_tolerant=False, sumw_mode="strict", rename_map=None,
-                    changed=(), removed=(), restored=(), report=False, expected=None):
+                    changed=(), removed=(), restored=(), report=False, expected=None, lumi_record=False,
+                    require_lumi_record=False):
     ref, opt = load_side(ref_paths), load_side(opt_paths)
     res = bench_processor.Result()
     for side, (records, problems) in (("R", ref), ("O", opt)):
@@ -786,6 +787,10 @@ def compare_outputs(ref_paths, opt_paths, identical=False, order_tolerant=False,
         sumw_res = bench_processor.compare_sumw({ds: rec["sumw"] for ds, rec in ref.items()},
                                                 {ds: rec["sumw"] for ds, rec in opt.items()}, sumw_mode)
         res.failures += sumw_res.failures
+    for ds in sorted(opt):
+        bench_processor.compare_lumi(ds, ref.get(ds, {}).get(bench_processor.LUMI_KEY),
+                                     opt[ds].get(bench_processor.LUMI_KEY), bench_processor.record_is_data(opt[ds]),
+                                     res, lumi_record or require_lumi_record, require_lumi_record, records=True)
     return res
 
 
@@ -1148,7 +1153,8 @@ def cmd_compare(args):
                           rename_map=args.rename_map, changed=bench_processor.split_names(args.changed),
                           removed=bench_processor.split_names(args.removed),
                           restored=bench_processor.split_names(args.restored), report=True,
-                          expected=expected_of(args.expected) if args.expected else None)
+                          expected=expected_of(args.expected) if args.expected else None,
+                          lumi_record=args.lumi_record, require_lumi_record=args.require_lumi_record)
     bench_processor.print_result(res)
     return 0 if res.passed else 1
 
@@ -1376,6 +1382,9 @@ def main(argv=None):
     p.add_argument("--order-tolerant", action="store_true")
     p.add_argument("--sumw-mode", default="strict", choices=bench_processor.SUMW_MODES + ("skip",))
     p.add_argument("--expected", nargs="+", help="job records (job_<n>.json) whose expected labels rule 4 checks")
+    p.add_argument("--lumi-record", action="store_true", help="print data datasets without a lumi record")
+    p.add_argument("--require-lumi-record", action="store_true",
+                   help="every data dataset must carry a lumi record on both sides, and the two must be equal")
     p = sub.add_parser("report", help="report.md and plots over run directories")
     p.add_argument("--runs", nargs="+", required=True)
     p.add_argument("--out", required=True)

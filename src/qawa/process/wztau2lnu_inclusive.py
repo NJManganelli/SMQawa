@@ -40,6 +40,7 @@ from qawa.met_shim import prepare_met_for_factory
 from qawa import uproot_float16_patch  # noqa: F401
 from qawa.flashsim_shim import patch_flashsim
 from qawa.eft_weights import points_from_events, stack_named_weights
+from qawa import lumi_record
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -570,6 +571,14 @@ def merge_histogram_sets(outputs):
             for key, h in histos.items():
                 keys.setdefault(key, []).append(h)
     return {dataset: {key: merge_histograms(hists) for key, hists in keys.items()} for dataset, keys in grouped.items()}
+
+
+def dataset_record(content, sumw):
+    record = {"hist": content, "sumw": sumw}
+    pairs = content.pop(lumi_record.LUMI_KEY, None)
+    if pairs is not None:
+        record[lumi_record.LUMI_KEY] = lumi_record.as_array(pairs)
+    return record
 
 
 class wzinclusive_processor(processor.ProcessorABC):
@@ -2396,11 +2405,14 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # IF is_data is True, shortcut with process_shift for nominal
         if is_data:
+            lumis = lumi_record.lumi_pairs(event.run, event.luminosityBlock, self._lumimask(event.run, event.luminosityBlock))
             if self.histserv_registry is None:
-                return self.process_shift(event, None)
+                output = self.process_shift(event, None)
+                output[dataset_name][lumi_record.LUMI_KEY] = lumis
+                return output
             histserv_output.begin_chunk(self.histserv_registry, self.histserv_sample, event.metadata, ["nominal"])
             output = self.process_shift(event, None)
-            histserv_output.end_chunk(self.histserv_registry, self.histserv_sample, event.metadata, entries=len(event))
+            histserv_output.end_chunk(self.histserv_registry, self.histserv_sample, event.metadata, entries=len(event), lumis=lumis)
             return output
 
         #Tau corrections are applied only to Monte Carlo, not to data, hence post-process_shift
