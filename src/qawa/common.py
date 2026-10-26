@@ -461,7 +461,8 @@ class ewk_corrector:
                 "x":  ak.zeros_like(x1), 
                 "y":  ak.zeros_like(x1),
                 "z":  x1 * self.energy,
-                "t":  x1 * self.energy
+                "t":  x1 * self.energy,
+                "charge": ak.zeros_like(x1)
             },
             with_name="Candidate",
             behavior=candidate.behavior
@@ -472,7 +473,8 @@ class ewk_corrector:
                 "x":  ak.zeros_like(x2), 
                 "y":  ak.zeros_like(x2),
                 "z": -x2 * self.energy,
-                "t":  x2 * self.energy
+                "t":  x2 * self.energy,
+                "charge": ak.zeros_like(x2),
             },
             with_name="Candidate",
             behavior=candidate.behavior,
