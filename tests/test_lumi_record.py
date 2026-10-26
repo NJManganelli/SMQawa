@@ -199,3 +199,18 @@ def test_optional_record_and_csv(tmp_path):
     second = {"DoubleMuon": dict(first["DoubleMuon"], lumi=lumi_record.as_array({(RUN, 4)}))}
     assert datadriven.check_reprocessed(first, second) == []
     assert datadriven.check_reprocessed(second, first) == []
+
+
+@needs(LOCAL_2018)
+def test_kind_record(local_output):
+    import qawa.process.wztau2lnu_inclusive as wzmod
+    from coffea.processor import accumulate
+    _, out = local_output
+    assert out[wzmod.KIND_KEY] == {"data"}
+    record = wzmod.dataset_record("DoubleMuon", dict(out), -1.0)
+    assert record[wzmod.KIND_KEY] == "data" and set(record["hist"]).isdisjoint({wzmod.KIND_KEY, lumi_record.LUMI_KEY})
+    assert record[lumi_record.LUMI_KEY].dtype == np.uint32
+    chunks = accumulate([{"D": {wzmod.KIND_KEY: {"mc"}}}, {"D": {wzmod.KIND_KEY: {"eft"}}}])
+    with pytest.raises(RuntimeError, match=r"dataset D: its chunks report several kinds \['eft', 'mc'\]"):
+        wzmod.dataset_record("D", chunks["D"], 1.0)
+    assert "kind" not in wzmod.dataset_record("D", {}, 1.0)

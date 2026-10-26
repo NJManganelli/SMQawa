@@ -848,7 +848,8 @@ def test_registered_keys_equal_output_keys(mode, monkeypatch):
     proc = wzmod.wzinclusive_processor(**options, **kwargs)
     dataset = "Muon0_Run2024C" if kind == "data" else "D"
     out = proc.process(file_events(path, 300, dataset, kind == "data", kind in ("signal", "eft")))[dataset]
-    assert set(out) - {lumi_record.LUMI_KEY} == set(ho.templates(ho.make_processor(options), kind))
+    assert out[wzmod.KIND_KEY] == {kind}
+    assert set(out) - {lumi_record.LUMI_KEY, wzmod.KIND_KEY} == set(ho.templates(ho.make_processor(options), kind))
 
 
 def assert_close_hist(a, b):
@@ -884,6 +885,7 @@ def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
                            for item in items)
     ho.begin_job(reg, das, ho.expected_chunks(items, {M1_FILE: M1_FILE}), {M1_FILE: record})
     c1 = runner(items, processor_instance=wzmod.wzinclusive_processor(era="2024", version="v15"))[dataset]
+    assert c1.pop(wzmod.KIND_KEY) == {"signal"}
     c4_proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=das)
     results = []
     real_send = ho.send_histogram
