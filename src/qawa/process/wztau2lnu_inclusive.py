@@ -61,6 +61,7 @@ from qawa.polarization import (
 # _RECO_METHODS = ("smp20", "transvmlv")
 
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
+KIND_KEY = "kind"
 
 
 def dd_targetdddy_tag(compound_name):
@@ -573,11 +574,16 @@ def merge_histogram_sets(outputs):
     return {dataset: {key: merge_histograms(hists) for key, hists in keys.items()} for dataset, keys in grouped.items()}
 
 
-def dataset_record(content, sumw):
+def dataset_record(dataset, content, sumw):
     record = {"hist": content, "sumw": sumw}
     pairs = content.pop(lumi_record.LUMI_KEY, None)
     if pairs is not None:
         record[lumi_record.LUMI_KEY] = lumi_record.as_array(pairs)
+    kinds = content.pop(KIND_KEY, None)
+    if kinds is not None:
+        if len(kinds) != 1:
+            raise RuntimeError(f"dataset {dataset}: its chunks report several kinds {sorted(kinds)}")
+        (record[KIND_KEY],) = kinds
     return record
 
 
@@ -2409,6 +2415,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             if self.histserv_registry is None:
                 output = self.process_shift(event, None)
                 output[dataset_name][lumi_record.LUMI_KEY] = lumis
+                output[dataset_name][KIND_KEY] = {"data"}
                 return output
             histserv_output.begin_chunk(self.histserv_registry, self.histserv_sample, event.metadata, ["nominal"])
             output = self.process_shift(event, None)
@@ -2536,6 +2543,9 @@ class wzinclusive_processor(processor.ProcessorABC):
         output = merge_histogram_sets(shifts)
         if self.histserv_registry is not None:
             histserv_output.end_chunk(self.histserv_registry, self.histserv_sample, event.metadata, entries=chunk_entries, sumw=chunk_sumw)
+        else:
+            kind = "eft" if points_from_events(event)[0] is not None else "signal" if is_signal else "mc"
+            output[dataset_name][KIND_KEY] = {kind}
         return output
 
 

@@ -399,8 +399,8 @@ def cmd_job(args):
         record.update(counts=counter.totals, calls=counter.calls, returned=sorted(out),
                       returned_empty=all(not v for v in out.values()))
     else:
-        record_of = getattr(wzmod, "dataset_record", lambda content, sumw: {"hist": content, "sumw": sumw})
-        write_pickle(f"histogram_{args.job_num}.pkl.gz", {ds: record_of(content, float(sumw)) for ds, content in out.items()})
+        record_of = getattr(wzmod, "dataset_record", lambda ds, content, sumw: {"hist": content, "sumw": sumw})
+        write_pickle(f"histogram_{args.job_num}.pkl.gz", {ds: record_of(ds, content, float(sumw)) for ds, content in out.items()})
         record["output_bytes"] = os.path.getsize(f"histogram_{args.job_num}.pkl.gz")
     record["write"] = time.perf_counter() - t2
     if inst is not None:
@@ -791,6 +791,8 @@ def compare_outputs(ref_paths, opt_paths, identical=False, order_tolerant=False,
         bench_processor.compare_lumi(ds, ref.get(ds, {}).get(bench_processor.LUMI_KEY),
                                      opt[ds].get(bench_processor.LUMI_KEY), bench_processor.record_is_data(opt[ds]),
                                      res, lumi_record or require_lumi_record, require_lumi_record, records=True)
+    for ds in sorted(set(ref) & set(opt)):
+        bench_processor.compare_kind(ds, ref[ds].get(bench_processor.KIND_KEY), opt[ds].get(bench_processor.KIND_KEY), res)
     return res
 
 

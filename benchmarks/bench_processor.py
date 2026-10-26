@@ -43,7 +43,9 @@ SUMW_RUNS_TOLERANCE = 1e-6
 MAX_LISTED_CELLS = 50
 RANDOM_SEED = 1
 LUMI_KEY = "lumi"
-RECORD_KEYS = (LUMI_KEY,)
+KIND_KEY = "kind"
+KINDS = ("data", "mc", "signal", "eft")
+RECORD_KEYS = (LUMI_KEY, KIND_KEY)
 
 
 def maxrss_mb():
@@ -715,6 +717,30 @@ def compare_lumi(ds, rlumi, olumi, is_data, res, check=False, require=False, exp
         res.fail("lumi", ds, "lumi record differs from expected_lumis")
 
 
+def kind_value(ds, kind, side, res):
+    if kind is None:
+        return None
+    if isinstance(kind, (set, frozenset)):
+        if len(kind) != 1:
+            res.fail("kind", ds, f"{side}: kind set holds {len(kind)} values {sorted(kind)}")
+            return None
+        (kind,) = kind
+    if kind not in KINDS:
+        res.fail("kind", ds, f"{side}: unknown kind {kind!r}")
+        return None
+    return kind
+
+
+def compare_kind(ds, rkind, okind, res):
+    r, o = kind_value(ds, rkind, "R", res), kind_value(ds, okind, "O", res)
+    if r is not None and o is not None and r != o:
+        res.fail("kind", ds, f"kind differs: R {r}, O {o}")
+    elif okind is not None and rkind is None:
+        res.note(f"{ds}: kind only in O")
+    elif rkind is not None and okind is None:
+        res.note(f"{ds}: kind only in R")
+
+
 def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), removed=(), restored=(),
                   identical=False, report=True, order_tolerant=False, lumi_record=False, require_lumi_record=False):
     hist_map = hist_map or {}
@@ -729,6 +755,7 @@ def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), remove
     for ds in sorted(set(rout) & set(oout)):
         compare_lumi(ds, rout[ds].get(LUMI_KEY), oout[ds].get(LUMI_KEY), is_data, res, lumi_record,
                      require_lumi_record, odump.get("expected_lumis"))
+        compare_kind(ds, rout[ds].get(KIND_KEY), oout[ds].get(KIND_KEY), res)
         rmapped = {}
         for k, h in rout[ds].items():
             if k in RECORD_KEYS:
@@ -1334,6 +1361,11 @@ def cmd_selftest(args):
                      records=True)
         return res
 
+    def kind_case(rrec, orec):
+        res = Result()
+        compare_kind("ds", rrec.get(KIND_KEY), orec.get(KIND_KEY), res)
+        return res
+
     fewer = sorted(pairs)[1:]
     lumi_rows = [
         ("data record with lumi in O only, no flag", lambda: dumps_case(lumi_dump(), lumi_dump(pairs, pairs)),
@@ -1362,6 +1394,15 @@ def cmd_selftest(args):
         ("lumi record in an MC dataset of O",
          lambda: records_case({"sumw": 1.0}, {"sumw": 1.0, LUMI_KEY: lumi_array(pairs)}),
          ("FAIL", "lumi", "lumi record in MC")),
+    ]
+    lumi_rows += [
+        ("records whose kind differs", lambda: kind_case({"kind": "mc"}, {"kind": "signal"}),
+         ("FAIL", "kind", "kind differs")),
+        ("a kind in O only", lambda: kind_case({}, {"kind": "data"}), ("PASS", "kind only in O")),
+        ("a processor output whose kind set holds two values", lambda: kind_case({}, {"kind": {"mc", "eft"}}),
+         ("FAIL", "kind", "holds 2 values")),
+        ("a kind outside data, mc, signal and eft", lambda: kind_case({"kind": "MC"}, {"kind": "MC"}),
+         ("FAIL", "kind", "unknown kind")),
     ]
     for desc, case, verdict in lumi_rows:
         res = case()
