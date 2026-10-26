@@ -15,6 +15,7 @@ import numpy
 from histserv import Client
 
 import qawa.datadriven as datadriven
+import qawa.lumi_record as lumi_record
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as production_keys
 
@@ -43,11 +44,13 @@ DONE_FILE_TEMPLATE = "histserv_done_{}.json"
 COLLECT_FILE = "collect.json"
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 STANDARD_KINDS = ("data", "mc", "signal")
+EMPTY_LUMI_LABEL = "-"
 MAX_LISTED_NAMES = 20
 INCOMPLETE_WARNING = ("not for physics results: the hists hold partial contributions of chunks that are not done or were "
                       "poisoned, which the sumw does not count")
 PARTIAL_STATEMENT = ("whole files or chunks were never processed: the hists and sumw cover exactly the done chunks, so MC is "
-                     "normalized to what this output holds and data to its lumi record")
+                     "normalized to what this output holds and data to its lumi record; a lumi section split across a done "
+                     "and a missing chunk is listed whole in the lumi record")
 
 CLIENTS = {}
 REMOTES = {}
@@ -191,6 +194,11 @@ def sumw_template():
                      entry_axis(), storage=hist.storage.Weight())
 
 
+def lumi_template():
+    return hist.Hist(*(hist.axis.StrCategory([], name=name, growth=True) for name in ("chunk", "run", "lumi")),
+                     entry_axis(), storage=hist.storage.Weight())
+
+
 def chunk_id(fileuuid, entrystart, entrystop):
     if not fileuuid:
         raise ValueError("C4 needs the chunk's fileuuid, which is empty")
@@ -328,6 +336,8 @@ def register(address, tag, options, samples, token, max_chunks=None, dd_file=Non
             "ledger": hist_client.init(ledger_template(), token=token, timeout=TIMEOUT).hist_id,
             "sumw": hist_client.init(sumw_template(), token=token, timeout=TIMEOUT).hist_id,
         }
+        if kind == "data":
+            registered[key]["lumi"] = hist_client.init(lumi_template(), token=token, timeout=TIMEOUT).hist_id
     return {"format": REGISTRY_FORMAT, "address": address, "token": token, "tag": tag, "options": dict(options),
             "max_chunks": max_chunks, "poison_exit_code": POISON_EXIT_CODE, "samples": registered}
 
@@ -558,7 +568,7 @@ def end_pass(pass_state):
     return result
 
 
-def end_chunk(registry, key, metadata, entries, sumw=None):
+def end_chunk(registry, key, metadata, entries, sumw=None, lumis=None):
     raise_if_poisoned()
     entry = entry_of(registry, key)
     chunk = metadata_chunk(metadata)
@@ -567,12 +577,19 @@ def end_chunk(registry, key, metadata, entries, sumw=None):
         raise RuntimeError(f"end_chunk: chunk {chunk} of {key} has passes that did not end")
     if (sumw is None) != (entry["kind"] == "data"):
         raise RuntimeError(f"end_chunk: sumw must be given exactly for non-data kinds ({key} is {entry['kind']})")
+    if lumis is not None and entry["kind"] != "data":
+        raise RuntimeError(f"end_chunk: lumis are recorded for data only ({key} is {entry['kind']})")
     where = ("-", chunk, "done")
     tag = registry["tag"]
     sums = [sumw_fill("-", chunk, "entries", entries)]
     if sumw is not None:
         sums.append(sumw_fill("-", chunk, "genweight", sumw))
     results = [send(registry, key, entry["sumw"], sums, [tag, key, "sumw_chunk", chunk], where)]
+    if lumis is not None:
+        names = ("chunk", "run", "lumi")
+        fills = [marker_fill(chunk, str(run), str(lumi), names=names) for run, lumi in sorted(lumis)]
+        fills = fills or [marker_fill(chunk, EMPTY_LUMI_LABEL, EMPTY_LUMI_LABEL, names=names)]
+        results.append(send(registry, key, entry["lumi"], fills, [tag, key, "lumi", chunk], where))
     results.append(send(registry, key, entry["ledger"], [marker_fill("-", chunk, "done", "-")],
                         [tag, key, "done", chunk], where))
     del ATTEMPTS[(os.getpid(), key, chunk)]
@@ -625,7 +642,10 @@ def snapshot_values(registry, hist_id):
 
 def entry_state(registry, key):
     entry = entry_of(registry, key)
-    return {"ledger": snapshot_values(registry, entry["ledger"]), "sumw": snapshot_values(registry, entry["sumw"])}
+    state = {"ledger": snapshot_values(registry, entry["ledger"]), "sumw": snapshot_values(registry, entry["sumw"])}
+    if "lumi" in entry:
+        state["lumi"] = snapshot_values(registry, entry["lumi"])
+    return state
 
 
 def booking(options, kind):
@@ -760,7 +780,23 @@ def audit(registry, key, manifest):
     else:
         sumw_total = sum(per_chunk[chunk]["genweight"] for chunk in done if "genweight" in per_chunk.get(chunk, {}))
     contributions = sum(len(passes.get(chunk, ())) for chunk in done)
-    coverage = {"chunks_done": len(done_set), "chunks_expected": len(expected_set), "files": files}
+    coverage = {"chunks_done": len(done_set), "chunks_expected": len(expected_set), "files": files, "lumi": None}
+    lumi_chunks = {}
+    for (chunk, run, lumi), value in state.get("lumi", {}).items():
+        if value > 0:
+            pairs = lumi_chunks.setdefault(chunk, set())
+            if run != EMPTY_LUMI_LABEL:
+                pairs.add((int(run), int(lumi)))
+    without = sorted(done_set - set(lumi_chunks))
+    not_done = sorted(set(lumi_chunks) - done_set)
+    if is_data and without:
+        print(f"{key}: information: {len(without)} done chunks without a lumi record")
+    if not_done:
+        print(f"{key}: information: lumi records of {len(not_done)} chunks that are not done, left out: "
+              + ", ".join(not_done[:MAX_LISTED_NAMES]) + (" ..." if len(not_done) > MAX_LISTED_NAMES else ""))
+    recorded = [lumi_chunks[chunk] for chunk in sorted(done_set) if chunk in lumi_chunks]
+    if recorded:
+        coverage["lumi"] = lumi_record.as_array(set().union(*recorded))
     return problems, sumw_total, contributions, state, coverage
 
 
@@ -883,6 +919,9 @@ def collect(registry, manifests, outdir, filename="latest", per_entry=False, all
                 record = content[dataset]
                 record["hist"] = wzmod.merge_histogram_sets([{dataset: record["hist"]}, {dataset: hists}])[dataset]
                 record["sumw"] += sumw_total
+                if coverage["lumi"] is not None:
+                    record["lumi"] = (coverage["lumi"] if "lumi" not in record
+                                      else lumi_record.union(record["lumi"], coverage["lumi"]))
                 if "production" in record:
                     production = record["production"]
                     production["chunks_done"] += coverage["chunks_done"]
@@ -891,6 +930,8 @@ def collect(registry, manifests, outdir, filename="latest", per_entry=False, all
                     production["entries"].append(key)
             else:
                 record = {"hist": hists, "sumw": sumw_total, "kind": entry["kind"]}
+                if coverage["lumi"] is not None:
+                    record["lumi"] = coverage["lumi"]
                 if truncated or cls != "complete":
                     record["production"] = {"truncated": truncated, "max_chunks": registry["max_chunks"], "class": cls,
                                             "chunks_done": coverage["chunks_done"],

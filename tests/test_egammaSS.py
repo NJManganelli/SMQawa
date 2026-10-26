@@ -352,7 +352,7 @@ def run_processor(events, run_period):
 
     def record(event, shift_name=""):
         seen[shift_name] = event
-        return {}
+        return {event.metadata["dataset"]: {}}
 
     p.process_shift = record
     p.process(events)
