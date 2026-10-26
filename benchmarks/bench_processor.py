@@ -226,7 +226,7 @@ class Instrument:
 
 def processor_kwargs(args):
     return dict(era=args.era, version=args.version, run_period=args.run_period,
-                split_by_charge=args.split_by_charge, split_FV=args.split_fv, pol=args.pol)
+                split_by_charge=args.split_by_charge, split_FV=args.split_fv, pol=args.pol, dd_file=args.dd_file)
 
 
 def run_flags(args):
@@ -236,6 +236,7 @@ def run_flags(args):
         "split_by_charge": args.split_by_charge, "split_fv": args.split_fv,
         "eft_synthetic": args.eft_synthetic, "eft_operators": args.eft_operators,
         "eft_nan_modulus": args.eft_nan_modulus, "no_instrument": args.no_instrument, "random_seed": RANDOM_SEED,
+        "dd_file": args.dd_file,
     }
 
 
@@ -1751,6 +1752,7 @@ def add_run_args(p):
     p.add_argument("--eft-synthetic", action="store_true")
     p.add_argument("--eft-operators", type=int, default=1)
     p.add_argument("--eft-nan-modulus", type=int, default=50)
+    p.add_argument("--dd-file", help="data-driven estimate (correctionlib JSON) replacing the era default (data)")
 
 
 def main(argv=None):

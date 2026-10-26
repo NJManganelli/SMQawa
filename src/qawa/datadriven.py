@@ -1,5 +1,6 @@
 import copy
 import correctionlib
+import itertools
 import json
 import os
 import re
@@ -411,6 +412,98 @@ def combine_era_corrections(per_era_ratios, eras, lumis, templates, is_probdy):
     return dict_for_hist_axis, ref_template
 
 
+def check_dd_file(path):
+    message = f"{path}: must be an uncompressed correctionlib JSON (.json): qawa.datadriven reads it with json.load"
+    if not str(path).endswith(".json"):
+        raise ValueError(message)
+    try:
+        with open(path) as f:
+            json.load(f)
+        correctionlib.CorrectionSet.from_file(str(path))
+    except (ValueError, RuntimeError) as error:
+        raise ValueError(message) from error
+
+
+def is_data_record(record):
+    if "kind" in record:
+        return record["kind"] == "data"
+    return record["sumw"] < 0
+
+
+def axes_layout(h):
+    return [(ax.name, tuple(np.asarray(ax.edges).tolist()) if ax.traits.ordered else None) for ax in h.axes]
+
+
+def nominal_cells(h):
+    index, kept = [], []
+    for ax in h.axes:
+        if ax.name == "systematic":
+            labels = list(ax)
+            if "nominal" not in labels:
+                return {}
+            index.append(labels.index("nominal"))
+            continue
+        index.append(slice(None) if ax.traits.ordered else slice(0, len(ax)))
+        kept.append(ax)
+    nominal = h.view(flow=True)[tuple(index)]
+    category = [i for i, ax in enumerate(kept) if not ax.traits.ordered]
+    nominal = np.moveaxis(nominal, category, list(range(len(category))))
+    cells = {}
+    for position in itertools.product(*[range(len(kept[i])) for i in category]):
+        cells[tuple(kept[i][j] for i, j in zip(category, position))] = nominal[position]
+    return cells
+
+
+def close_cells(a, b):
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        return (np.isnan(a) & np.isnan(b)) | (a == b) | (np.isfinite(a) & np.isfinite(b)
+                                                          & (np.abs(a - b) <= 1e-9 * np.maximum(np.abs(a), np.abs(b))))
+
+
+def compare_nominal(first, reprocessed):
+    if axes_layout(first) != axes_layout(reprocessed):
+        return [f"axes differ: {axes_layout(first)} and {axes_layout(reprocessed)}"]
+    old, new = nominal_cells(first), nominal_cells(reprocessed)
+    if set(old) != set(new):
+        return [f"nominal channel labels differ: only first {sorted(set(old) - set(new))}, "
+                f"only re-processed {sorted(set(new) - set(old))}"]
+    failing = []
+    for label in sorted(old):
+        a, b = old[label], new[label]
+        fields = a.dtype.names or (None,)
+        for field in fields:
+            x, y = (a, b) if field is None else (a[field], b[field])
+            for position in np.argwhere(~close_cells(x, y)):
+                failing.append(f"{label} {field or 'value'} {tuple(position.tolist())}: {x[tuple(position)]} and {y[tuple(position)]}")
+    if failing:
+        return [f"nominal differs in {len(failing)} cells, first: {failing[:5]}"]
+    return []
+
+
+def check_reprocessed(first, reprocessed):
+    problems = []
+    for name, content in (("first", first), ("re-processed", reprocessed)):
+        for dataset, record in content.items():
+            if not is_data_record(record):
+                problems.append(f"{dataset} ({name} file): not a data dataset")
+    for dataset in sorted(set(reprocessed) - set(first)):
+        problems.append(f"{dataset}: not in the first pass")
+    for dataset in sorted(set(first) - set(reprocessed)):
+        problems.append(f"{dataset}: not re-processed")
+    for dataset in sorted(set(first) & set(reprocessed)):
+        old, new = first[dataset]["hist"], reprocessed[dataset]["hist"]
+        if set(old) != set(new):
+            problems.append(f"{dataset}: hist keys differ: only first {sorted(set(old) - set(new))}, "
+                            f"only re-processed {sorted(set(new) - set(old))}")
+        for key in sorted(set(old) & set(new)):
+            problems.extend(f"{dataset} {key}: {problem}" for problem in compare_nominal(old[key], new[key]))
+        if first[dataset]["sumw"] != reprocessed[dataset]["sumw"]:
+            problems.append(f"{dataset}: sumw differs: {first[dataset]['sumw']} and {reprocessed[dataset]['sumw']}")
+    return problems
+
+
 if __name__ == "__main__":
     import argparse
     import dctools
@@ -433,7 +526,23 @@ if __name__ == "__main__":
     parser.add_argument("--plot_dir", type=str, default=".", help="Output directory for plots")
     parser.add_argument("--n_systematics", type=int, default=5,
                         help="Number of top systematics to show in plots")
+    parser.add_argument("--check-reprocessed", nargs=2, metavar=("FIRST", "SECOND"),
+                        help="compare the nominal of a re-processed Data file (.pkl.gz) with the first pass's; exit 1 on any difference")
     options = parser.parse_args()
+
+    if options.check_reprocessed:
+        import gzip
+        import pickle
+        import sys
+        contents = []
+        for path in options.check_reprocessed:
+            with gzip.open(path, "rb") as f:
+                contents.append(pickle.load(f))
+        problems = check_reprocessed(*contents)
+        for problem in problems:
+            print(problem)
+        print(f"check-reprocessed: {len(problems)} problems")
+        sys.exit(1 if problems else 0)
 
     config_paths = options.input if isinstance(options.input, list) else ([options.input] if options.input else [])
     configs = [dctools.read_config(p) for p in config_paths]

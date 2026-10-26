@@ -1,6 +1,7 @@
 import os
 import argparse
 import json
+import re
 import shlex
 import logging
 import subprocess
@@ -63,7 +64,7 @@ ls -lthr
 
 echo "----- processing the files : "
 
-$INSTALL_LOC_EXTERNAL/.env/bin/python3 brewer-remote-inclusive.py --jobNum=$1 --isMC={ismc} --era={era} --analysis={analysis} --zzdd={zzdd} --infile=$2 --executor={executor} --copyInput {split_by_charge}{histserv}
+$INSTALL_LOC_EXTERNAL/.env/bin/python3 brewer-remote-inclusive.py --jobNum=$1 --isMC={ismc} --era={era} --analysis={analysis} --zzdd={zzdd} --infile=$2 --executor={executor} --copyInput {split_by_charge}{dd}{histserv}
 
 echo "----- directory after running :"
 ls -lthr
@@ -103,22 +104,40 @@ queue jobfn from {jobdir}/inputfiles.dat
 """
 
 DEFAULT_TRANSFER_OUTPUT = "# transfer_output_files = histogram_$(ProcId).pkl.gz "
+DD_DIRECTORY_PATTERN = re.compile(r"_dd-([0-9a-f]{12})$")
 
 
-def sample_name_of(sample):
+def sample_name_of(sample, dd_label=None):
     auto_isMC = 1 * (sample.split("/")[-1] == "NANOAODSIM")
     # sample_name = sample.split("/")[1] if options.isMC else '_'.join(sample.split("/")[1:3])
     sample_name = sample.split("/")[1] if auto_isMC else '_'.join(sample.split("/")[1:3])
-    return auto_isMC, sample_name.replace("*", "")
+    sample_name = sample_name.replace("*", "")
+    if dd_label is not None:
+        sample_name += f"_dd-{dd_label}"
+    return auto_isMC, sample_name
 
 
-def check_registry(registry, samples, options):
+def check_pass_directories(tag, era, dd_label):
+    submission = "default" if dd_label is None else f"dd-{dd_label}"
+    for name in sorted(os.listdir(".")):
+        if not name.startswith("jobs_") or f"_{era}_" not in name[len("jobs_"):] or not os.path.isdir(name):
+            continue
+        existing_tag, existing_sample = name[len("jobs_"):].split(f"_{era}_", 1)
+        match = DD_DIRECTORY_PATTERN.search(existing_sample)
+        existing = f"dd-{match.group(1)}" if match else "default"
+        if (existing_tag in tag or tag in existing_tag) and existing != submission:
+            raise SystemExit(f"{name} holds the {existing} pass of tag {existing_tag}, and this submission is the {submission} pass "
+                             f"of tag {tag}: each pass needs a tag of its own, because hist-merger.py --legacy matches tags as substrings")
+
+
+def check_registry(registry, samples, options, dd_label=None):
     from qawa import production_keys
     wanted = {"era": options.era, "split_by_charge": options.split_by_charge, "pol": False, "split_FV": False}
     wrong = {name: registry["options"][name] for name, value in wanted.items() if registry["options"][name] != value}
     if wrong:
         raise SystemExit(f"registry options {wrong} do not match this submission {wanted}")
-    variations = {"pol": False, "split_by_charge": options.split_by_charge, "split_FV": False, "dd": None}
+    variations = {"pol": False, "split_by_charge": options.split_by_charge, "split_FV": False, "dd": dd_label}
+    dd_sha256 = None if dd_label is None else production_keys.file_sha256(options.dd_file)
     problems = []
     names = {}
     keys_of = {}
@@ -132,7 +151,7 @@ def check_registry(registry, samples, options):
         except ValueError as error:
             problems.append(str(error))
             continue
-        auto_isMC, sample_name = sample_name_of(sample)
+        auto_isMC, sample_name = sample_name_of(sample, dd_label)
         if sample_name in names:
             raise SystemExit(f"{names[sample_name]} and {sample} share the job directory of {sample_name}: "
                              "in C4 mode one job directory must hold one registry entry")
@@ -144,6 +163,8 @@ def check_registry(registry, samples, options):
             continue
         keys_of[sample] = keys[0]
         kind = registry["samples"][keys[0]]["kind"]
+        if registry["samples"][keys[0]].get("dd_sha256") != dd_sha256:
+            problems.append(f"{sample}: the registered dd sha256 differs from {options.dd_file}")
         wz_signal = 'WZto3LNu' in sample.split("/")[1] or 'WZTo3LNu' in sample.split("/")[1]
         kind_matches = {"data": not auto_isMC, "signal": auto_isMC and wz_signal, "mc": auto_isMC and not wz_signal,
                         "eft": auto_isMC}
@@ -173,16 +194,30 @@ def main():
                         choices=["FuturesExecutor","IterativeExecutor","DaskExecutor"])
     parser.add_argument("--histserv-registry", type=str, default=None,
                         help="C4: fill the central histserv server of this registry JSON (python -m qawa.histserv_output register) instead of job pickles")
+    parser.add_argument("--dd-file", type=str, default=None,
+                        help="data-driven estimate (correctionlib JSON) replacing the era default, for re-processing data with updated estimates (inc-WZ data only)")
     options = parser.parse_args()
 
     with open(options.input, 'r') as stream:
         samples = stream.read().split('\n')
+    dd_label = None
+    if options.dd_file is not None:
+        from qawa import datadriven, production_keys
+        mc_lines = [sample for sample in samples if '#' not in sample and len(sample.split("/")) > 1 and sample_name_of(sample)[0]]
+        if mc_lines:
+            raise SystemExit(f"--dd-file re-processes data only (NANOAOD), got {mc_lines}")
+        try:
+            datadriven.check_dd_file(options.dd_file)
+        except ValueError as error:
+            raise SystemExit(str(error))
+        dd_label = production_keys.dd_label(options.dd_file)
+    check_pass_directories(options.tag, options.era, dd_label)
     histserv_registry = None
     if options.histserv_registry is not None:
         with open(options.histserv_registry, 'rb') as f:
             registry_bytes = f.read()
         histserv_registry = json.loads(registry_bytes)
-        keys_of = check_registry(histserv_registry, samples, options)
+        keys_of = check_registry(histserv_registry, samples, options, dd_label)
     collect_manifests = []
 
     # Making sure that the proxy is good
@@ -233,7 +268,7 @@ def main():
         if '#' in sample: continue
         split_sample = sample.split("/")
         if len(split_sample) <= 1: continue
-        auto_isMC, sample_name = sample_name_of(sample)
+        auto_isMC, sample_name = sample_name_of(sample, dd_label)
         jobs_dir = '_'.join(['jobs', options.tag, options.era, sample_name])
         jobs_dir_external = os.path.join(os.environ['INSTALL_LOC_EXTERNAL'], os.path.relpath(os.path.normpath(jobs_dir), os.environ['INSTALL_LOC']))
         print("jobs_dir:", jobs_dir, "\njobs_dir_external:", jobs_dir_external)
@@ -283,6 +318,12 @@ def main():
         done_message = "No output histogram pickle file found"
         transfer_output = DEFAULT_TRANSFER_OUTPUT
         transfer_files = [brewer_loc_external]
+        dd = ""
+        if dd_label is not None:
+            shutil.copyfile(options.dd_file, os.path.join(jobs_dir, "dd_estimate.json"))
+            os.chmod(os.path.join(jobs_dir, "dd_estimate.json"), 0o644)
+            transfer_files.append(os.path.join(jobs_dir_external, "dd_estimate.json"))
+            dd = " --dd-file=dd_estimate.json"
         if histserv_registry is not None:
             fd = os.open(os.path.join(jobs_dir, "histserv_registry.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.fchmod(fd, 0o600)
@@ -310,6 +351,7 @@ def main():
                 era=options.era,
                 zzdd=options.zzdd,
                 split_by_charge = "--split_by_charge" if options.split_by_charge else "",
+                dd=dd,
                 qawa_version=qawa_version,
                 coffea_image=coffea_image,
                 full_image=full_image,

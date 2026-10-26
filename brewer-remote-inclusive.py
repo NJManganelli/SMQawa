@@ -154,6 +154,7 @@ def main():
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
     parser.add_argument('--histserv-registry', type=str, default=None, help="fill one central histserv server instead of in-memory histograms (inc-WZ only): the registry JSON written by python -m qawa.histserv_output register")
     parser.add_argument('--das-name', type=str, default=None, help="full DAS dataset name of the input (C4 registry key); derived from a /store/ path when not given; private datasets (tier USER) are not supported")
+    parser.add_argument('--dd-file', type=str, default=None, help="data-driven estimate (correctionlib JSON) replacing the era default, for re-processing data with updated estimates (inc-WZ data only)")
 
     options = parser.parse_args()
     # Every file in a manifest belongs to the same dataset, so the first entry
@@ -189,6 +190,12 @@ def main():
     era=options.era
     is_data = not options.isMC
 
+    if options.dd_file is not None:
+        if options.analysis != "inc-WZ" or options.isMC:
+            raise ValueError(f"--dd-file re-processes inc-WZ data only, got --analysis {options.analysis} --isMC {options.isMC}")
+        from qawa import datadriven
+        datadriven.check_dd_file(options.dd_file)
+
     histserv_registry = None
     histserv_sample = None
     if options.histserv_registry is not None:
@@ -212,7 +219,8 @@ def main():
         if derived is not None and options.das_name is not None and options.das_name != derived:
             raise ValueError(f"--das-name {options.das_name} differs from the DAS name {derived} derived from {ref_infile}")
         histserv_sample = histserv_output.resolve_key(histserv_registry, das, pol=options.pol, split_by_charge=options.split_by_charge,
-                                                      split_FV=options.split_FV, dd=None)
+                                                      split_FV=options.split_FV,
+                                                      dd=None if options.dd_file is None else production_keys.dd_label(options.dd_file))
         entry = histserv_registry["samples"][histserv_sample]
         if entry["dataset"] != options.dataset:
             raise ValueError(f"registry entry {histserv_sample} of {das} has dataset {entry['dataset']}, but --dataset is {options.dataset}")
@@ -299,6 +307,7 @@ def main():
                     version=auto_ver,
                     histserv_registry=histserv_registry,
                     histserv_sample=histserv_sample,
+                    dd_file=None if options.dd_file is None else os.path.abspath(options.dd_file),
                 )
                 is_signal = True if ('WZto3LNu' in options.dataset or 'WZTo3LNu' in options.dataset) else False
             elif options.analysis in ["inc-WZ-Fxsec"]:
@@ -407,6 +416,7 @@ def main():
                 -- executor  = {options.executor}
                 -- copyInput = {options.copyInput}
                 -- maxChunks = {options.maxChunks if options.maxChunks > 0 else "None"}
+                -- dd_file   = {options.dd_file}
                 -- zzdd    = {options.zzdd if options.analysis in ['vbs-ZZ', 'inc-ZZ'] else 'N/A'}
 
                 ---------------------------"""
