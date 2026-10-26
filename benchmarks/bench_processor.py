@@ -39,6 +39,7 @@ SAME_SELECTION = {"dilep_ll_dphi": "dilep_deta", "dilep_ll_dphi_eft": "dilep_det
 VARIANCE_RTOL = 1e-9
 ORDER_TOLERANT_RTOL = 1e-9
 CANCELLATION_RTOL = 1e-9
+SUMW_RUNS_TOLERANCE = 1e-6
 MAX_LISTED_CELLS = 50
 RANDOM_SEED = 1
 
@@ -691,7 +692,7 @@ def compare_dumps(rdump, odump, hist_map=None, axis_map=None, changed=(), remove
     return res
 
 
-SUMW_MODES = ("strict", "order_tolerant")
+SUMW_MODES = ("strict", "order_tolerant", "events_vs_runs")
 
 
 def compare_sumw(rsumw, osumw, mode):
@@ -707,10 +708,14 @@ def compare_sumw(rsumw, osumw, mode):
             res.fail("sumw", ds, f"non-finite sumw: R {r!r}, O {o!r}")
         elif (r == 0.0) != (o == 0.0):
             res.fail("sumw", ds, f"zero must match exactly: R {r!r}, O {o!r}")
+        elif (r < 0.0 or o < 0.0) and r != o:
+            res.fail("sumw", ds, f"data exact: R {r!r}, O {o!r}")
         elif mode == "strict" and r != o:
             res.fail("sumw", ds, f"strict: R {r!r}, O {o!r}")
         elif mode == "order_tolerant" and abs(r - o) > ORDER_TOLERANT_RTOL * max(abs(r), abs(o)):
             res.fail("sumw", ds, f"order_tolerant: R {r!r}, O {o!r}")
+        elif mode == "events_vs_runs" and abs(r - o) > SUMW_RUNS_TOLERANCE * max(abs(r), abs(o)):
+            res.fail("sumw", ds, f"events_vs_runs: R {r!r}, O {o!r}")
     return res
 
 
@@ -1228,6 +1233,10 @@ def cmd_selftest(args):
          ("FAIL", "sumw", "zero")),
         ("sumw O NaN, strict", {"ds": x}, {"ds": np.nan}, "strict", ("FAIL", "sumw", "non-finite")),
         ("sumw O NaN, order_tolerant", {"ds": x}, {"ds": np.nan}, "order_tolerant", ("FAIL", "sumw", "non-finite")),
+        ("sumw x(1+5e-7), events_vs_runs", {"ds": x}, {"ds": x * (1 + 5e-7)}, "events_vs_runs", ("PASS",)),
+        ("sumw x(1+2e-6), events_vs_runs", {"ds": x}, {"ds": x * (1 + 2e-6)}, "events_vs_runs", ("FAIL", "sumw")),
+        ("sumw data -2.0 vs -1.0, events_vs_runs", {"ds": -1.0}, {"ds": -2.0}, "events_vs_runs",
+         ("FAIL", "sumw", "data exact")),
     ]
     for desc, rsumw, osumw, mode, verdict in sumw_rows:
         res = compare_sumw(rsumw, osumw, mode)
