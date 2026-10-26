@@ -580,7 +580,21 @@ class wzinclusive_processor(processor.ProcessorABC):
     #    Update inc-ZZ to utilize the same interfaces
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
-    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9",):
+    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", histserv_registry=None, histserv_sample=None):
+        if (histserv_registry is None) != (histserv_sample is None):
+            raise ValueError("histserv_registry and histserv_sample must be given together")
+        if histserv_registry is not None:
+            if histserv_sample not in histserv_registry["samples"]:
+                raise ValueError(f"histserv_sample {histserv_sample!r} is not registered; registered: {sorted(histserv_registry['samples'])}")
+            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV}
+            if histserv_registry["options"] != options:
+                raise ValueError(f"registry options {histserv_registry['options']} differ from the processor options {options}")
+            variations = histserv_registry["samples"][histserv_sample]["variations"]
+            wrong = sorted(name for name in ("pol", "split_by_charge", "split_FV") if variations[name] != options[name])
+            if wrong:
+                raise ValueError(f"{histserv_sample}: registered variations {wrong} differ from the processor options {options}")
+        self.histserv_registry = histserv_registry
+        self.histserv_sample = histserv_sample
         self._era = era
         self._split_by_charge = split_by_charge
         self._split_FV = split_FV
@@ -674,6 +688,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.zmass = 91.1873 # GeV
         self.clibhandler = CorrectionlibHandler(era = self._era, subera=None, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, analysis="inc-WZ", nanoAODversion=self._ver, cvmfs_head="/cvmfs/")
         self.clibhandler.printStatus(console=coffea_console)
+        if histserv_registry is not None:
+            from qawa import histserv_output
+            reason = histserv_output.nondeterministic_reason(self, histserv_registry["samples"][histserv_sample]["kind"])
+            if reason:
+                raise ValueError(reason)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._era == "2024" else None, version=self._ver) 
@@ -2137,6 +2156,11 @@ class wzinclusive_processor(processor.ProcessorABC):
             "channels": channels,
             "block_cache": {},
         }
+        fill = fill_histogram
+        if self.histserv_registry is not None:
+            from qawa import histserv_output
+            fill = histserv_output.send_histogram
+            pass_state["histserv"] = histserv_output.pass_context(self.histserv_registry, self.histserv_sample, event.metadata, shift_name, eft_theta is not None)
         raw = np.stack(
             [weights.weight(modifier=s) if s in weights.variations else weights.weight() for s in systematics],
             axis=0,
@@ -2157,11 +2181,11 @@ class wzinclusive_processor(processor.ProcessorABC):
                 eft_key = var + "_eft"
                 if eft_key not in histos:
                     histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
-                fill_histogram(histos, eft_key, values, eft_labels, eft_weight, (var,), pass_state)
-            fill_histogram(histos, var if key is None else key, values, slot_labels, weight, (var,), pass_state)
+                fill(histos, eft_key, values, eft_labels, eft_weight, (var,), pass_state)
+            fill(histos, var if key is None else key, values, slot_labels, weight, (var,), pass_state)
 
         def fill_map(xvar, yvar, key, weight=standard_weight):
-            fill_histogram(histos, key, event_values(xvar, yvar), nominal_labels, weight, (xvar, yvar), pass_state)
+            fill(histos, key, event_values(xvar, yvar), nominal_labels, weight, (xvar, yvar), pass_state)
 
         if self._pol:
             for var in self.pol_reco_vars:
@@ -2211,7 +2235,9 @@ class wzinclusive_processor(processor.ProcessorABC):
                 fill_map('tau_loose_upsilon', 'tau_loose_pt', 'tau_loose_upsilon_vs_pt')
 
         self._process_shift_warnings = False # this will only print warning for first process shift
-        return {dataset: histos}
+        if self.histserv_registry is not None:
+            histserv_output.end_pass(pass_state)
+        return {dataset: {} if self.histserv_registry is not None else histos}
 
     def process(self, event):
         dataset_name = event.metadata['dataset']
@@ -2229,6 +2255,12 @@ class wzinclusive_processor(processor.ProcessorABC):
             event, _ = patch_flashsim(
                 event, self._era, verbose=self._process_shift_warnings
             )
+
+        if self.histserv_registry is not None:
+            from qawa import histserv_output
+            if not is_data:
+                chunk_sumw = float(np.sum(ak.to_numpy(event.genWeight), dtype=np.float64))
+                chunk_entries = len(event)
 
         if "jetId" not in event.Jet.fields:
             if self._ver in [f"v{V}" for V in range(12)]:
@@ -2351,7 +2383,12 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # IF is_data is True, shortcut with process_shift for nominal
         if is_data:
-            return self.process_shift(event, None)
+            if self.histserv_registry is None:
+                return self.process_shift(event, None)
+            histserv_output.begin_chunk(self.histserv_registry, self.histserv_sample, event.metadata, ["nominal"])
+            output = self.process_shift(event, None)
+            histserv_output.end_chunk(self.histserv_registry, self.histserv_sample, event.metadata, entries=len(event))
+            return output
 
         #Tau corrections are applied only to Monte Carlo, not to data, hence post-process_shift
         try:
@@ -2463,13 +2500,18 @@ class wzinclusive_processor(processor.ProcessorABC):
             shifts.append(({"Jet": hem_jets, "MET": hem_met}, "HEMDown"))
             shifts.append(({"Jet": event.Jet, "MET": event.MET}, "HEMUp"))
 
+        if self.histserv_registry is not None:
+            histserv_output.begin_chunk(self.histserv_registry, self.histserv_sample, event.metadata, ["nominal" if name is None else name for _, name in shifts])
         shifts = [
             self.process_shift(
                 update_collection(event, collections), 
                 name
             ) for collections, name in shifts
         ]
-        return merge_histogram_sets(shifts)
+        output = merge_histogram_sets(shifts)
+        if self.histserv_registry is not None:
+            histserv_output.end_chunk(self.histserv_registry, self.histserv_sample, event.metadata, entries=chunk_entries, sumw=chunk_sumw)
+        return output
 
 
 

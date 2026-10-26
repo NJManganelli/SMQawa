@@ -15,6 +15,7 @@ import pytest
 
 histserv = pytest.importorskip("histserv")
 
+import awkward as ak
 import grpc
 import hist
 import numpy as np
@@ -750,6 +751,159 @@ def test_nondeterministic_reason():
         assert ho.nondeterministic_reason(era2024, kind) is None
     assert ho.nondeterministic_reason(era2018, "data") is None
     assert ho.nondeterministic_reason(era2024, "data") is None
+
+
+def hand_registry(kind, options=OPTIONS, key=DAS_S, variations=None):
+    variations = variations or {name: options[name] for name in ("pol", "split_by_charge", "split_FV")}
+    return {"options": dict(options), "samples": {key: {"kind": kind, "variations": dict(variations, eft=False, dd=None)}}}
+
+
+def test_constructor_consistency_errors():
+    reg = hand_registry("mc")
+    for kwargs in (dict(histserv_registry=reg), dict(histserv_sample=DAS_S),
+                   dict(histserv_registry=reg, histserv_sample=DAS_X),
+                   dict(histserv_registry=hand_registry("mc", dict(OPTIONS, split_FV=True)), histserv_sample=DAS_S),
+                   dict(histserv_registry=hand_registry("mc", variations=dict(pol=True, split_by_charge=False,
+                                                                                split_FV=False)),
+                        histserv_sample=DAS_S)):
+        with pytest.raises(ValueError):
+            wzmod.wzinclusive_processor(era="2024", version="v15", **kwargs)
+    proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=DAS_S)
+    assert proc.histserv_registry is reg and proc.histserv_sample == DAS_S
+
+
+def test_constructor_refuses_nondeterministic():
+    options = dict(OPTIONS, era="2018", version="v9")
+    with pytest.raises(ValueError, match="N15"):
+        wzmod.wzinclusive_processor(era="2018", version="v9", histserv_registry=hand_registry("signal", options),
+                                    histserv_sample=DAS_S)
+    wzmod.wzinclusive_processor(era="2018", version="v9", run_period="C", histserv_registry=hand_registry("data", options),
+                                histserv_sample=DAS_S)
+
+
+M1_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
+           "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
+M3_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/DYto2Mu-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_"
+           "amcatnloFXFX-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v1/90000/test.root")
+D1_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
+FAKE_TERMS = ("sm", "lin_cW", "quad_cW")
+
+
+def needs(*paths):
+    return pytest.mark.skipif(not all(os.path.exists(p) for p in paths), reason="local 2024 test files not available")
+
+
+class FakeParameterisation:
+    terms = FAKE_TERMS
+
+    def decompose(self, x):
+        return x
+
+    def validate(self, theta):
+        return []
+
+    def active_terms(self, theta=None):
+        return list(self.terms)
+
+
+def fake_theta(event, points):
+    gw = ak.to_numpy(event.genWeight).astype(np.float64)
+    return np.stack([gw * (1.0 + 0.1 * t) for t in range(len(points))], axis=1)
+
+
+def file_events(path, n, dataset, is_data, is_signal):
+    from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
+    return NanoEventsFactory.from_root(
+        {path: "Events"}, schemaclass=NanoAODSchema, mode="virtual", entry_start=0, entry_stop=n,
+        metadata={"dataset": dataset, "is_data": is_data, "is_signal": is_signal, "is_flashsim": False},
+    ).events()
+
+
+KEY_MODES = {
+    "mc": (M3_FILE, "mc", {}, {}),
+    "signal": (M1_FILE, "signal", {}, {}),
+    "data": (D1_FILE, "data", {}, dict(run_period="C")),
+    "pol-signal": (M1_FILE, "signal", dict(pol=True), {}),
+    "pol-mc": (M3_FILE, "mc", dict(pol=True), {}),
+    "eft": (M1_FILE, "eft", {}, {}),
+}
+
+
+@needs(M1_FILE, M3_FILE, D1_FILE)
+@pytest.mark.parametrize("mode", sorted(KEY_MODES))
+def test_registered_keys_equal_output_keys(mode, monkeypatch):
+    path, kind, option_changes, kwargs = KEY_MODES[mode]
+    options = dict(OPTIONS, **option_changes)
+    process_shift = wzmod.wzinclusive_processor.process_shift
+    monkeypatch.setattr(wzmod.wzinclusive_processor, "process_shift",
+                        lambda self, event, shift_name='': process_shift(self, event, shift_name) if shift_name is None else {})
+    if kind == "eft":
+        monkeypatch.setattr(wzmod, "points_from_events", lambda event: (FakeParameterisation(), FAKE_TERMS))
+        monkeypatch.setattr(wzmod, "stack_named_weights", fake_theta)
+    proc = wzmod.wzinclusive_processor(**options, **kwargs)
+    dataset = "Muon0_Run2024C" if kind == "data" else "D"
+    out = proc.process(file_events(path, 300, dataset, kind == "data", kind in ("signal", "eft")))[dataset]
+    assert set(out) == set(ho.templates(ho.make_processor(options), kind))
+
+
+def assert_close_hist(a, b):
+    ca, cb = cells(a), cells(b)
+    assert set(ca) == set(cb)
+    for labels in ca:
+        for field in ("value", "variance"):
+            assert np.allclose(ca[labels][field], cb[labels][field], rtol=1e-9, atol=0, equal_nan=True), (labels, field)
+    assert [ax.__dict__ for ax in a.axes] == [ax.__dict__ for ax in b.axes]
+    assert a.__dict__ == b.__dict__
+
+
+@needs(M1_FILE)
+def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
+    import uproot
+    from coffea import processor
+    from coffea.nanoevents import NanoAODSchema
+    das = pk.das_name_from_path(M1_FILE)
+    dataset = pk.primary_dataset(das)
+    assert dataset == "WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8"
+    reg = ho.register(server, "t", OPTIONS, {das: "signal"}, uuid.uuid4().hex)
+    fileset = {dataset: {"files": {M1_FILE: "Events"}, "metadata": {"is_data": False, "is_signal": True,
+                                                                     "is_flashsim": False}}}
+    runner = processor.Runner(processor.IterativeExecutor(), chunksize=250, schema=NanoAODSchema, format="root")
+    items = list(itertools.islice(runner.preprocess(fileset), 2))
+    assert len(items) == 2
+    with uproot.open(M1_FILE) as f:
+        runs = f["Runs"].arrays(["genEventSumw", "genEventCount"], library="np")
+        record = {"fileuuid": str(uuid.UUID(bytes=items[0].fileuuid)), "events": f["Events"].num_entries,
+                  "runs_sumw": float(runs["genEventSumw"].sum()), "runs_count": int(runs["genEventCount"].sum())}
+        harness_sumw = sum(float(np.sum(f["Events"]["genWeight"].array(library="np", entry_start=item.entrystart,
+                                                                         entry_stop=item.entrystop), dtype=np.float64))
+                           for item in items)
+    ho.begin_job(reg, das, ho.expected_chunks(items, {M1_FILE: M1_FILE}), {M1_FILE: record})
+    c1 = runner(items, processor_instance=wzmod.wzinclusive_processor(era="2024", version="v15"))[dataset]
+    c4_proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=das)
+    results = []
+    real_send = ho.send_histogram
+
+    def counting(*args):
+        result = real_send(*args)
+        results.append(result)
+        return result
+    monkeypatch.setattr(ho, "send_histogram", counting)
+    assert runner(items, processor_instance=c4_proc) == {dataset: {}}
+    first = list(results)
+    assert ho.collect(reg, {das: [M1_FILE]}, str(tmp_path / "A"), per_entry=True) == 0
+    name = pk.sample_file_stem(das) + "_histograms.pkl.gz"
+    content = load(tmp_path / "A" / name)[dataset]
+    assert set(content["hist"]) == set(c1)
+    for key, h in c1.items():
+        assert content["hist"][key]._variance_known is False and h._variance_known is False
+        assert_close_hist(content["hist"][key], h)
+    assert np.isclose(content["sumw"], harness_sumw, rtol=1e-9, atol=0)
+    results.clear()
+    assert runner(items, processor_instance=c4_proc) == {dataset: {}}
+    assert ho.DUPLICATE in results and results == [ho.DUPLICATE if r == ho.SENT else r for r in first]
+    assert ho.collect(reg, {das: [M1_FILE]}, str(tmp_path / "B"), per_entry=True) == 0
+    with gzip.open(tmp_path / "A" / name) as first_file, gzip.open(tmp_path / "B" / name) as second_file:
+        assert first_file.read() == second_file.read()
 
 
 def run_cli(*args, env=None):
