@@ -1165,6 +1165,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 event.Flag.BadPFMuonFilter
             )
 
+
         ### FV variable defined ###
         if is_signal:
 
@@ -1249,6 +1250,7 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         # Electrons and Muons and Taus
         # Adding scale factors to Muon and Electron fields, post-Scale/Smearing
+
         muonSFs = self._leSF.muonSF(event.Muon)
         elecSFs = self._leSF.electronSF(event.Electron)
         # keys: eff_m_(id|iso)(Nominal|Up|Down) (Muon) or eff_e_(reco|id)(Nominal|Up|Down) (Electron)
@@ -1614,6 +1616,9 @@ class wzinclusive_processor(processor.ProcessorABC):
         #### FV selections ####
 
         # define basic selection
+        pv = event.PV
+        selection.add('goodPV', (pv.ndof > 4) & (np.abs(pv.z) < 24.0) & (np.sqrt(pv.x**2 + pv.y**2) < 2.0))
+
         selection.add(
             "require-ossf",
             (ntight_lep==2) & (nloose_lep==0) &
@@ -1845,7 +1850,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 for dddy_mcsyst in dddy_var.mc_systematics:
                     weights.add(f"datadriven_{dddy_mcsyst}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
-        common_sel = ['triggers', 'lumimask', 'metfilter']
+        common_sel = ['triggers', 'lumimask', 'goodPV', 'metfilter']
         if "jetveto" in selection.names:
             common_sel += ["jetveto"]
         channels = {
