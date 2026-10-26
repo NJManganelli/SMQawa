@@ -1215,6 +1215,17 @@ def run_rows(run, procs):
             "job_peaks_mb": [j.get("lifetime_max_footprint_mb") for j in jobs]}
 
 
+def cpu_percent_series(procs, t0, role=None):
+    times, percent = [], []
+    for a, b in zip(procs, procs[1:]):
+        before = {p["pid"]: p["cpu"] for p in a["procs"]}
+        used = sum(max(p["cpu"] - before.get(p["pid"], 0.0), 0.0) for p in b["procs"]
+                   if role is None or (p["role"] or "other") == role)
+        times.append(b["t"] - t0)
+        percent.append(100.0 * used / max(b["t"] - a["t"], 1e-9))
+    return times, percent
+
+
 def plot_run(name, run, procs, system, outdir):
     import matplotlib
     matplotlib.use("Agg")
@@ -1225,13 +1236,12 @@ def plot_run(name, run, procs, system, outdir):
     for r in procs:
         for p in r["procs"]:
             series.setdefault(p["role"] or "other", []).append((r["t"] - t0, p.get("footprint", 0) / 2**30,
-                                                                p["rss"] / 2**30, p["cpu"]))
+                                                                p["rss"] / 2**30))
     for role, points in sorted(series.items()):
         t = [x[0] for x in points]
         axes[0].plot(t, [x[1] for x in points], label=role, linewidth=0.8)
         axes[1].plot(t, [x[2] for x in points], label=role, linewidth=0.8)
-        cpu = [100.0 * (b[3] - a[3]) / max(b[0] - a[0], 1e-9) for a, b in zip(points, points[1:])]
-        axes[2].plot(t[1:], cpu, label=role, linewidth=0.8)
+        axes[2].plot(*cpu_percent_series(procs, t0, role), label=role, linewidth=0.8)
     axes[0].set_ylabel("footprint [GiB]")
     axes[1].set_ylabel("RSS [GiB]")
     axes[2].set_ylabel("CPU [%]")
@@ -1309,9 +1319,7 @@ def cmd_report(args):
         t0 = run["stages"][0][1]
         t = [r["t"] - t0 for r in procs]
         axes[0].plot(t, [sum(p.get("footprint", p["rss"]) for p in r["procs"]) / 2**30 for r in procs], label=name)
-        cpu = [sum(p["cpu"] for p in r["procs"]) for r in procs]
-        axes[1].plot(t[1:], [100.0 * (b - a) / max(tb - ta, 1e-9) for a, b, ta, tb in zip(cpu, cpu[1:], t, t[1:])],
-                     label=name)
+        axes[1].plot(*cpu_percent_series(procs, t0), label=name)
     axes[0].set_ylabel("total footprint [GiB]")
     axes[1].set_ylabel("total CPU [%]")
     axes[1].set_xlabel("time since setup [s]")
