@@ -38,6 +38,9 @@ dependencies = [
     "scipy"
 ]
 
+[project.optional-dependencies]
+histserv = ["histserv>=0.2.1,<0.3"]
+
 [build-system]
 # requires = ["setuptools>=75.8.2", "wheel"]
 # build-backend = "setuptools.build_meta"

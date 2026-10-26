@@ -348,7 +348,10 @@ class pileup_weights:
                 self.corrections['puWeight' if 'Nom' in var else f'puWeight{var}'] = pileup_corr
     
     
-    def append_pileup_weight(self, weights, pu):
+    def append_pileup_weight(self, weights, pu, variations=True):
+        if not variations:
+            weights.add('pileup_weight', self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'](pu))
+            return weights
         weights.add(
             'pileup_weight',
             self.clib.evaluate(pu, 'nominal') if self.clib else self.corrections['puWeight'    ](pu),

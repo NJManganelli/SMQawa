@@ -68,9 +68,12 @@ class jetPUScaleFactors:
     
 
 
-    def append_jetPU_sf(self, jets: ak.Array, weights: Weights):
+    def append_jetPU_sf(self, jets: ak.Array, weights: Weights, variations=True):
         jets = jets[(jets.genJetIdx != -1) & (jets.pt <= 50) & (np.abs(jets.eta) <= 5) & (jets.pt >= 30)]
         sf_nom  = self.getSF(jets, 'nom')
+        if not variations:
+            weights.add('jetPUid_sf', sf_nom)
+            return sf_nom, None, None
         sf_up   = self.getSF(jets, 'up')
         sf_down = self.getSF(jets, 'down')
         weights.add('jetPUid_sf'  , sf_nom, sf_up, sf_down)

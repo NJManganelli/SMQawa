@@ -152,6 +152,9 @@ def main():
     parser.add_argument('--executor' , type=str, default="FuturesExecutor", help="Executor to use, one of IterativeExecutor (good for debugging), FuturesExecutor (multithreaded), or other coffea option")
     parser.add_argument('--copyInput', action='store_true'     , help="xrdcp a file to the worker node before executing the coffea processor on it")
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
+    parser.add_argument('--histserv-registry', type=str, default=None, help="fill one central histserv server instead of in-memory histograms (inc-WZ only): the registry JSON written by python -m qawa.histserv_output register")
+    parser.add_argument('--das-name', type=str, default=None, help="full DAS dataset name of the input (C4 registry key); derived from a /store/ path when not given; private datasets (tier USER) are not supported")
+    parser.add_argument('--dd-file', type=str, default=None, help="data-driven estimate (correctionlib JSON) replacing the era default, for re-processing data with updated estimates (inc-WZ data only)")
 
     options = parser.parse_args()
     # Every file in a manifest belongs to the same dataset, so the first entry
@@ -184,6 +187,48 @@ def main():
 
     if options.dataset is None:
         options.dataset = auto_dataset
+    era=options.era
+    is_data = not options.isMC
+
+    if options.dd_file is not None:
+        if options.analysis != "inc-WZ" or options.isMC:
+            raise ValueError(f"--dd-file re-processes inc-WZ data only, got --analysis {options.analysis} --isMC {options.isMC}")
+        from qawa import datadriven
+        datadriven.check_dd_file(options.dd_file)
+
+    histserv_registry = None
+    histserv_sample = None
+    if options.histserv_registry is not None:
+        if options.analysis != "inc-WZ":
+            raise ValueError(f"--histserv-registry supports only --analysis inc-WZ, got {options.analysis}")
+        from qawa import histserv_output, production_keys
+        histserv_registry = histserv_output.read_registry(options.histserv_registry)
+        registry_chunks = histserv_registry["max_chunks"]
+        max_chunks_ok = options.maxChunks <= 0 if registry_chunks is None else options.maxChunks == registry_chunks
+        if not max_chunks_ok:
+            raise ValueError(f"--maxChunks {options.maxChunks} does not match the registry's max_chunks {registry_chunks}")
+        os.environ[histserv_output.POISON_FILE_ENV] = os.path.abspath(histserv_output.POISON_FILE_NAME)
+        reason = histserv_output.poison_reason(None)
+        if reason:
+            coffea_console.print("C4 poison marker from an earlier run in this directory: " + reason)
+            sys.exit(histserv_registry["poison_exit_code"])
+        derived = production_keys.das_name_from_path(ref_infile)
+        das = options.das_name or derived
+        if das is None:
+            raise ValueError(f"cannot derive a DAS name from {ref_infile}: give --das-name")
+        if derived is not None and options.das_name is not None and options.das_name != derived:
+            raise ValueError(f"--das-name {options.das_name} differs from the DAS name {derived} derived from {ref_infile}")
+        histserv_sample = histserv_output.resolve_key(histserv_registry, das, pol=options.pol, split_by_charge=options.split_by_charge,
+                                                      split_FV=options.split_FV,
+                                                      dd=None if options.dd_file is None else production_keys.dd_label(options.dd_file))
+        entry = histserv_registry["samples"][histserv_sample]
+        if entry["dataset"] != options.dataset:
+            raise ValueError(f"registry entry {histserv_sample} of {das} has dataset {entry['dataset']}, but --dataset is {options.dataset}")
+        wz_signal = 'WZto3LNu' in options.dataset or 'WZTo3LNu' in options.dataset
+        kind_matches = {"data": is_data, "signal": not is_data and wz_signal, "mc": not is_data and not wz_signal, "eft": not is_data}
+        if not kind_matches[entry["kind"]]:
+            raise ValueError(f"registry entry {histserv_sample} has kind {entry['kind']}, which contradicts the job (is_data={is_data}, dataset {options.dataset})")
+
     executor = None
     if options.executor == "FuturesExecutor":
         executor = processor.FuturesExecutor(workers=options.ncores)
@@ -193,9 +238,6 @@ def main():
         executor = processor.DaskExecutor()
     else:
         raise ValueError(f"Invalid Executor option {options.executor}")
-
-    era=options.era
-    is_data = not options.isMC
 
     failed = True
     ixrd = 0
@@ -212,6 +254,8 @@ def main():
     ]
     while failed:
         try:
+            if histserv_registry is not None:
+                histserv_output.check_poison(histserv_registry, histserv_sample)
             # Resolve every input path through the SAME logic, whether --infile
             # named one root file or a .txt manifest of them. aliases[ixrd] is the
             # redirector currently being tried, so a failure anywhere below retries
@@ -226,6 +270,8 @@ def main():
                       "for MC the normalization will not be stored for the number of events processed and the scaling will be incorrect, ",
                       "for data there will similarly not be an appropriate scaling of MC to match the processed luminosity in data."
                       )
+                if histserv_registry is not None:
+                    coffea_console.print("C4: the outputs will be marked .TRUNCATED, and MC sumw follows the processed chunks")
 
             if is_data:
                 if 'Run20' in ref_infile:
@@ -259,6 +305,9 @@ def main():
                     ewk_process_name=ewk_flag,
                     run_period=options.runperiod if is_data else '',
                     version=auto_ver,
+                    histserv_registry=histserv_registry,
+                    histserv_sample=histserv_sample,
+                    dd_file=None if options.dd_file is None else os.path.abspath(options.dd_file),
                 )
                 is_signal = True if ('WZto3LNu' in options.dataset or 'WZTo3LNu' in options.dataset) else False
             elif options.analysis in ["inc-WZ-Fxsec"]:
@@ -335,16 +384,17 @@ def main():
                     'metadata': metadata
                 }
             }
-            sumw_runner = processor.Runner(
-                executor=executor,
-                schema=BaseSchema,
-                format="root",
-                savemetrics=True,
-            )
-            sumw_out, sumw_metrics = sumw_runner(
-                runs_samples,
-                processor_instance=coffea_sumw(),
-            )
+            if histserv_registry is None:
+                sumw_runner = processor.Runner(
+                    executor=executor,
+                    schema=BaseSchema,
+                    format="root",
+                    savemetrics=True,
+                )
+                sumw_out, sumw_metrics = sumw_runner(
+                    runs_samples,
+                    processor_instance=coffea_sumw(),
+                )
 
             coffea_console.print(
                 f"""---------------------------
@@ -366,6 +416,7 @@ def main():
                 -- executor  = {options.executor}
                 -- copyInput = {options.copyInput}
                 -- maxChunks = {options.maxChunks if options.maxChunks > 0 else "None"}
+                -- dd_file   = {options.dd_file}
                 -- zzdd    = {options.zzdd if options.analysis in ['vbs-ZZ', 'inc-ZZ'] else 'N/A'}
 
                 ---------------------------"""
@@ -387,20 +438,40 @@ def main():
                 format="root",
                 savemetrics=True
             )
-            events_out, event_metrics = events_runner(
-                events_samples,
-                processor_instance=proc_configured,
-            )
-            bh_output = {}
-            for key, content in events_out.items():
-                bh_output[key] = {
-                    "hist": content,
-                    "sumw": sumw_out[key],
-            }
-            with gzip.open("histogram_%s.pkl.gz" % str(options.jobNum), "wb") as f:
-                pickle.dump(bh_output, f)
+            if histserv_registry is None:
+                events_out, event_metrics = events_runner(
+                    events_samples,
+                    processor_instance=proc_configured,
+                )
+                from qawa.process.wztau2lnu_inclusive import dataset_record
+                bh_output = {key: dataset_record(key, content, sumw_out[key]) for key, content in events_out.items()}
+                with gzip.open("histogram_%s.pkl.gz" % str(options.jobNum), "wb") as f:
+                    pickle.dump(bh_output, f)
+            else:
+                runs = None
+                if not is_data:
+                    runs = {}
+                    for path, fn in zip(input_paths, input_files):
+                        sums = uproot.open(fn)["Runs"].arrays(["genEventSumw", "genEventCount"], library="np")
+                        runs[path] = (float(np.sum(sums["genEventSumw"])), int(np.sum(sums["genEventCount"])))
+                items = list(events_runner.preprocess(events_samples, treename="Events"))
+                all_items = items
+                if histserv_registry["max_chunks"] is not None:
+                    all_items = list(processor.Runner(executor=executor, schema=events_schema, chunksize=50000, format="root").preprocess(
+                        events_samples, treename="Events"))
+                file_of = dict(zip(input_files, input_paths))
+                files = histserv_output.file_records(all_items, file_of, runs)
+                expected = {**{f: [] for f in files}, **histserv_output.expected_chunks(items, file_of)}
+                truncated = histserv_output.truncation(all_items, items, file_of) if histserv_registry["max_chunks"] is not None else None
+                histserv_output.begin_job(histserv_registry, histserv_sample, expected, files, truncated)
+                events_out, event_metrics = events_runner(items, processor_instance=proc_configured)
+                histserv_output.write_done_file(options.jobNum, histserv_registry, histserv_sample, items)
             failed=False
         except Exception as err:
+            reason = histserv_output.poison_reason(err) if histserv_registry is not None else None
+            if reason:
+                coffea_console.print("C4 poison: " + reason)
+                sys.exit(histserv_registry["poison_exit_code"])
             coffea_console.print(f"[WARNING] {aliases[ixrd]} failed with the following error : ")
             coffea_console.print(f"Unexpected {err=}, {type(err)=}")
             coffea_console.print("printing Exception err:")
