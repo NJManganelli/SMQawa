@@ -269,3 +269,73 @@ def test_rename_inventory(inventory):
             assert n == BOOKED_COUNTS[builder], (mode, builder, n)
     assert not U4_REMOVED & keys
     assert not U4_REMOVED & {k[:-len("_eft")] if k.endswith("_eft") else k for k in outputs}
+
+
+RESTORED = "tau_loosetovtight_mT_WZ"
+
+
+@pytest.fixture(scope="module")
+def restored_outputs():
+    result = {}
+    for mode, n in (("standard", 1000), ("data", 60000)):
+        kwargs, (path, dataset, is_data, is_signal) = MODES[mode]
+        proc = wzmod.wzinclusive_processor(era="2024", version="v15", **kwargs)
+        result[mode] = proc.process(mode_events(path, n, dataset, is_data, is_signal))[dataset]
+    return result
+
+
+def category_labels(h):
+    return [set(ax) for ax in h.axes if isinstance(ax, wzmod.hist.axis.StrCategory)]
+
+
+def label_sums(h):
+    if h is None:
+        return {}
+    channels, systematics = [ax for ax in h.axes if isinstance(ax, wzmod.hist.axis.StrCategory)]
+    view = h.view(flow=True)
+    values = view["value"] if view.dtype.names else view
+    return {(c, s): (np.sum(values[i, j]), np.sum(np.abs(values[i, j][np.isfinite(values[i, j])])))
+            for i, c in enumerate(channels) for j, s in enumerate(systematics)}
+
+
+def deta_sums(out):
+    sums = label_sums(out["dilep_deta"])
+    assert any(np.isfinite(a) and a > 0 for _, a in sums.values())
+    return sums
+
+
+def test_restored_in_fill_tuple():
+    variables = wzmod.STANDARD_FILL_VARIABLES
+    assert RESTORED in variables
+    assert variables[variables.index(RESTORED) - 1] == "tau_loosetovtight_mT_W"
+
+
+@needs_m1
+@needs_d1
+@pytest.mark.parametrize("mode", ["standard", "data"])
+def test_restored_has_labels(restored_outputs, mode):
+    out = restored_outputs[mode]
+    deta_sums(out)
+    assert label_sums(out.get(RESTORED)), mode
+
+
+@needs_m1
+@needs_d1
+@pytest.mark.parametrize("mode", ["standard", "data"])
+def test_restored_label_sets(restored_outputs, mode):
+    out = restored_outputs[mode]
+    deta_sums(out)
+    assert RESTORED in out and category_labels(out[RESTORED]) == category_labels(out["dilep_deta"]), mode
+
+
+@needs_m1
+@needs_d1
+@pytest.mark.parametrize("mode", ["standard", "data"])
+def test_restored_sums(restored_outputs, mode):
+    out = restored_outputs[mode]
+    reference = deta_sums(out)
+    restored = label_sums(out.get(RESTORED))
+    for label, (b, b_scale) in reference.items():
+        a, a_scale = restored.get(label, (0.0, 0.0))
+        same = (np.isnan(a) and np.isnan(b)) or a == b or abs(a - b) <= 1e-9 * max(abs(a), abs(b), a_scale + b_scale)
+        assert same, (mode, label, a, b)
