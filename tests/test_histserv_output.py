@@ -22,6 +22,7 @@ import numpy as np
 from coffea.analysis_tools import PackedSelection
 from coffea.processor.executor import WorkItem
 
+import qawa.datadriven as datadriven
 import qawa.histserv_output as ho
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as pk
@@ -601,6 +602,7 @@ import json, os, sys
 import numpy, uproot
 from coffea import processor
 from coffea.nanoevents import BaseSchema
+import qawa.datadriven as datadriven
 import qawa.histserv_output as ho
 path = sys.argv[1]
 with uproot.recreate(os.path.join(path, "events.root")) as f:
@@ -630,6 +632,7 @@ LOKY_TOY = """
 import json, os
 import grpc, histserv, numpy
 from coffea import processor
+import qawa.datadriven as datadriven
 import qawa.histserv_output as ho
 REG = json.load(open(os.path.join(os.path.dirname(__file__), "reg.json")))
 TARGET = REG["samples"]["{das}"]["hists"]["met_pt"]
@@ -1361,3 +1364,65 @@ def test_write_done_file(tmp_path, monkeypatch):
 def test_cli_help_has_no_pickle_input():
     text = textwrap.dedent(run_cli("collect", "--help").stdout)
     assert "--registry" in text and "pickle" not in text.replace("Job pickles are never read", "")
+
+
+DD_RUN2 = os.path.join(ROOT, "src", "qawa", "data", "dd", "Run2", "WZ_inclusive_data_driven_Run2.json")
+DD_RUN3 = os.path.join(ROOT, "src", "qawa", "data", "dd", "Run3", "WZ_inclusive_data_driven_Run3.json")
+
+
+def test_dd_register_and_collect(server, synthetic, tmp_path):
+    label = pk.dd_label(DD_RUN2)
+    data = {DAS_C: "data", DAS_D: "data"}
+    first = synthetic_registry(server, samples=data)
+    manifests = {key: production(first, key, n_files=1, base=i)[0] for i, key in enumerate(first["samples"])}
+    assert ho.collect(first, manifests, str(tmp_path / "out1")) == 0
+    stage1 = load(tmp_path / "out1" / final_name("Data"))
+    results = {}
+    for name, factors in (("dd", (1.0, 2.0)), ("nominal", (1 + 1e-6, 1.0))):
+        reg = ho.register(server, "t", OPTIONS, data, uuid.uuid4().hex, dd_file=DD_RUN2)
+        assert sorted(reg["samples"]) == sorted(f"{das}#dd:{label}" for das in data)
+        for entry in reg["samples"].values():
+            assert entry["variations"]["dd"] == label and entry["dd_sha256"] == pk.file_sha256(DD_RUN2)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setitem(globals(), "WEIGHT", lambda k, rows, w=WEIGHT, f=factors: w(k, rows) * (f[0] if k == 0 else f[1]))
+            manifests = {key: production(reg, key, n_files=1, base=i)[0] for i, key in enumerate(reg["samples"])}
+        out = tmp_path / f"out_{name}"
+        assert ho.collect(reg, manifests, str(out)) == 0
+        assert sorted(os.listdir(out)) == ["collect.json", final_name("Data", suffix=f"__dd-{label}")]
+        results[name] = load(out / final_name("Data", suffix=f"__dd-{label}"))
+    assert datadriven.check_reprocessed(stage1, results["dd"]) == []
+    old, new = cells(stage1["Muon0"]["hist"]["met_pt"]), cells(results["dd"]["Muon0"]["hist"]["met_pt"])
+    assert np.array_equal(old[("chA", "nominal")], new[("chA", "nominal")])
+    assert not np.array_equal(old[("chA", "up")], new[("chA", "up")])
+    problems = datadriven.check_reprocessed(stage1, results["nominal"])
+    assert len(problems) == 1 and "Muon0 met_pt: nominal differs" in problems[0]
+
+
+def test_dd_register_refusals(server, tmp_path):
+    gz = tmp_path / "dd.json.gz"
+    with open(DD_RUN2, "rb") as f:
+        gz.write_bytes(gzip.compress(f.read()))
+    for sample, path in ((f"{DAS_X}=mc", DD_RUN2), (f"{DAS_C}=data", str(gz))):
+        args = ["register", "--address", server, "--tag", "t", "--era", "2024", "--version", "v15",
+                "--sample", sample, "--dd-file", path, "--output", str(tmp_path / "reg.json")]
+        assert ho.main(args) == 2
+        assert not (tmp_path / "reg.json").exists()
+
+
+def test_constructor_dd_checks(tmp_path):
+    label = pk.dd_label(DD_RUN3)
+    key = f"{DAS_C}#dd:{label}"
+    reg = hand_registry("data", key=key)
+    reg["samples"][key]["variations"]["dd"] = label
+    reg["samples"][key]["dd_sha256"] = pk.file_sha256(DD_RUN3)
+    other = tmp_path / "other.json"
+    other.write_text(open(DD_RUN3).read() + "\n")
+    kwargs = dict(era="2024", version="v15", run_period="C")
+    for dd_file, message in ((None, "no dd_file is given"), (str(other), "another sha256")):
+        with pytest.raises(ValueError, match=message):
+            wzmod.wzinclusive_processor(histserv_registry=reg, histserv_sample=key, dd_file=dd_file, **kwargs)
+    with pytest.raises(ValueError, match="registered without a dd file"):
+        wzmod.wzinclusive_processor(histserv_registry=hand_registry("data", key=DAS_C), histserv_sample=DAS_C,
+                                    dd_file=DD_RUN3, **kwargs)
+    proc = wzmod.wzinclusive_processor(histserv_registry=reg, histserv_sample=key, dd_file=DD_RUN3, **kwargs)
+    assert proc.dd_file == DD_RUN3 and proc.histserv_sample == key

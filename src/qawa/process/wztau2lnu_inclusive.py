@@ -30,7 +30,7 @@ from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from qawa.btag import BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
 from qawa.gen_match import find_best_match
-from qawa.datadriven import DataDrivenEventReweight
+from qawa.datadriven import DataDrivenEventReweight, check_dd_file
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
@@ -580,7 +580,7 @@ class wzinclusive_processor(processor.ProcessorABC):
     #    Update inc-ZZ to utilize the same interfaces
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
-    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", histserv_registry=None, histserv_sample=None):
+    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", histserv_registry=None, histserv_sample=None, dd_file=None):
         if (histserv_registry is None) != (histserv_sample is None):
             raise ValueError("histserv_registry and histserv_sample must be given together")
         if histserv_registry is not None:
@@ -593,6 +593,15 @@ class wzinclusive_processor(processor.ProcessorABC):
             wrong = sorted(name for name in ("pol", "split_by_charge", "split_FV") if variations[name] != options[name])
             if wrong:
                 raise ValueError(f"{histserv_sample}: registered variations {wrong} differ from the processor options {options}")
+            entry = histserv_registry["samples"][histserv_sample]
+            if variations["dd"] is None and dd_file is not None:
+                raise ValueError(f"{histserv_sample} is registered without a dd file, but dd_file {dd_file} is given")
+            if variations["dd"] is not None:
+                from qawa import production_keys
+                if dd_file is None:
+                    raise ValueError(f"{histserv_sample} is registered with dd file {variations['dd']}, but no dd_file is given")
+                if production_keys.file_sha256(dd_file) != entry["dd_sha256"]:
+                    raise ValueError(f"dd_file {dd_file} has another sha256 than the one registered for {histserv_sample}")
         self.histserv_registry = histserv_registry
         self.histserv_sample = histserv_sample
         self._era = era
@@ -687,6 +696,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.tauIDvsmu_wp = 'Tight'
         self.zmass = 91.1873 # GeV
         self.clibhandler = CorrectionlibHandler(era = self._era, subera=None, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, analysis="inc-WZ", nanoAODversion=self._ver, cvmfs_head="/cvmfs/")
+        if dd_file is not None:
+            check_dd_file(dd_file)
+            self.clibhandler["dddy"] = dd_file
+        self.dd_file = dd_file
         self.clibhandler.printStatus(console=coffea_console)
         if histserv_registry is not None:
             from qawa import histserv_output

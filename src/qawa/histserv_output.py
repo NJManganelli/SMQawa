@@ -14,6 +14,7 @@ import hist
 import numpy
 from histserv import Client
 
+import qawa.datadriven as datadriven
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as production_keys
 
@@ -270,7 +271,7 @@ def read_registry(path):
     return registry
 
 
-def register(address, tag, options, samples, token, max_chunks=None):
+def register(address, tag, options, samples, token, max_chunks=None, dd_file=None):
     if not NAME_PATTERN.match(tag):
         raise ValueError(f"tag {tag!r} must match {NAME_PATTERN.pattern}")
     if set(options) != set(OPTION_NAMES):
@@ -288,6 +289,8 @@ def register(address, tag, options, samples, token, max_chunks=None):
             problems.append(f"{das}: unknown kind {kind!r}; known: {KINDS}")
         elif (kind == "data") != (tier == "NANOAOD"):
             problems.append(f"{das}: kind {kind} contradicts the tier {tier}")
+        elif dd_file is not None and kind != "data":
+            problems.append(f"{das}: --dd-file re-processes data only, got kind {kind}")
     if problems:
         raise ValueError("; ".join(problems))
     kinds_of = {}
@@ -296,6 +299,10 @@ def register(address, tag, options, samples, token, max_chunks=None):
     mixed = sorted(dataset for dataset, kinds in kinds_of.items() if len(kinds) > 1)
     if mixed:
         raise ValueError(f"datasets registered with several kinds (they would go to two files): {mixed}")
+    dd, dd_sha256 = None, None
+    if dd_file is not None:
+        datadriven.check_dd_file(dd_file)
+        dd, dd_sha256 = production_keys.dd_label(dd_file), production_keys.file_sha256(dd_file)
     proc = make_processor(options)
     reasons = {das: nondeterministic_reason(proc, kind) for das, kind in samples.items()}
     if any(reasons.values()):
@@ -304,7 +311,7 @@ def register(address, tag, options, samples, token, max_chunks=None):
     stems = {}
     for das, kind in samples.items():
         variations = {"pol": options["pol"], "split_by_charge": options["split_by_charge"],
-                      "split_FV": options["split_FV"], "eft": kind == "eft", "dd": None}
+                      "split_FV": options["split_FV"], "eft": kind == "eft", "dd": dd}
         key = production_keys.sample_key(das, **variations)
         stem = production_keys.sample_file_stem(key)
         if stem in stems:
@@ -316,6 +323,7 @@ def register(address, tag, options, samples, token, max_chunks=None):
     for key, (das, kind, variations, booked) in entries.items():
         registered[key] = {
             "das": das, "kind": kind, "dataset": production_keys.primary_dataset(das), "variations": variations,
+            "dd_sha256": dd_sha256,
             "hists": {name: hist_client.init(h, token=token, timeout=TIMEOUT).hist_id for name, h in booked.items()},
             "ledger": hist_client.init(ledger_template(), token=token, timeout=TIMEOUT).hist_id,
             "sumw": hist_client.init(sumw_template(), token=token, timeout=TIMEOUT).hist_id,
@@ -799,6 +807,8 @@ def output_groups(registry, filename, per_entry, cls="complete"):
     if cls != "complete" or registry["max_chunks"] is not None:
         return groups, placeholders
     for group in list(groups.values()):
+        if group["variations"]["dd"] is not None:
+            continue
         for kind in STANDARD_KINDS:
             stem = production_keys.final_file_stem(tag, era, filename, kind, group["variations"])
             if stem not in groups:
@@ -1007,6 +1017,7 @@ def main(argv=None):
     p.add_argument("--split-by-charge", action="store_true")
     p.add_argument("--split-FV", action="store_true")
     p.add_argument("--max-chunks", type=int, default=None, help="truncated test production of N chunks per dataset")
+    p.add_argument("--dd-file", default=None, help="data-driven estimate (correctionlib JSON) of a data re-processing production")
     p.add_argument("--sample", action="append", default=[], required=True, help="DAS=KIND, repeatable")
     p.add_argument("--output", required=True, help="registry JSON to write (mode 0600)")
     c = sub.add_parser("collect", description=COLLECT_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1028,7 +1039,7 @@ def main(argv=None):
             options = {"era": args.era, "version": args.version, "pol": args.pol,
                        "split_by_charge": args.split_by_charge, "split_FV": args.split_FV}
             registry = register(args.address, args.tag, options, parse_pairs(args.sample, "--sample"),
-                                secrets.token_hex(16), max_chunks=args.max_chunks)
+                                secrets.token_hex(16), max_chunks=args.max_chunks, dd_file=args.dd_file)
             write_registry(args.output, registry)
             print(f"registry written to {args.output} ({len(registry['samples'])} entries)")
             return 0
