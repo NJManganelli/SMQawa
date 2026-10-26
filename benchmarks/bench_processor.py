@@ -233,8 +233,11 @@ class Instrument:
 
 
 def processor_kwargs(args):
-    return dict(era=args.era, version=args.version, run_period=args.run_period,
-                split_by_charge=args.split_by_charge, split_FV=args.split_fv, pol=args.pol, dd_file=args.dd_file)
+    kwargs = dict(era=args.era, version=args.version, run_period=args.run_period,
+                  split_by_charge=args.split_by_charge, split_FV=args.split_fv, pol=args.pol)
+    if args.dd_file:
+        kwargs["dd_file"] = args.dd_file
+    return kwargs
 
 
 def run_flags(args):
