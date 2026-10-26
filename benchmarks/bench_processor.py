@@ -1277,7 +1277,7 @@ QUIET_POLL = 15.0
 QUIET_AVAILABLE_MARGIN_MB = 2048.0
 
 
-def footprint_mb(pid):
+def rusage_info(pid):
     if sys.platform != "darwin":
         return None
     import ctypes
@@ -1298,7 +1298,15 @@ def footprint_mb(pid):
     info = RusageInfoV4()
     if libproc.proc_pid_rusage(int(pid), 4, ctypes.byref(info)) != 0:
         return None
-    return info.phys_footprint / 2**20, info.lifetime_max_phys_footprint / 2**20
+    return {name: getattr(info, name) for name in ("phys_footprint", "lifetime_max_phys_footprint",
+                                                    "diskio_bytesread", "diskio_byteswritten")}
+
+
+def footprint_mb(pid):
+    info = rusage_info(pid)
+    if info is None:
+        return None
+    return info["phys_footprint"] / 2**20, info["lifetime_max_phys_footprint"] / 2**20
 
 
 def sh(cmd):
