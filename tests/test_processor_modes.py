@@ -339,3 +339,32 @@ def test_restored_sums(restored_outputs, mode):
         a, a_scale = restored.get(label, (0.0, 0.0))
         same = (np.isnan(a) and np.isnan(b)) or a == b or abs(a - b) <= 1e-9 * max(abs(a), abs(b), a_scale + b_scale)
         assert same, (mode, label, a, b)
+
+
+NO_HISTSERV_DRIVER = """
+import sys
+sys.modules["histserv"] = None
+sys.modules["grpc"] = None
+from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
+import qawa.process.wztau2lnu_inclusive as wzmod
+process_shift = wzmod.wzinclusive_processor.process_shift
+wzmod.wzinclusive_processor.process_shift = lambda self, event, shift_name='': process_shift(self, event, shift_name) if shift_name is None else {}
+events = NanoEventsFactory.from_root(
+    {sys.argv[1]: "Events"}, schemaclass=NanoAODSchema, mode="virtual", entry_start=0, entry_stop=200,
+    metadata={"dataset": "WZto3LNu", "is_data": False, "is_signal": True, "is_flashsim": False},
+).events()
+out = wzmod.wzinclusive_processor(era="2024", version="v15").process(events)["WZto3LNu"]
+assert out, "empty output"
+assert "qawa.histserv_output" not in sys.modules, "qawa.histserv_output was imported"
+"""
+
+
+@needs_m1
+def test_default_path_never_imports_histserv():
+    import subprocess
+    import sys
+    src = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(wzmod.__file__))))
+    caps = {"OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4", "MKL_NUM_THREADS": "4", "NUMEXPR_MAX_THREADS": "4"}
+    env = {**os.environ, **caps, "PYTHONPATH": os.pathsep.join([src, os.environ.get("PYTHONPATH", "")])}
+    result = subprocess.run([sys.executable, "-c", NO_HISTSERV_DRIVER, M1_FILE], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-3000:]
