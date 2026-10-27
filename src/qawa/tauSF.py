@@ -14,7 +14,7 @@ import uproot
 
 class tauIDScaleFactors:
     def __init__(self, era:str='2018', vsjet_wp:str='VTight', vse_wp:str='VVLoose', vsmu_wp:str='VLoose',
-                 isAPV=False, isEE=False, isBPix=False, clibhandler=None):
+                 isAPV=False, isEE=False, isBPix=False, clibhandler=None, nanoAODversion=None):
 
         config = {"2016": {"tagger": "DeepTau2017v2p1"},
                   "2017": {"tagger": "DeepTau2017v2p1"},
@@ -46,6 +46,9 @@ class tauIDScaleFactors:
             self._subera = ""
         self._erasubera += self._subera
         self.tagger = config[self._era]["tagger"]
+        if nanoAODversion == "v15":
+            # NanoAODv15 (Run 2 included) only has DeepTau2018v2p5, and the v15 tau.json.gz is calibrated for it
+            self.tagger = "DeepTau2018v2p5"
         _data_path = os.path.join(os.path.dirname(__file__), 'data')
         # Load CorrectionSet
         if clibhandler is not None:

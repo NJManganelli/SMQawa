@@ -14,6 +14,7 @@ from coffea.util import coffea_console
 import awkward as ak
 import numpy as np
 import os
+from types import SimpleNamespace
 
 
 jec_name_map = {
@@ -73,7 +74,30 @@ JETMET_RUN3_MITIGATIONS = {
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
-JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05}
+JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05, "Summer19UL18_JRV3": 90.0}
+
+class SplitJERSF:
+    # "newJERFormats" payloads ship the SF (JetEta, JetPt) and its uncertainty as separate corrections, with no
+    # 'systematic' input; expose them as one correction with a 'systematic' input (nom/up/down) like the old format
+    def __init__(self, sf, unc):
+        self.sf = sf
+        self.unc = unc
+        names = dict.fromkeys([inp.name for inp in sf.inputs] + [inp.name for inp in unc.inputs] + ['systematic'])
+        self.inputs = [SimpleNamespace(name=name) for name in names]
+
+    def evaluate(self, *args):
+        values = {inp.name: arg for inp, arg in zip(self.inputs, args)}
+        sf = evaluate(self.sf, values)
+        if values['systematic'] == 'nom':
+            return sf
+        unc = evaluate(self.unc, values)  # absolute uncertainty on the SF
+        return sf + unc if values['systematic'] == 'up' else sf - unc
+
+def jer_scale_factor(cset, jer_tag, jet_type):
+    sf = cset[f"{jer_tag}_MC_ScaleFactor_{jet_type}"]
+    if 'systematic' in [inp.name for inp in sf.inputs]:
+        return sf
+    return SplitJERSF(sf, cset[f"{jer_tag}_MC_SFUncertainty_{jet_type}"])
 
 def jetmet_mitigations(era):
     return JETMET_RUN3_MITIGATIONS.get(era, NO_MITIGATIONS)
@@ -391,7 +415,7 @@ class JMEUncertainty:
                 raise ValueError(f"jer_smear correction set could not be loaded from {str(clibhandler.getPath('jer_smear'))}")
             self.jer_smear = (
                 cset[f"{jer_tag}_MC_PtResolution_{jet_type}"],
-                cset[f"{jer_tag}_MC_ScaleFactor_{jet_type}"],
+                jer_scale_factor(cset, jer_tag, jet_type),
                 smear_cset["JERSmear"],
                 sources,
                 mitigations['jer_genmatched_only_eta'],
