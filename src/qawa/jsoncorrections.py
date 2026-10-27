@@ -56,24 +56,24 @@ _runII_v15_pogs_tags_pogtags_csets = (
     ("LUM", "Run2-2017-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
     ("LUM", "Run2-2018-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
 
-    ("BTV", "Run2-2016preVFP-UL-NanoAODv15", "add_btagging_wps", "btagging.json.gz"),
-    ("BTV", "Run2-2016postVFP-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
-    ("BTV", "Run2-2017-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
-    ("BTV", "Run2-2018-UL-NanoAODv15", "add_b_tagging_WPs", "btagging.json.gz"),
+    ("BTV", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-18", "btagging.json.gz"),
+    ("BTV", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-18", "btagging.json.gz"),
+    ("BTV", "Run2-2017-UL-NanoAODv15", "2026-06-18", "btagging.json.gz"),
+    ("BTV", "Run2-2018-UL-NanoAODv15", "2026-06-18", "btagging.json.gz"),
 
     ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
     ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
-    ("JME", "Run2-2016postVFP-UL-NanoAODv15", "22026-06-05", "met.json.gz"),
+    ("JME", "Run2-2016postVFP-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
     ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
     ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
-    ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-051", "met.json.gz"),
+    ("JME", "Run2-2016preVFP-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
     ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
     ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
     ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
-    ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
+    ("JME", "Run2-2018-UL-NanoAODv15", "newJERFormats", "jet_jerc.json.gz"), # same JECs as 2026-06-05, plus Summer19UL18_JRV3 JER
     ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
     ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
@@ -257,8 +257,8 @@ class CorrectionlibHandler:
                 if pog == "LUM" and self._era in ["2016", "2017", "2018"]:
                     # exception for no PU reweighting for v15 Run2
                     pass
-                if pog == "MUO" and self._era in ["2016", "2017", "2018"]:
-                    # exception for no PU reweighting for v15 Run2
+                elif pog == "MUO" and self._era in ["2016", "2017", "2018"]:
+                    # exception for no muon SFs for v15 Run2
                     pass
                 else:
                     continue
