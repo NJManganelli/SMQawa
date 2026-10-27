@@ -234,7 +234,7 @@ def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-base
             assert leptonIDs["electronID"] == "wp90iso"
         elif nanoAODversion == "v15":
             assert leptonIDs["muonID"] == "Tight"
-            assert leptonIDs["muonISO"] == "TightPFIso"
+            assert leptonIDs["muonISO"] in ["TightRelIso", "TightPFIso"]
             assert leptonIDs["electronID"] == "wp90iso"
         else:
             raise NotImplementedError
@@ -372,6 +372,35 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wp="VTight", tauIDvse
     )
 
     return tau[base_selection & ~overlap_leptons]
+
+def run2ul_puppi_jetid(jets, era):
+    # Run 2 UL AK4 PUPPI jet ID (no central jetid.json.gz for Run 2 NanoAODv15, which dropped Jet.jetId)
+    # Cuts from CMSSW PhysicsTools/SelectorUtils/interface/PFJetIDSelectionFunctor.h, RUN2UL16PUPPI / RUN2ULPUPPI
+    # (forward cuts as in its TIGHTLEPVETO block / JetID13TeVUL twiki). Returns the NanoAOD encoding: 2*Tight + 4*TightLepVeto
+    abseta = np.abs(jets.eta)
+    nhf, nef, chf, cef, muf = jets.neHEF, jets.neEmEF, jets.chHEF, jets.chEmEF, jets.muEF
+    nch, nneu = jets.chMultiplicity, jets.neMultiplicity
+    if era == "2016":
+        eta_c = 2.4
+        tr = (nhf < 0.98) & (nef < 0.99)
+        ec = nneu >= 1
+    else:
+        eta_c = 2.6
+        tr = (nhf < 0.9) & (nef < 0.99)
+        ec = nhf < 0.9999
+    central = (nhf < 0.9) & (nef < 0.9) & ((nch + nneu) > 1) & (chf > 0) & (nch > 0)
+    fw = (nef < 0.9) & (nneu > 2)
+    lepveto = (muf < 0.8) & (cef < 0.8)
+    in_c = abseta <= eta_c
+    in_tr = (abseta > eta_c) & (abseta <= 2.7)
+    in_ec = (abseta > 2.7) & (abseta <= 3.0)
+    in_fw = abseta > 3.0
+    tight = (in_c & central) | (in_tr & tr) | (in_ec & ec) | (in_fw & fw)
+    # TightLepVeto adds MUF/CEF < 0.8 in the central region (and 2.6 < |eta| <= 2.7 for 2017/2018)
+    tlv_region = in_c if era == "2016" else (in_c | in_tr)
+    tight_lep_veto = tight & (~tlv_region | lepveto)
+    return 2 * ak.values_astype(tight, np.int32) + 4 * ak.values_astype(tight_lep_veto, np.int32)
+
 
 def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9", *, era):
 
@@ -519,13 +548,19 @@ class wzinclusive_processor(processor.ProcessorABC):
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        
+        # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
+        # JER comes from the newJERFormats jet_jerc.json.gz; only the 2018 tag is verified so far, JER stays off for 2016/2017
+        self._use_clib_jme = self._era == "2024" or self._ver == "v15"
+        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
+            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
+            jer_tag = 'Summer19UL18_JRV3' if self._era == "2018" else '' # FIXME: add 2016/2017 JER tags
+
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
         self.jetPU_wp = 'M'
         self.electronID = "wp90iso"
         self.muonID = "Tight"
-        self.muonISO = "TightRelIso" if self._ver in [f"v{V}" for V in range(12)] else "TightPFIso"
+        self.muonISO = "TightRelIso" if self._era in ["2016", "2017", "2018"] else "TightPFIso"
         self.tauIDvsjet_wp = 'VTight' #This wp refers to the vtight tau we are selecting but it will be overwritten by VTigh and Loose wp for the Vtight and Loose tau SF in the tau_SF.py
         self.tauIDvse_wp = 'Tight'
         # Run 2 and 2024 (Run 3?)doesn't have VTight in SFs so fall back to Tight in the lookup alone, for if vse WP is nominally set to VTight above
@@ -536,7 +571,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         self.clibhandler.printStatus(console=coffea_console)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
-        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._era == "2024" else None, version=self._ver) 
+        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), doJER=bool(jer_tag), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver)
         try:
             self._jetid = self.clibhandler.getCorrectionSet("jetid")
         except KeyError as ke:
@@ -550,7 +585,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             #FIXME: might still need with AK4PUPPI
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
-                                       isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+                                       isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler, nanoAODversion=self._ver)
         
         _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
@@ -1406,6 +1441,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             deep_tau_mu = lead_tau_loose.rawDeepTau2018v2p5VSmu
             deep_tau_jet = lead_tau_loose.rawDeepTau2018v2p5VSjet
 
+        if "jetId" not in event.Jet.fields and self._jetid is None and self._era in ["2016", "2017", "2018"]:
+            event["Jet", "jetId"] = run2ul_puppi_jetid(event.Jet, self._era)
         if "jetId" not in event.Jet.fields:
             if self._ver in [f"v{V}" for V in range(12)]:
                 jet_type = "AK4CHS"
