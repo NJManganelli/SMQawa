@@ -324,7 +324,7 @@ def cmd_job(args):
             print("C4 poison marker from an earlier run in this directory: " + reason)
             return ho.POISON_EXIT_CODE
         key = ho.resolve_key(registry, args.das_name, pol=bool(cfg.get("pol")),
-                             split_by_charge=bool(cfg.get("split_by_charge")), split_FV=False, dd=None)
+                             split_by_charge=bool(cfg.get("split_by_charge")), split_FV=False)
         counter = JobCounter(os.path.abspath(f"job_{args.job_num}.jsonl"), args.fail_after_passes, args.fail_after_sends)
         install_c4_hooks(ho, histserv, counter, registry, key, args)
     elif any(v is not None for v in (args.fail_after_passes, args.fail_after_sends, args.fail_rpc_after_sends)):

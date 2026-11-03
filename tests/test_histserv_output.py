@@ -761,7 +761,7 @@ def test_nondeterministic_reason():
 
 def hand_registry(kind, options=OPTIONS, key=DAS_S, variations=None):
     variations = variations or {name: options[name] for name in ("pol", "split_by_charge", "split_FV")}
-    return {"options": dict(options), "samples": {key: {"kind": kind, "variations": dict(variations, eft=False, dd=None)}}}
+    return {"options": dict(options), "samples": {key: {"kind": kind, "variations": dict(variations, eft=False)}}}
 
 
 def test_constructor_consistency_errors():
@@ -931,7 +931,7 @@ def test_register_cli(server, tmp_path):
     entry = reg["samples"][DAS_X]
     assert set(entry["hists"]) == set(ho.make_processor(OPTIONS).build_histos())
     assert entry["dataset"] == "X" and entry["das"] == DAS_X and reg["max_chunks"] is None
-    assert entry["variations"] == {"pol": False, "split_by_charge": False, "split_FV": False, "eft": False, "dd": None}
+    assert entry["variations"] == {"pol": False, "split_by_charge": False, "split_FV": False, "eft": False}
     env = {k: v for k, v in os.environ.items() if k != "HISTSERV_ADDRESS"}
     run = subprocess.run([sys.executable, "-m", "qawa.histserv_output", "register", "--tag", "t", "--era", "2024",
                           "--version", "v15", "--sample", f"{DAS_X}=mc", "--output", str(tmp_path / "none.json")],
@@ -1371,72 +1371,28 @@ def test_cli_help_has_no_pickle_input():
     assert "--registry" in text and "pickle" not in text.replace("Job pickles are never read", "")
 
 
-DD_RUN2 = os.path.join(ROOT, "src", "qawa", "data", "dd", "Run2", "WZ_inclusive_data_driven_Run2.json")
-DD_RUN3 = os.path.join(ROOT, "src", "qawa", "data", "dd", "Run3", "WZ_inclusive_data_driven_Run3.json")
-
-
-def test_dd_register_and_collect(server, synthetic, tmp_path):
-    label = pk.dd_label(DD_RUN2)
+def test_reprocessed_data_register_and_collect(server, synthetic, tmp_path):
     data = {DAS_C: "data", DAS_D: "data"}
     first = synthetic_registry(server, samples=data)
     manifests = {key: production(first, key, n_files=1, base=i)[0] for i, key in enumerate(first["samples"])}
     assert ho.collect(first, manifests, str(tmp_path / "out1")) == 0
     stage1 = load(tmp_path / "out1" / final_name("Data"))
     results = {}
-    for name, factors in (("dd", (1.0, 2.0)), ("nominal", (1 + 1e-6, 1.0))):
-        reg = ho.register(server, "t", OPTIONS, data, uuid.uuid4().hex, dd_file=DD_RUN2)
-        assert sorted(reg["samples"]) == sorted(f"{das}#dd:{label}" for das in data)
-        for entry in reg["samples"].values():
-            assert entry["variations"]["dd"] == label and entry["dd_sha256"] == pk.file_sha256(DD_RUN2)
+    for name, factors in (("updated", (1.0, 2.0)), ("nominal", (1 + 1e-6, 1.0))):
+        reg = ho.register(server, "t", OPTIONS, data, uuid.uuid4().hex)
         with pytest.MonkeyPatch.context() as patch:
             patch.setitem(globals(), "WEIGHT", lambda syst_index, selected_event_indices, w=WEIGHT, f=factors: w(syst_index, selected_event_indices) * (f[0] if syst_index == 0 else f[1]))
             manifests = {key: production(reg, key, n_files=1, base=i)[0] for i, key in enumerate(reg["samples"])}
         out = tmp_path / f"out_{name}"
         assert ho.collect(reg, manifests, str(out)) == 0
-        assert sorted(os.listdir(out)) == ["collect.json", final_name("Data", suffix=f"__dd-{label}")]
-        results[name] = load(out / final_name("Data", suffix=f"__dd-{label}"))
-    assert datadriven.check_reprocessed(stage1, results["dd"]) == []
-    old, new = cells(stage1["Muon0"]["hist"]["met_pt"]), cells(results["dd"]["Muon0"]["hist"]["met_pt"])
+        assert final_name("Data") in os.listdir(out)
+        results[name] = load(out / final_name("Data"))
+    assert datadriven.check_reprocessed(stage1, results["updated"]) == []
+    old, new = cells(stage1["Muon0"]["hist"]["met_pt"]), cells(results["updated"]["Muon0"]["hist"]["met_pt"])
     assert np.array_equal(old[("chA", "nominal")], new[("chA", "nominal")])
     assert not np.array_equal(old[("chA", "up")], new[("chA", "up")])
     problems = datadriven.check_reprocessed(stage1, results["nominal"])
     assert len(problems) == 1 and "Muon0 met_pt: nominal differs" in problems[0]
-
-
-def test_dd_register_refusals(server, tmp_path):
-    gz = tmp_path / "dd.json.gz"
-    with open(DD_RUN2, "rb") as f:
-        gz.write_bytes(gzip.compress(f.read()))
-    plain = tmp_path / "plain_text.json.gz"
-    plain.write_text(open(DD_RUN2).read())
-    for sample, path in ((f"{DAS_X}=mc", DD_RUN2), (f"{DAS_C}=data", str(plain))):
-        args = ["register", "--address", server, "--tag", "t", "--era", "2024", "--version", "v15",
-                "--sample", sample, "--dd-file", path, "--output", str(tmp_path / "reg.json")]
-        assert ho.main(args) == 2
-        assert not (tmp_path / "reg.json").exists()
-    args = ["register", "--address", server, "--tag", "t", "--era", "2024", "--version", "v15",
-            "--sample", f"{DAS_C}=data", "--dd-file", str(gz), "--output", str(tmp_path / "reg.json")]
-    assert ho.main(args) == 0
-    assert (tmp_path / "reg.json").exists()
-
-
-def test_constructor_dd_checks(tmp_path):
-    label = pk.dd_label(DD_RUN3)
-    key = f"{DAS_C}#dd:{label}"
-    reg = hand_registry("data", key=key)
-    reg["samples"][key]["variations"]["dd"] = label
-    reg["samples"][key]["dd_sha256"] = pk.file_sha256(DD_RUN3)
-    other = tmp_path / "other.json"
-    other.write_text(open(DD_RUN3).read() + "\n")
-    kwargs = dict(era="2024", version="v15", run_period="C")
-    for dd_file, message in ((None, "no dd_file is given"), (str(other), "another sha256")):
-        with pytest.raises(ValueError, match=message):
-            wzmod.wzinclusive_processor(histserv_registry=reg, histserv_sample=key, dd_file=dd_file, **kwargs)
-    with pytest.raises(ValueError, match="registered without a dd file"):
-        wzmod.wzinclusive_processor(histserv_registry=hand_registry("data", key=DAS_C), histserv_sample=DAS_C,
-                                    dd_file=DD_RUN3, **kwargs)
-    proc = wzmod.wzinclusive_processor(histserv_registry=reg, histserv_sample=key, dd_file=DD_RUN3, **kwargs)
-    assert proc.dd_file == DD_RUN3 and proc.histserv_sample == key
 
 
 LOCAL_2018 = "/Users/nmangane/vz-main/SMQawa/DoubleMuon_UL2018_NanoAODv9.root"

@@ -413,17 +413,6 @@ def combine_era_corrections(per_era_ratios, eras, lumis, templates, is_probdy):
     return dict_for_hist_axis, ref_template
 
 
-def check_dd_file(path):
-    message = f"{path}: must be a correctionlib JSON (.json or .json.gz)"
-    if not str(path).endswith((".json", ".json.gz")):
-        raise ValueError(message)
-    try:
-        discover_systematics(path)
-        correctionlib.CorrectionSet.from_file(str(path))
-    except (ValueError, RuntimeError, gzip.BadGzipFile) as error:
-        raise ValueError(message) from error
-
-
 def is_data_record(record):
     if "kind" in record:
         return record["kind"] == "data"
