@@ -153,7 +153,7 @@ def main():
     parser.add_argument('--copyInput', action='store_true'     , help="xrdcp a file to the worker node before executing the coffea processor on it")
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
     parser.add_argument('--histserv-registry', type=str, default=None, help="fill one central histserv server instead of in-memory histograms (inc-WZ only): the registry JSON written by python -m qawa.histserv_output register")
-    parser.add_argument('--das-name', type=str, default=None, help="full DAS dataset name of the input (C4 registry key); derived from a /store/ path when not given; private datasets (tier USER) are not supported")
+    parser.add_argument('--das-name', type=str, default=None, help="full DAS dataset name of the input; derived from a /store/ path when not given; private datasets (tier USER) are not supported")
     parser.add_argument('--dd-file', type=str, default=None, help="data-driven estimate (correctionlib JSON) replacing the era default, for re-processing data with updated estimates (inc-WZ data only)")
 
     options = parser.parse_args()
