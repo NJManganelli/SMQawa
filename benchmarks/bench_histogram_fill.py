@@ -18,11 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_processor as bp  # noqa: E402
 import fill_engines  # noqa: E402
 import qawa.process.wztau2lnu_inclusive as wzmod  # noqa: E402
+import qawa.utils as utils  # noqa: E402
 
 DESCRIPTION = """Synthetic, file-free micro-benchmark of the histogram fill strategies of wzinclusive_processor.
 
-Every strategy fills the same rows with the same weights as C1 (wztau2lnu_inclusive.fill_histogram),
-through the shared prep of the processor module (channel_block, standard_weights, eft_term_weights).
+Every strategy fills the same selected events with the same weights as C1 (utils.fill_histogram),
+through the shared prep of qawa.utils (channel_selection_cache, syst_weight, syst_weight_eft_struct_const).
 
 Shapes (channels x slots x variables):
   nominal  27 x 35 x 55, one pass per chunk
@@ -125,11 +126,11 @@ def make_values(rng, n, variables, axes):
     return values
 
 
-def make_raw(rng, k, n):
-    raw = rng.uniform(0.2, 1.8, (k, n))
+def make_weight_syst_stack(rng, k, n):
+    weight_syst_stack = rng.uniform(0.2, 1.8, (k, n))
     for bad in (np.nan, np.inf, -np.inf):
-        raw[rng.random((k, n)) < 1e-3] = bad
-    return raw
+        weight_syst_stack[rng.random((k, n)) < 1e-3] = bad
+    return weight_syst_stack
 
 
 def pass_inputs(shape, axes, n, chunk, p):
@@ -137,7 +138,7 @@ def pass_inputs(shape, axes, n, chunk, p):
     spec = SHAPES[shape]
     selection = make_selection(rng, n)
     values = make_values(rng, n, spec["variables"], axes)
-    raw = make_raw(rng, spec["slots"], n)
+    weight_syst_stack = make_weight_syst_stack(rng, spec["slots"], n)
     if spec["passes"] > 1:
         labels = [(f"shift{p}",)]
     elif spec["slots"] == 1:
@@ -145,12 +146,12 @@ def pass_inputs(shape, axes, n, chunk, p):
     else:
         labels = [("nominal",)] + [(f"syst{k}",) for k in range(1, spec["slots"])]
     if spec["terms"]:
-        columns = [rng.uniform(-1.0, 1.0, n) for _ in range(spec["terms"])]
+        eft_struct_consts = [rng.uniform(-1.0, 1.0, n) for _ in range(spec["terms"])]
         terms = [f"t{t}" for t in range(spec["terms"])]
         labels = [(label, term) for (label,) in labels for term in terms]
-        weight = wzmod.eft_term_weights(raw, columns)
+        weight = utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts)
     else:
-        weight = wzmod.standard_weights(raw)
+        weight = utils.syst_weight(weight_syst_stack)
     state = {"selection": selection, "channels": CHANNELS, "block_cache": {}}
     return values, labels, weight, state
 
@@ -188,12 +189,12 @@ def multicell_growth(histos, key, values, labels, weight, exclude, pass_state):
     grown = hist.Hist(hist.axis.StrCategory([], name="channel", growth=True), *dense_axes,
                       storage=hist.storage.MultiCell(2 * k))
     channel_list = []
-    for channel, rows in wzmod.channel_block(exclude, pass_state):
-        cells = np.empty((len(rows), 2 * k))
+    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
+        cells = np.empty((len(selected_event_indices), 2 * k))
         for s in range(k):
-            cells[:, s] = weight(s, rows)
+            cells[:, s] = weight(s, selected_event_indices)
         np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
-        grown.fill(channel=channel, **{ax.name: values[ax.name][rows] for ax in dense_axes}, weight=cells)
+        grown.fill(channel=channel, **{ax.name: values[ax.name][selected_event_indices] for ax in dense_axes}, weight=cells)
         channel_list.append(channel)
     if not channel_list:
         return
@@ -206,7 +207,7 @@ def multicell_growth(histos, key, values, labels, weight, exclude, pass_state):
     histos[key] = output
 
 
-STRATEGIES = dict({"c1": wzmod.fill_histogram}, **fill_engines.ENGINES, chunked_persistent=None,
+STRATEGIES = dict({"c1": utils.fill_histogram}, **fill_engines.ENGINES, chunked_persistent=None,
                   multicell_growth=multicell_growth)
 
 
@@ -226,11 +227,11 @@ def run_strategy(name, shape, axes, events, chunks):
                     target = histos[key]
                     slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
                     sink = sinks.setdefault(key, ChunkedHist(*target.axes, storage=bh.storage.Weight()))
-                    for channel, rows in wzmod.channel_block((var,), state):
-                        gathered = {var: values[var][rows]}
-                        for k, label in enumerate(labels):
+                    for channel, selected_event_indices in utils.channel_selection_cache((var,), state):
+                        gathered = {var: values[var][selected_event_indices]}
+                        for syst_index, label in enumerate(labels):
                             sink.fill(channel=channel, **dict(zip(slot_names, label)), **gathered,
-                                      weight=weight(k, rows))
+                                      weight=weight(syst_index, selected_event_indices))
                 else:
                     STRATEGIES[name](histos, key, {var: values[var]}, labels, weight, (var,), state)
             fill_seconds += time.perf_counter() - t0
@@ -244,7 +245,7 @@ def run_strategy(name, shape, axes, events, chunks):
             h._variance_known = chunks * spec["passes"] == 1
         native = sinks
     else:
-        final = wzmod.merge_histogram_sets(outputs)[DATASET]
+        final = utils.merge_histogram_sets(outputs)[DATASET]
         native = final
     accumulate_seconds = time.perf_counter() - t0
     return dict(fill=fill_seconds, accumulate=accumulate_seconds, final=final, native=native, outputs=outputs)
@@ -284,7 +285,7 @@ def accumulation_costs(outputs):
             total += out[key]
     costs["chunkedhist_iadd"] = time.perf_counter() - t0
     t0 = time.perf_counter()
-    wzmod.merge_histogram_sets(outputs)
+    utils.merge_histogram_sets(outputs)
     costs["merge_histogram_sets"] = time.perf_counter() - t0
     return costs
 

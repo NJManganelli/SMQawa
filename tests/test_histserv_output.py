@@ -26,6 +26,7 @@ import qawa.datadriven as datadriven
 import qawa.histserv_output as ho
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as pk
+import qawa.utils as utils
 from qawa import lumi_record
 
 ROOT = os.environ.get("QAWA_EXPECTED_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -102,11 +103,11 @@ def fill_inputs():
     selection.add("met_pt", rng.random(N) < 0.5)
     selection.add("low", rng.random(N) < 0.3)
     selection.add("empty", np.zeros(N, dtype=bool))
-    raw = rng.uniform(0.2, 1.8, (len(LABELS), N))
-    raw[:, rng.integers(0, N, 5)] = np.nan
-    raw[:, rng.integers(0, N, 5)] = np.inf
+    weight_syst_stack = rng.uniform(0.2, 1.8, (len(LABELS), N))
+    weight_syst_stack[:, rng.integers(0, N, 5)] = np.nan
+    weight_syst_stack[:, rng.integers(0, N, 5)] = np.inf
     met = rng.uniform(-20, 700, N)
-    return selection, {"met_pt": met}, wzmod.standard_weights(raw)
+    return selection, {"met_pt": met}, utils.syst_weight(weight_syst_stack)
 
 
 SELECTION, VALUES, WEIGHT = fill_inputs()
@@ -188,7 +189,7 @@ def assert_same_hist(a, b):
 
 def local_fill():
     local = template()
-    wzmod.fill_histogram({"met_pt": local}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), pass_state())
+    utils.fill_histogram({"met_pt": local}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), pass_state())
     return local
 
 
@@ -848,8 +849,8 @@ def test_registered_keys_equal_output_keys(mode, monkeypatch):
     proc = wzmod.wzinclusive_processor(**options, **kwargs)
     dataset = "Muon0_Run2024C" if kind == "data" else "D"
     out = proc.process(file_events(path, 300, dataset, kind == "data", kind in ("signal", "eft")))[dataset]
-    assert out[wzmod.KIND_KEY] == {kind}
-    assert set(out) - {lumi_record.LUMI_KEY, wzmod.KIND_KEY} == set(ho.templates(ho.make_processor(options), kind))
+    assert out[utils.KIND_KEY] == {kind}
+    assert set(out) - {lumi_record.LUMI_KEY, utils.KIND_KEY} == set(ho.templates(ho.make_processor(options), kind))
 
 
 def assert_close_hist(a, b):
@@ -885,7 +886,7 @@ def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
                            for item in items)
     ho.begin_job(reg, das, ho.expected_chunks(items, {M1_FILE: M1_FILE}), {M1_FILE: record})
     c1 = runner(items, processor_instance=wzmod.wzinclusive_processor(era="2024", version="v15"))[dataset]
-    assert c1.pop(wzmod.KIND_KEY) == {"signal"}
+    assert c1.pop(utils.KIND_KEY) == {"signal"}
     c4_proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=das)
     results = []
     real_send = ho.send_histogram
@@ -1164,7 +1165,7 @@ def test_two_run_periods_and_duplicate_file(server, synthetic, tmp_path):
     assert ho.collect(reg, manifests, str(tmp_path / "F")) == 0
     final = load(tmp_path / "F" / final_name("Data"))
     assert list(final) == ["Muon0"] and final["Muon0"]["sumw"] == -2.0
-    merged = wzmod.merge_histogram_sets([{"m": c["Muon0"]["hist"]}, {"m": d["Muon0"]["hist"]}])["m"]["met_pt"]
+    merged = utils.merge_histogram_sets([{"m": c["Muon0"]["hist"]}, {"m": d["Muon0"]["hist"]}])["m"]["met_pt"]
     merged._variance_known = False
     assert_same_hist(final["Muon0"]["hist"]["met_pt"], merged)
     local = cells(local_fill())
@@ -1388,7 +1389,7 @@ def test_dd_register_and_collect(server, synthetic, tmp_path):
         for entry in reg["samples"].values():
             assert entry["variations"]["dd"] == label and entry["dd_sha256"] == pk.file_sha256(DD_RUN2)
         with pytest.MonkeyPatch.context() as patch:
-            patch.setitem(globals(), "WEIGHT", lambda k, rows, w=WEIGHT, f=factors: w(k, rows) * (f[0] if k == 0 else f[1]))
+            patch.setitem(globals(), "WEIGHT", lambda syst_index, selected_event_indices, w=WEIGHT, f=factors: w(syst_index, selected_event_indices) * (f[0] if syst_index == 0 else f[1]))
             manifests = {key: production(reg, key, n_files=1, base=i)[0] for i, key in enumerate(reg["samples"])}
         out = tmp_path / f"out_{name}"
         assert ho.collect(reg, manifests, str(out)) == 0

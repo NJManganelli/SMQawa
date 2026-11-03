@@ -18,6 +18,7 @@ import qawa.datadriven as datadriven
 import qawa.lumi_record as lumi_record
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as production_keys
+import qawa.utils as utils
 
 KINDS = ("data", "mc", "signal", "eft")
 OPTION_NAMES = ("era", "version", "pol", "split_by_charge", "split_FV")
@@ -549,10 +550,11 @@ def send_histogram(histos, key, values, labels, weight, exclude, pass_state):
     target = histos[key]
     slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
     fills = []
-    for channel, rows in wzmod.channel_block(exclude, pass_state):
-        dense = {name: v[rows] for name, v in values.items()}
-        for k, label in enumerate(labels):
-            fills.append({"channel": channel, **dict(zip(slot_names, label)), **dense, "weight": weight(k, rows)})
+    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
+        dense = {name: v[selected_event_indices] for name, v in values.items()}
+        for syst_index, label in enumerate(labels):
+            fills.append({"channel": channel, **dict(zip(slot_names, label)), **dense,
+                          "weight": weight(syst_index, selected_event_indices)})
     registry = ctx["registry"]
     hist_id = registry["samples"][ctx["key"]]["hists"][key]
     return send(registry, ctx["key"], hist_id, fills, ctx["unique_id"] + [key], ("-", ctx["chunk"], ctx["pass"]))
@@ -917,7 +919,7 @@ def collect(registry, manifests, outdir, filename="latest", per_entry=False, all
                 return refuse(f"collect: refused, {CHANGED_CATEGORY}: {key}; nothing was written")
             if dataset in content:
                 record = content[dataset]
-                record["hist"] = wzmod.merge_histogram_sets([{dataset: record["hist"]}, {dataset: hists}])[dataset]
+                record["hist"] = utils.merge_histogram_sets([{dataset: record["hist"]}, {dataset: hists}])[dataset]
                 record["sumw"] += sumw_total
                 if coverage["lumi"] is not None:
                     record["lumi"] = (coverage["lumi"] if "lumi" not in record

@@ -399,8 +399,12 @@ def cmd_job(args):
         record.update(counts=counter.totals, calls=counter.calls, returned=sorted(out),
                       returned_empty=all(not v for v in out.values()))
     else:
-        record_of = getattr(wzmod, "dataset_record", lambda ds, content, sumw: {"hist": content, "sumw": sumw})
-        write_pickle(f"histogram_{args.job_num}.pkl.gz", {ds: record_of(ds, content, float(sumw)) for ds, content in out.items()})
+        try:
+            from qawa.utils import dataset_record
+        except ImportError:
+            def dataset_record(ds, content, sumw):
+                return {"hist": content, "sumw": sumw}
+        write_pickle(f"histogram_{args.job_num}.pkl.gz", {ds: dataset_record(ds, content, float(sumw)) for ds, content in out.items()})
         record["output_bytes"] = os.path.getsize(f"histogram_{args.job_num}.pkl.gz")
     record["write"] = time.perf_counter() - t2
     if inst is not None:

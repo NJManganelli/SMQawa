@@ -8,6 +8,7 @@ import pytest
 from coffea.analysis_tools import PackedSelection
 
 import qawa.process.wztau2lnu_inclusive as wzmod
+import qawa.utils as utils
 
 
 N = 3000
@@ -46,14 +47,14 @@ def pass_state_for(selection, channels=CHANNELS):
     return {"selection": selection, "channels": channels, "block_cache": {}}
 
 
-def make_raw(k=4, n=N, seed=2):
+def make_weight_syst_stack(k=4, n=N, seed=2):
     rng = np.random.default_rng(seed)
-    raw = rng.uniform(0.2, 1.8, (k, n))
+    weight_syst_stack = rng.uniform(0.2, 1.8, (k, n))
     for i in range(k):
-        raw[i, rng.integers(0, n, 5)] = np.nan
-        raw[i, rng.integers(0, n, 5)] = np.inf
-        raw[i, rng.integers(0, n, 5)] = -np.inf
-    return raw
+        weight_syst_stack[i, rng.integers(0, n, 5)] = np.nan
+        weight_syst_stack[i, rng.integers(0, n, 5)] = np.inf
+        weight_syst_stack[i, rng.integers(0, n, 5)] = -np.inf
+    return weight_syst_stack
 
 
 def make_values(n=N, seed=3):
@@ -72,7 +73,7 @@ def cut_for(selection, requirements, exclude):
     return selection.require(**sel_args)
 
 
-def naive_fill(h, selection, channels, values, raw, labels, exclude, weight_fn):
+def naive_fill(h, selection, channels, values, weight_syst_stack, labels, exclude, weight_fn):
     for ch, reqs in channels.items():
         cut = cut_for(selection, reqs, exclude)
         for k, label in enumerate(labels):
@@ -82,8 +83,8 @@ def naive_fill(h, selection, channels, values, raw, labels, exclude, weight_fn):
     return h
 
 
-def standard_ref(raw):
-    return lambda k, cut: ak.nan_to_num(raw[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
+def standard_ref(weight_syst_stack):
+    return lambda k, cut: ak.nan_to_num(weight_syst_stack[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
 
 
 def assert_same(ref, out):
@@ -119,22 +120,22 @@ class Counting:
         self.weight = weight
         self.calls = 0
 
-    def __call__(self, k, rows):
+    def __call__(self, syst_index, selected_event_indices):
         self.calls += 1
-        return self.weight(k, rows)
+        return self.weight(syst_index, selected_event_indices)
 
 
 @pytest.mark.parametrize("var", ["met_pt", "dilep_dphi", "njets"])
 def test_fill_histogram_matches_naive(var):
     selection = make_selection()
-    raw = make_raw()
+    weight_syst_stack = make_weight_syst_stack()
     values = make_values()
-    labels = [(f"s{k}",) for k in range(len(raw))]
+    labels = [(f"s{k}",) for k in range(len(weight_syst_stack))]
     histos = {var: booked(axes_for(var))}
-    wzmod.fill_histogram(histos, var, {var: values[var]}, labels, wzmod.standard_weights(raw), (var,),
+    utils.fill_histogram(histos, var, {var: values[var]}, labels, utils.syst_weight(weight_syst_stack), (var,),
                          pass_state_for(selection))
-    ref = naive_fill(booked(axes_for(var)), selection, CHANNELS, {var: values[var]}, raw, labels, (var,),
-                     standard_ref(raw))
+    ref = naive_fill(booked(axes_for(var)), selection, CHANNELS, {var: values[var]}, weight_syst_stack, labels, (var,),
+                     standard_ref(weight_syst_stack))
     assert_same(ref, histos[var])
     assert "chEmpty" not in histos[var].axes[0]
     if var == "met_pt":
@@ -150,12 +151,12 @@ def test_substring_exclusion_dilep_dphi():
 
 def test_all_empty_target_untouched():
     selection = make_selection()
-    raw = make_raw()
+    weight_syst_stack = make_weight_syst_stack()
     channels = {"e1": ["empty"], "e2": ["empty", "triggers"]}
     target = booked(axes_for("met_pt"))
     histos = {"met_pt": target}
-    counting = Counting(wzmod.standard_weights(raw))
-    wzmod.fill_histogram(histos, "met_pt", {"met_pt": make_values()["met_pt"]}, [("s0",), ("s1",)], counting,
+    counting = Counting(utils.syst_weight(weight_syst_stack))
+    utils.fill_histogram(histos, "met_pt", {"met_pt": make_values()["met_pt"]}, [("s0",), ("s1",)], counting,
                          ("met_pt",), pass_state_for(selection, channels))
     assert counting.calls == 0
     assert histos["met_pt"] is target
@@ -170,21 +171,21 @@ def matched_extra(n=N, seed=4):
 
 def test_2d_extra_weight():
     selection = make_selection()
-    raw = make_raw(k=1)
+    weight_syst_stack = make_weight_syst_stack(k=1)
     values = make_values()
     extra = matched_extra()
     factor = ak.to_numpy(ak.fill_none(extra, 0.0))
     assert factor.dtype == np.float32
     axes = (axes_for("met_pt"), axes_for("njets"))
     histos = {"m": booked(*axes)}
-    wzmod.fill_histogram(histos, "m", {"met_pt": values["met_pt"], "njets": values["njets"]}, [("nominal",)],
-                         wzmod.scaled_weights(raw, factor), ("met_pt", "njets"), pass_state_for(selection))
+    utils.fill_histogram(histos, "m", {"met_pt": values["met_pt"], "njets": values["njets"]}, [("nominal",)],
+                         utils.syst_weight(weight_syst_stack, factor), ("met_pt", "njets"), pass_state_for(selection))
 
     def ref_weight(k, cut):
-        weight = raw[k][cut] * ak.to_numpy(ak.fill_none(extra, 0.0))[cut]
+        weight = weight_syst_stack[k][cut] * ak.to_numpy(ak.fill_none(extra, 0.0))[cut]
         return ak.nan_to_num(weight, nan=1.0, posinf=1.0, neginf=1.0)
     ref = naive_fill(booked(*axes), selection, CHANNELS, {"met_pt": values["met_pt"], "njets": values["njets"]},
-                     raw, [("nominal",)], ("met_pt", "njets"), ref_weight)
+                     weight_syst_stack, [("nominal",)], ("met_pt", "njets"), ref_weight)
     assert_same(ref, histos["m"])
 
 
@@ -194,70 +195,70 @@ def test_one_bin_many_entries():
     selection = PackedSelection(dtype="uint64")
     selection.add("triggers", np.ones(n, dtype=bool))
     channels = {"c": ["triggers"]}
-    raw = rng.uniform(0.1, 3.0, (2, n))
+    weight_syst_stack = rng.uniform(0.1, 3.0, (2, n))
     values = {"met_pt": np.full(n, 42.0)}
     histos = {"met_pt": booked(axes_for("met_pt"))}
     labels = [("a",), ("b",)]
-    wzmod.fill_histogram(histos, "met_pt", values, labels, wzmod.standard_weights(raw), ("met_pt",),
+    utils.fill_histogram(histos, "met_pt", values, labels, utils.syst_weight(weight_syst_stack), ("met_pt",),
                          pass_state_for(selection, channels))
-    ref = naive_fill(booked(axes_for("met_pt")), selection, channels, values, raw, labels, ("met_pt",),
-                     standard_ref(raw))
+    ref = naive_fill(booked(axes_for("met_pt")), selection, channels, values, weight_syst_stack, labels, ("met_pt",),
+                     standard_ref(weight_syst_stack))
     assert_same(ref, histos["met_pt"])
 
 
-def selected_rows(selection):
+def selected_events(selection):
     cut = cut_for(selection, CHANNELS["chA"], ())
     return cut, np.flatnonzero(cut)
 
 
-def test_standard_weights():
+def test_syst_weight():
     selection = make_selection()
-    raw = make_raw()
-    cut, rows = selected_rows(selection)
-    weight = wzmod.standard_weights(raw)
-    for k in range(len(raw)):
-        ref = ak.to_numpy(ak.nan_to_num(raw[k][cut], nan=1.0, posinf=1.0, neginf=1.0))
-        w = weight(k, rows)
+    weight_syst_stack = make_weight_syst_stack()
+    cut, selected_event_indices = selected_events(selection)
+    weight = utils.syst_weight(weight_syst_stack)
+    for k in range(len(weight_syst_stack)):
+        ref = ak.to_numpy(ak.nan_to_num(weight_syst_stack[k][cut], nan=1.0, posinf=1.0, neginf=1.0))
+        w = weight(k, selected_event_indices)
         assert np.array_equal(w, ref) and w.dtype == ref.dtype
         assert np.isfinite(w).all()
 
 
-def test_scaled_weights_2d_extra():
+def test_syst_weight_scale_2d_extra():
     selection = make_selection()
-    raw = make_raw()
+    weight_syst_stack = make_weight_syst_stack()
     extra = matched_extra()
     factor = ak.to_numpy(ak.fill_none(extra, 0.0))
     assert factor.dtype == np.float32
-    cut, rows = selected_rows(selection)
-    j = int(np.flatnonzero(factor[rows] == 0)[0])
-    raw[0, rows[j]] = np.nan
-    weight = wzmod.scaled_weights(raw, factor)
-    for k in range(len(raw)):
-        product = raw[k][cut] * ak.to_numpy(ak.fill_none(extra, 0.0))[cut]
+    cut, selected_event_indices = selected_events(selection)
+    j = int(np.flatnonzero(factor[selected_event_indices] == 0)[0])
+    weight_syst_stack[0, selected_event_indices[j]] = np.nan
+    weight = utils.syst_weight(weight_syst_stack, factor)
+    for k in range(len(weight_syst_stack)):
+        product = weight_syst_stack[k][cut] * ak.to_numpy(ak.fill_none(extra, 0.0))[cut]
         ref = ak.to_numpy(ak.nan_to_num(product, nan=1.0, posinf=1.0, neginf=1.0))
-        w = weight(k, rows)
+        w = weight(k, selected_event_indices)
         assert np.array_equal(w, ref)
         assert w.dtype == ref.dtype
-    assert weight(0, rows)[j] == 1.0
+    assert weight(0, selected_event_indices)[j] == 1.0
 
 
-def test_eft_term_weights():
+def test_syst_weight_eft_struct_const():
     selection = make_selection()
-    raw = make_raw()
-    cut, rows = selected_rows(selection)
+    weight_syst_stack = make_weight_syst_stack()
+    cut, selected_event_indices = selected_events(selection)
     rng = np.random.default_rng(6)
-    columns = [rng.normal(0, 1, N) for _ in range(3)]
-    columns[1][rows[:4]] = np.nan
-    n_terms = len(columns)
-    weight = wzmod.eft_term_weights(raw, columns)
-    for k in range(len(raw)):
-        w_eft = ak.nan_to_num(raw[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
+    eft_struct_consts = [rng.normal(0, 1, N) for _ in range(3)]
+    eft_struct_consts[1][selected_event_indices[:4]] = np.nan
+    n_terms = len(eft_struct_consts)
+    weight = utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts)
+    for k in range(len(weight_syst_stack)):
+        w_eft = ak.nan_to_num(weight_syst_stack[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
         for t in range(n_terms):
-            ref = ak.to_numpy(w_eft * columns[t][cut])
-            w = weight(k * n_terms + t, rows)
+            ref = ak.to_numpy(w_eft * eft_struct_consts[t][cut])
+            w = weight(k * n_terms + t, selected_event_indices)
             assert np.array_equal(w, ref, equal_nan=True) and w.dtype == ref.dtype
             assert np.isnan(w).any() == (t == 1)
-    assert np.isfinite(weight(0, rows)).all()
+    assert np.isfinite(weight(0, selected_event_indices)).all()
 
 
 def pol_case():
@@ -265,81 +266,81 @@ def pol_case():
     selection = PackedSelection(dtype="uint64")
     selection.add("triggers", np.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 1], dtype=bool))
     channels = {"c": ["triggers"]}
-    raw = np.ones((3, n))
-    raw[0, [0, 1, 2]] = [np.nan, np.inf, -np.inf]
-    raw[1, [3, 4, 5]] = [np.nan, np.inf, -np.inf]
-    raw[2, [6, 7, 9]] = [np.nan, np.inf, -np.inf]
-    raw *= np.linspace(0.5, 2.0, n)[None, :]
+    weight_syst_stack = np.ones((3, n))
+    weight_syst_stack[0, [0, 1, 2]] = [np.nan, np.inf, -np.inf]
+    weight_syst_stack[1, [3, 4, 5]] = [np.nan, np.inf, -np.inf]
+    weight_syst_stack[2, [6, 7, 9]] = [np.nan, np.inf, -np.inf]
+    weight_syst_stack *= np.linspace(0.5, 2.0, n)[None, :]
     pol_w = ak.values_astype(ak.Array([0.0, 0.5, None, 0.0, 0.5, None, 0.0, 0.5, 1.0, None]), np.float32)
     values = {"x": np.linspace(-0.9, 0.9, n)}
-    return selection, channels, raw, pol_w, values
+    return selection, channels, weight_syst_stack, pol_w, values
 
 
-def pol_reference(raw, pol_w, cut, k):
+def pol_reference(weight_syst_stack, pol_w, cut, k):
     pw = ak.to_numpy(ak.fill_none(pol_w[cut], 1.0))
-    w = raw[k][cut] * pw
+    w = weight_syst_stack[k][cut] * pw
     return ak.to_numpy(ak.nan_to_num(w, nan=1.0, posinf=1.0, neginf=1.0))
 
 
 @pytest.mark.parametrize("factor_kind", ["pol", "t27"])
 def test_pol_clone_operation_order(factor_kind):
-    selection, channels, raw, pol_w, values = pol_case()
+    selection, channels, weight_syst_stack, pol_w, values = pol_case()
     if factor_kind == "t27":
         rescued = ak.Array([0.0, 1.0, None, 0.0, None, 1.0, 0.0, 1.0, 1.0, None])
         pol_w = ak.values_astype(rescued < 0.5, np.float32)
     factor = ak.to_numpy(ak.fill_none(pol_w, 1.0))
     cut = selection.require(triggers=True)
-    rows = np.flatnonzero(cut)
-    weight = wzmod.scaled_weights(raw, factor)
+    selected_event_indices = np.flatnonzero(cut)
+    weight = utils.syst_weight(weight_syst_stack, factor)
     for k in range(3):
-        ref = pol_reference(raw, pol_w, cut, k)
-        w = weight(k, rows)
+        ref = pol_reference(weight_syst_stack, pol_w, cut, k)
+        w = weight(k, selected_event_indices)
         assert np.array_equal(w, ref) and w.dtype == ref.dtype
     axis = hist.axis.Regular(4, -1, 1, name="x")
     histos = {"x_w": booked(axis)}
     labels = [("a",), ("b",), ("c",)]
-    wzmod.fill_histogram(histos, "x_w", values, labels, wzmod.scaled_weights(raw, factor), ("x",),
+    utils.fill_histogram(histos, "x_w", values, labels, utils.syst_weight(weight_syst_stack, factor), ("x",),
                          pass_state_for(selection, channels))
     ref = booked(axis)
     for k, (label,) in enumerate(labels):
-        ref.fill(channel="c", systematic=label, x=values["x"][cut], weight=pol_reference(raw, pol_w, cut, k))
+        ref.fill(channel="c", systematic=label, x=values["x"][cut], weight=pol_reference(weight_syst_stack, pol_w, cut, k))
     assert_same(ref, histos["x_w"])
     if factor_kind == "pol":
-        wrong = np.nan_to_num(raw[0][rows], nan=1.0, posinf=1.0, neginf=1.0) * factor[rows]
-        assert not np.array_equal(wrong, pol_reference(raw, pol_w, cut, 0))
+        wrong = np.nan_to_num(weight_syst_stack[0][selected_event_indices], nan=1.0, posinf=1.0, neginf=1.0) * factor[selected_event_indices]
+        assert not np.array_equal(wrong, pol_reference(weight_syst_stack, pol_w, cut, 0))
 
 
 def eft_case():
     selection = make_selection()
-    raw = make_raw(k=4)
+    weight_syst_stack = make_weight_syst_stack(k=4)
     rng = np.random.default_rng(7)
     terms = ["sm", "lin_cW", "quad_cW"]
-    columns = [rng.normal(1, 0.5, N) for _ in terms]
-    columns[1][rng.integers(0, N, 30)] = np.nan
-    labels = [(f"s{k}", t) for k in range(len(raw)) for t in terms]
-    return selection, raw, terms, columns, labels
+    eft_struct_consts = [rng.normal(1, 0.5, N) for _ in terms]
+    eft_struct_consts[1][rng.integers(0, N, 30)] = np.nan
+    labels = [(f"s{k}", t) for k in range(len(weight_syst_stack)) for t in terms]
+    return selection, weight_syst_stack, terms, eft_struct_consts, labels
 
 
-def eft_reference(selection, raw, terms, columns, values):
+def eft_reference(selection, weight_syst_stack, terms, eft_struct_consts, values):
     ref = booked(axes_for("met_pt"), eft=True)
     for ch, reqs in CHANNELS.items():
         cut = cut_for(selection, reqs, ("met_pt",))
-        for k in range(len(raw)):
-            w_eft = ak.nan_to_num(raw[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
+        for k in range(len(weight_syst_stack)):
+            w_eft = ak.nan_to_num(weight_syst_stack[k][cut], nan=1.0, posinf=1.0, neginf=1.0)
             for t, term in enumerate(terms):
                 ref.fill(channel=ch, systematic=f"s{k}", eft=term, met_pt=values["met_pt"][cut],
-                         weight=w_eft * columns[t][cut])
+                         weight=w_eft * eft_struct_consts[t][cut])
     return ref
 
 
 def test_eft_target_matches_naive():
-    selection, raw, terms, columns, labels = eft_case()
+    selection, weight_syst_stack, terms, eft_struct_consts, labels = eft_case()
     values = make_values()
     histos = {"met_pt_eft": booked(axes_for("met_pt"), eft=True)}
-    wzmod.fill_histogram(histos, "met_pt_eft", {"met_pt": values["met_pt"]}, labels,
-                         wzmod.eft_term_weights(raw, columns), ("met_pt",), pass_state_for(selection))
+    utils.fill_histogram(histos, "met_pt_eft", {"met_pt": values["met_pt"]}, labels,
+                         utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts), ("met_pt",), pass_state_for(selection))
     out = histos["met_pt_eft"]
-    assert_same(eft_reference(selection, raw, terms, columns, values), out)
+    assert_same(eft_reference(selection, weight_syst_stack, terms, eft_struct_consts, values), out)
     assert np.isnan(out.view(flow=True)["value"]).any()
     nan_terms = {list(out.axes[2])[i[2]] for i in np.argwhere(np.isnan(out.view(flow=True)["value"]))}
     assert nan_terms == {"lin_cW"}
@@ -349,31 +350,32 @@ def test_n_minus_one_key():
     reqs = ["triggers", "met_pt", "low_met_pt", "~low_met_pt", "dilep_dphi_met", "~require-2lep"]
     for exclude in [(), ("met_pt",), ("dilep_dphi",), ("met_pt", "dilep_dphi")]:
         sel_args = {s.replace('~', ''): (False if '~' in s else True) for s in reqs if all(e not in s for e in exclude)}
-        key = wzmod.n_minus_one_key(reqs, exclude)
+        key = utils.n_minus_one_key(reqs, exclude)
         assert key == tuple(sorted(sel_args.items()))
         selection = make_selection()
         assert np.array_equal(selection.require(**dict(key)), selection.require(**sel_args))
-    assert dict(wzmod.n_minus_one_key(reqs, ()))["low_met_pt"] is False
-    assert wzmod.n_minus_one_key(["met_pt"], ("met_pt",)) == ()
-    assert wzmod.n_minus_one_key([], ("x",)) == ()
+    assert dict(utils.n_minus_one_key(reqs, ()))["low_met_pt"] is False
+    assert utils.n_minus_one_key(["met_pt"], ("met_pt",)) == ()
+    assert utils.n_minus_one_key([], ("x",)) == ()
     assert make_selection().require(**dict(())).all()
 
 
 MUTABLE = (dict, list, set, collections.abc.MutableMapping, collections.abc.MutableSet,
            collections.abc.MutableSequence)
-ENGINE = ("fill_histogram", "channel_block", "n_minus_one_key", "standard_weights", "scaled_weights",
-          "eft_term_weights")
+ENGINE = ("fill_histogram", "channel_selection_cache", "n_minus_one_key", "syst_weight",
+          "syst_weight_eft_struct_const")
 
 
 def container_sizes():
     sizes = {}
-    for name, value in vars(wzmod).items():
-        if isinstance(value, MUTABLE):
-            sizes[("module", name)] = len(value)
-        if hasattr(value, "cache_info"):
-            sizes[("cache", name)] = value.cache_info().currsize
+    for module in (wzmod, utils):
+        for name, value in vars(module).items():
+            if isinstance(value, MUTABLE):
+                sizes[(module.__name__, name)] = len(value)
+            if hasattr(value, "cache_info"):
+                sizes[("cache", module.__name__, name)] = value.cache_info().currsize
     for fname in ENGINE:
-        f = getattr(wzmod, fname)
+        f = getattr(utils, fname)
         assert not hasattr(f, "cache_info")
         for name, value in vars(f).items():
             if isinstance(value, MUTABLE):
@@ -391,79 +393,79 @@ def container_sizes():
     return sizes
 
 
-def fill_one(histos, key, selection, channels, raw, values, state, weight=None):
-    labels = [(f"s{k}",) for k in range(len(raw))]
+def fill_one(histos, key, selection, channels, weight_syst_stack, values, state, weight=None):
+    labels = [(f"s{k}",) for k in range(len(weight_syst_stack))]
     histos[key] = booked(axes_for("met_pt"))
-    wzmod.fill_histogram(histos, key, {"met_pt": values["met_pt"]}, labels, weight or wzmod.standard_weights(raw),
+    utils.fill_histogram(histos, key, {"met_pt": values["met_pt"]}, labels, weight or utils.syst_weight(weight_syst_stack),
                          ("met_pt",), state)
     return histos[key]
 
 
-def assert_blocks_hold_rows(state):
+def assert_blocks_hold_event_indices(state):
     for block in state["block_cache"].values():
         assert isinstance(block, tuple)
         for pair in block:
             assert isinstance(pair, tuple) and len(pair) == 2
-            name, rows = pair
+            name, selected_event_indices = pair
             assert isinstance(name, str)
-            assert isinstance(rows, np.ndarray) and np.issubdtype(rows.dtype, np.integer)
+            assert isinstance(selected_event_indices, np.ndarray) and np.issubdtype(selected_event_indices.dtype, np.integer)
 
 
 def test_cache_safety():
     before = container_sizes()
-    raw = make_raw(k=2)
+    weight_syst_stack = make_weight_syst_stack(k=2)
     values = make_values()
 
     selection = make_selection()
     state = pass_state_for(selection)
     histos = {}
-    out2 = fill_one(histos, "a", selection, CHANNELS, raw, values, state, wzmod.scaled_weights(raw, np.full(N, 2.0)))
-    out3 = fill_one(histos, "b", selection, CHANNELS, raw, values, state, wzmod.scaled_weights(raw, np.full(N, 3.0)))
+    out2 = fill_one(histos, "a", selection, CHANNELS, weight_syst_stack, values, state, utils.syst_weight(weight_syst_stack, np.full(N, 2.0)))
+    out3 = fill_one(histos, "b", selection, CHANNELS, weight_syst_stack, values, state, utils.syst_weight(weight_syst_stack, np.full(N, 3.0)))
     for out, f in ((out2, 2.0), (out3, 3.0)):
-        ref = naive_fill(booked(axes_for("met_pt")), selection, CHANNELS, {"met_pt": values["met_pt"]}, raw,
-                         [(f"s{k}",) for k in range(len(raw))], ("met_pt",),
-                         lambda k, cut, f=f: ak.nan_to_num(raw[k][cut] * np.full(N, f)[cut], nan=1.0, posinf=1.0,
+        ref = naive_fill(booked(axes_for("met_pt")), selection, CHANNELS, {"met_pt": values["met_pt"]}, weight_syst_stack,
+                         [(f"s{k}",) for k in range(len(weight_syst_stack))], ("met_pt",),
+                         lambda k, cut, f=f: ak.nan_to_num(weight_syst_stack[k][cut] * np.full(N, f)[cut], nan=1.0, posinf=1.0,
                                                            neginf=1.0))
         assert_same(ref, out)
     assert not np.array_equal(out2.view(flow=True)["value"], out3.view(flow=True)["value"])
 
     renamed = {f"{k}_x": v for k, v in CHANNELS.items()}
-    out_a = fill_one({}, "c", selection, CHANNELS, raw, values, pass_state_for(selection))
-    out_b = fill_one({}, "c", selection, renamed, raw, values, pass_state_for(selection, renamed))
+    out_a = fill_one({}, "c", selection, CHANNELS, weight_syst_stack, values, pass_state_for(selection))
+    out_b = fill_one({}, "c", selection, renamed, weight_syst_stack, values, pass_state_for(selection, renamed))
     assert set(out_b.axes[0]) == {f"{c}_x" for c in out_a.axes[0]}
 
     state = pass_state_for(selection)
-    first = wzmod.channel_block(("leading_lep_pt",), state)
-    second = wzmod.channel_block(("dilep_deta",), state)
+    first = utils.channel_selection_cache(("leading_lep_pt",), state)
+    second = utils.channel_selection_cache(("dilep_deta",), state)
     assert len(state["block_cache"]) == 1 and first is second
-    wzmod.channel_block(("met_pt",), state)
+    utils.channel_selection_cache(("met_pt",), state)
     assert len(state["block_cache"]) == 2
-    assert_blocks_hold_rows(state)
+    assert_blocks_hold_event_indices(state)
 
     sel1, sel2 = make_selection(seed=11), make_selection(seed=12)
     s1, s2 = pass_state_for(sel1), pass_state_for(sel2)
-    o1 = fill_one({}, "d", sel1, CHANNELS, raw, values, s1)
-    o2 = fill_one({}, "d", sel2, CHANNELS, raw, values, s2)
+    o1 = fill_one({}, "d", sel1, CHANNELS, weight_syst_stack, values, s1)
+    o2 = fill_one({}, "d", sel2, CHANNELS, weight_syst_stack, values, s2)
     for sel, state_, out in ((sel1, s1, o1), (sel2, s2, o2)):
-        ref = naive_fill(booked(axes_for("met_pt")), sel, CHANNELS, {"met_pt": values["met_pt"]}, raw,
-                         [(f"s{k}",) for k in range(len(raw))], ("met_pt",), standard_ref(raw))
+        ref = naive_fill(booked(axes_for("met_pt")), sel, CHANNELS, {"met_pt": values["met_pt"]}, weight_syst_stack,
+                         [(f"s{k}",) for k in range(len(weight_syst_stack))], ("met_pt",), standard_ref(weight_syst_stack))
         assert_same(ref, out)
-        block = wzmod.channel_block(("met_pt",), state_)
-        expected_rows = np.concatenate([np.flatnonzero(cut_for(sel, r, ("met_pt",))) for r in CHANNELS.values()])
-        assert np.array_equal(np.concatenate([rows for _, rows in block]), expected_rows)
-        assert_blocks_hold_rows(state_)
+        block = utils.channel_selection_cache(("met_pt",), state_)
+        expected_event_indices = np.concatenate([np.flatnonzero(cut_for(sel, r, ("met_pt",))) for r in CHANNELS.values()])
+        assert np.array_equal(np.concatenate([selected_event_indices for _, selected_event_indices in block]), expected_event_indices)
+        assert_blocks_hold_event_indices(state_)
     assert not np.array_equal(o1.view(flow=True)["value"], o2.view(flow=True)["value"])
 
     sel3 = make_selection(seed=13)
     s3 = pass_state_for(sel3)
-    o3 = fill_one({}, "e", sel3, CHANNELS, raw, values, s3)
+    o3 = fill_one({}, "e", sel3, CHANNELS, weight_syst_stack, values, s3)
     del sel3, s3
     gc.collect()
     sel4 = make_selection(seed=14)
     s4 = pass_state_for(sel4)
-    o4 = fill_one({}, "e", sel4, CHANNELS, raw, values, s4)
-    ref4 = naive_fill(booked(axes_for("met_pt")), sel4, CHANNELS, {"met_pt": values["met_pt"]}, raw,
-                      [(f"s{k}",) for k in range(len(raw))], ("met_pt",), standard_ref(raw))
+    o4 = fill_one({}, "e", sel4, CHANNELS, weight_syst_stack, values, s4)
+    ref4 = naive_fill(booked(axes_for("met_pt")), sel4, CHANNELS, {"met_pt": values["met_pt"]}, weight_syst_stack,
+                      [(f"s{k}",) for k in range(len(weight_syst_stack))], ("met_pt",), standard_ref(weight_syst_stack))
     assert_same(ref4, o4)
     assert not np.array_equal(o3.view(flow=True)["value"], o4.view(flow=True)["value"])
 
@@ -523,7 +525,7 @@ def assert_same_merge(merged, ref):
 
 def test_merge_histogram_sets_matches_accumulate():
     from coffea import processor
-    merged = wzmod.merge_histogram_sets(merge_inputs())
+    merged = utils.merge_histogram_sets(merge_inputs())
     ref = processor.accumulate(merge_inputs())
     assert ref["ds"]["overlap"]._variance_known is False
     assert ref["ds"]["single"]._variance_known is True
@@ -532,11 +534,11 @@ def test_merge_histogram_sets_matches_accumulate():
     assert list(merged["ds"]["disjoint"].axes["channel"]) == ["chA", "chB", "chC"]
 
     one = merge_inputs()[2]
-    assert_same_merge(wzmod.merge_histogram_sets([one]), processor.accumulate([one]))
+    assert_same_merge(utils.merge_histogram_sets([one]), processor.accumulate([one]))
 
 
 def test_merge_histogram_sets_empty_cases():
-    assert wzmod.merge_histogram_sets([]) == {}
-    assert wzmod.merge_histogram_sets([{}, {}]) == {}
-    assert wzmod.merge_histogram_sets([{"ds": {}}, {"ds": {}}]) == {"ds": {}}
-    assert wzmod.merge_histogram_sets([{}, {"ds": {}}, {}]) == {"ds": {}}
+    assert utils.merge_histogram_sets([]) == {}
+    assert utils.merge_histogram_sets([{}, {}]) == {}
+    assert utils.merge_histogram_sets([{"ds": {}}, {"ds": {}}]) == {"ds": {}}
+    assert utils.merge_histogram_sets([{}, {"ds": {}}, {}]) == {"ds": {}}

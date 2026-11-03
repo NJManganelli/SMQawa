@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import qawa.process.wztau2lnu_inclusive as wzmod
+import qawa.utils as utils
 
 M1_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
            "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
@@ -99,13 +100,13 @@ def read_map():
 
 
 def test_n_minus_one_collisions():
-    assert wzmod.n_minus_one_collisions(["dilep_dphi"], ["dilep_dphi_met"]) == [("dilep_dphi", "dilep_dphi_met")]
-    assert wzmod.n_minus_one_collisions(["tau_vtight_dphi_dilep"], ["tau_vtight_dphi_dilep"]) == []
+    assert utils.n_minus_one_collisions(["dilep_dphi"], ["dilep_dphi_met"]) == [("dilep_dphi", "dilep_dphi_met")]
+    assert utils.n_minus_one_collisions(["tau_vtight_dphi_dilep"], ["tau_vtight_dphi_dilep"]) == []
     variables = ["njets", "met_pt", "dilep_m"]
     selections = ["1njets", "high_met_pt", "0njets", "dilep_m", "low_met_pt"]
     expected = [("met_pt", "high_met_pt"), ("met_pt", "low_met_pt"), ("njets", "0njets"), ("njets", "1njets")]
-    assert wzmod.n_minus_one_collisions(variables, selections) == expected
-    assert wzmod.n_minus_one_collisions(variables[::-1], selections[::-1]) == expected
+    assert utils.n_minus_one_collisions(variables, selections) == expected
+    assert utils.n_minus_one_collisions(variables[::-1], selections[::-1]) == expected
 
 
 def test_rename_map_consistency():
@@ -188,8 +189,8 @@ def booked_names(histos):
 def inventory():
     result = {}
     process_shift = wzmod.wzinclusive_processor.process_shift
-    n_minus_one_key = wzmod.n_minus_one_key
-    channel_block = wzmod.channel_block
+    n_minus_one_key = utils.n_minus_one_key
+    channel_selection_cache = utils.channel_selection_cache
     for mode, (kwargs, (path, dataset, is_data, is_signal)) in MODES.items():
         excludes, selections = set(), set()
 
@@ -197,16 +198,16 @@ def inventory():
             excludes.add(tuple(exclude))
             return n_minus_one_key(requirements, exclude)
 
-        def recorded_block(exclude, pass_state):
+        def recorded_channel_selection_cache(exclude, pass_state):
             selections.update(pass_state["selection"].names)
-            return channel_block(exclude, pass_state)
+            return channel_selection_cache(exclude, pass_state)
 
         def nominal_only(self, event, shift_name=''):
             return process_shift(self, event, shift_name) if shift_name is None else {}
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(wzmod, "n_minus_one_key", recorded_key)
-            mp.setattr(wzmod, "channel_block", recorded_block)
+            mp.setattr(utils, "n_minus_one_key", recorded_key)
+            mp.setattr(utils, "channel_selection_cache", recorded_channel_selection_cache)
             mp.setattr(wzmod.wzinclusive_processor, "process_shift", nominal_only)
             proc = wzmod.wzinclusive_processor(era="2024", version="v15", **kwargs)
             out = proc.process(mode_events(path, 1000, dataset, is_data, is_signal))[dataset]
@@ -232,7 +233,7 @@ def test_n_minus_one_inventory(inventory):
     observed = set()
     for rec in inventory.values():
         assert rec["selections"]
-        observed |= set(wzmod.n_minus_one_collisions(rec["variables"], rec["selections"]))
+        observed |= set(utils.n_minus_one_collisions(rec["variables"], rec["selections"]))
     assert observed <= ALLOWED, sorted(observed - ALLOWED)
     registered = set().union(*(rec["selections"] for rec in inventory.values()))
     for pair in sorted(ALLOWED):

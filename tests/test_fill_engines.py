@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import qawa.process.wztau2lnu_inclusive as wzmod
+import qawa.utils as utils
 
 ROOT = os.environ.get("QAWA_EXPECTED_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -51,10 +52,10 @@ def assert_close(ref, out):
 
 def standard_case():
     selection = helpers.make_selection()
-    raw = helpers.make_raw(k=3)
+    weight_syst_stack = helpers.make_weight_syst_stack(k=3)
     values = {"met_pt": helpers.make_values()["met_pt"]}
-    labels = [(f"s{k}",) for k in range(len(raw))]
-    return selection, raw, values, labels
+    labels = [(f"s{k}",) for k in range(len(weight_syst_stack))]
+    return selection, weight_syst_stack, values, labels
 
 
 def fill_with(engine, key, axes, values, labels, weight, selection, eft=False):
@@ -66,11 +67,11 @@ def fill_with(engine, key, axes, values, labels, weight, selection, eft=False):
 
 @pytest.mark.parametrize("name", sorted(fill_engines.ENGINES))
 def test_engine_equals_c1(name):
-    selection, raw, values, labels = standard_case()
+    selection, weight_syst_stack, values, labels = standard_case()
     axis = helpers.axes_for("met_pt")
-    c1, _ = fill_with(wzmod.fill_histogram, "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    c1, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                       selection)
-    out, _ = fill_with(fill_engines.ENGINES[name], "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    out, _ = fill_with(fill_engines.ENGINES[name], "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                        selection)
     assert "chEmpty" not in out.axes[0]
     assert_close(c1, out)
@@ -78,22 +79,22 @@ def test_engine_equals_c1(name):
 
 @pytest.mark.parametrize("name", sorted(fill_engines.ENGINES))
 def test_engine_equals_c1_eft(name):
-    selection, raw, terms, columns, labels = helpers.eft_case()
+    selection, weight_syst_stack, terms, eft_struct_consts, labels = helpers.eft_case()
     values = {"met_pt": helpers.make_values()["met_pt"]}
     axis = helpers.axes_for("met_pt")
-    weight = wzmod.eft_term_weights(raw, columns)
-    c1, _ = fill_with(wzmod.fill_histogram, "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
+    weight = utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts)
+    c1, _ = fill_with(utils.fill_histogram, "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
     out, _ = fill_with(fill_engines.ENGINES[name], "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
     assert np.isnan(c1.view(flow=True)["value"]).any()
     assert_close(c1, out)
 
 
 def test_transposed_write_back_is_detected():
-    selection, raw, values, labels = standard_case()
+    selection, weight_syst_stack, values, labels = standard_case()
     axis = helpers.axes_for("met_pt")
-    c1, _ = fill_with(wzmod.fill_histogram, "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    c1, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                       selection)
-    out, _ = fill_with(fill_engines.multicell, "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    out, _ = fill_with(fill_engines.multicell, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                        selection)
     view = out.view(flow=True)
     view[:, :] = view[:, ::-1]
@@ -102,13 +103,13 @@ def test_transposed_write_back_is_detected():
 
 
 def test_multicell_vs_chunkedhist():
-    selection, raw, values, labels = standard_case()
+    selection, weight_syst_stack, values, labels = standard_case()
     axis = helpers.axes_for("met_pt")
-    naive = helpers.naive_fill(helpers.booked(axis), selection, CHANNELS, values, raw, labels, ("met_pt",),
-                               helpers.standard_ref(raw))
-    multicell, _ = fill_with(fill_engines.multicell, "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    naive = helpers.naive_fill(helpers.booked(axis), selection, CHANNELS, values, weight_syst_stack, labels, ("met_pt",),
+                               helpers.standard_ref(weight_syst_stack))
+    multicell, _ = fill_with(fill_engines.multicell, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                              selection)
-    chunked, _ = fill_with(fill_engines.chunked, "met_pt", (axis,), values, labels, wzmod.standard_weights(raw),
+    chunked, _ = fill_with(fill_engines.chunked, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                            selection)
     assert_close(multicell, chunked)
     assert_close(naive, multicell)
@@ -128,10 +129,10 @@ def test_multicell_growth_canary():
 
 @pytest.mark.parametrize("name", sorted(fill_engines.ENGINES))
 def test_engines_add_nothing_to_processor_module(name):
-    assert not [a for a in vars(wzmod) if "multicell" in a.lower() or "buffer" in a.lower()]
-    selection, raw, values, labels = standard_case()
+    assert not [a for a in [*vars(wzmod), *vars(utils)] if "multicell" in a.lower() or "buffer" in a.lower()]
+    selection, weight_syst_stack, values, labels = standard_case()
     _, state = fill_with(fill_engines.ENGINES[name], "met_pt", (helpers.axes_for("met_pt"),), values, labels,
-                         wzmod.standard_weights(raw), selection)
+                         utils.syst_weight(weight_syst_stack), selection)
     added = set(state) - {"selection", "channels", "block_cache"}
     assert all(key.startswith(name) for key in added)
-    assert not [a for a in vars(wzmod) if "multicell" in a.lower() or "buffer" in a.lower()]
+    assert not [a for a in [*vars(wzmod), *vars(utils)] if "multicell" in a.lower() or "buffer" in a.lower()]

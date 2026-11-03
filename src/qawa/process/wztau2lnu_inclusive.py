@@ -41,6 +41,7 @@ from qawa import uproot_float16_patch  # noqa: F401
 from qawa.flashsim_shim import patch_flashsim
 from qawa.eft_weights import points_from_events, stack_named_weights
 from qawa import lumi_record
+from qawa.utils import KIND_KEY, fill_histogram, merge_histogram_sets, syst_weight, syst_weight_eft_struct_const
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -61,7 +62,6 @@ from qawa.polarization import (
 # _RECO_METHODS = ("smp20", "transvmlv")
 
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
-KIND_KEY = "kind"
 
 
 def dd_targetdddy_tag(compound_name):
@@ -475,116 +475,6 @@ STANDARD_FILL_VARIABLES = (
     'tau_loosetovtight_mT_W', 'tau_loosetovtight_mT_WZ', 'tau_loosetovtight_inv_m_WZ', 'tau_loosetovtight_m_lep', 'tau_loosetovtight_dilep_met_hadron_mt', 'dilep_mt_llnunu',
     'tau_loose_HTl', 'tau_loose_ST',
 )
-
-
-def n_minus_one_key(requirements, exclude):
-    sel_args = {s.replace('~', ''): '~' not in s for s in requirements if all(e not in s for e in exclude)}
-    return tuple(sorted(sel_args.items()))
-
-
-def n_minus_one_collisions(variables, selection_names):
-    return sorted({(v, s) for v in variables for s in selection_names if v != s and v in s})
-
-
-def channel_block(exclude, pass_state):
-    key = tuple((name, n_minus_one_key(reqs, exclude)) for name, reqs in pass_state["channels"].items())
-    block = pass_state["block_cache"].get(key)
-    if block is None:
-        selection = pass_state["selection"]
-        block = tuple(
-            (name, rows) for name, rows in
-            ((name, np.flatnonzero(selection.require(**dict(channel_key)))) for name, channel_key in key)
-            if len(rows)
-        )
-        pass_state["block_cache"][key] = block
-    return block
-
-
-def standard_weights(raw):
-    def weight(k, rows):
-        return np.nan_to_num(raw[k][rows], nan=1.0, posinf=1.0, neginf=1.0)
-    return weight
-
-
-def scaled_weights(raw, factor):
-    def weight(k, rows):
-        return np.nan_to_num(raw[k][rows] * factor[rows], nan=1.0, posinf=1.0, neginf=1.0)
-    return weight
-
-
-def eft_term_weights(raw, columns):
-    def weight(slot, rows):
-        k, t = divmod(slot, len(columns))
-        return np.nan_to_num(raw[k][rows], nan=1.0, posinf=1.0, neginf=1.0) * columns[t][rows]
-    return weight
-
-
-def fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
-    target = histos[key]
-    slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
-    for channel, rows in channel_block(exclude, pass_state):
-        dense = {name: v[rows] for name, v in values.items()}
-        for k, label in enumerate(labels):
-            target.fill(channel=channel, **dict(zip(slot_names, label)), **dense, weight=weight(k, rows))
-
-
-def merge_histograms(hists):
-    first = hists[0]
-    axes = []
-    for i, ax in enumerate(first.axes):
-        if isinstance(ax, hist.axis.StrCategory):
-            labels = list(dict.fromkeys(label for h in hists for label in h.axes[i]))
-            merged_ax = hist.axis.StrCategory(labels, growth=ax.traits.growth, overflow=ax.traits.overflow)
-            merged_ax.__dict__.update(copy.deepcopy(ax.__dict__))
-            axes.append(merged_ax)
-        else:
-            assert all(h.axes[i] == ax for h in hists[1:])
-            axes.append(ax)
-    assert all(h.storage_type == first.storage_type for h in hists[1:])
-    out = type(first)(*axes, storage=first.storage_type())
-    out.__dict__.update(copy.deepcopy(first.__dict__))
-    out._variance_known = len(hists) == 1 and first._variance_known
-    out_view = out.view(flow=True)
-    for h in hists:
-        if any(isinstance(ax, hist.axis.StrCategory) and len(ax) == 0 for ax in h.axes):
-            continue
-        index = []
-        for ax, out_ax in zip(h.axes, out.axes):
-            if isinstance(ax, hist.axis.StrCategory):
-                index.append([out_ax.index(label) for label in ax] + ([len(out_ax)] if ax.traits.overflow else []))
-            else:
-                index.append(range(ax.extent))
-        block = np.ix_(*index)
-        view = h.view(flow=True)
-        for field in view.dtype.names or (None,):
-            if field is None:
-                out_view[block] += view
-            else:
-                out_view[field][block] += view[field]
-    return out
-
-
-def merge_histogram_sets(outputs):
-    grouped = {}
-    for output in outputs:
-        for dataset, histos in output.items():
-            keys = grouped.setdefault(dataset, {})
-            for key, h in histos.items():
-                keys.setdefault(key, []).append(h)
-    return {dataset: {key: merge_histograms(hists) for key, hists in keys.items()} for dataset, keys in grouped.items()}
-
-
-def dataset_record(dataset, content, sumw):
-    record = {"hist": content, "sumw": sumw}
-    pairs = content.pop(lumi_record.LUMI_KEY, None)
-    if pairs is not None:
-        record[lumi_record.LUMI_KEY] = lumi_record.as_array(pairs)
-    kinds = content.pop(KIND_KEY, None)
-    if kinds is not None:
-        if len(kinds) != 1:
-            raise RuntimeError(f"dataset {dataset}: its chunks report several kinds {sorted(kinds)}")
-        (record[KIND_KEY],) = kinds
-    return record
 
 
 class wzinclusive_processor(processor.ProcessorABC):
@@ -2194,16 +2084,16 @@ class wzinclusive_processor(processor.ProcessorABC):
             from qawa import histserv_output
             fill = histserv_output.send_histogram
             pass_state["histserv"] = histserv_output.pass_context(self.histserv_registry, self.histserv_sample, event.metadata, shift_name, eft_theta is not None)
-        raw = np.stack(
+        weight_syst_stack = np.stack(
             [weights.weight(modifier=s) if s in weights.variations else weights.weight() for s in systematics],
             axis=0,
         )
         labels = [('nominal' if s is None else s,) for s in systematics]
         nominal_labels = [('nominal',)]
-        standard_weight = standard_weights(raw)
+        standard_weight = syst_weight(weight_syst_stack)
         if eft_theta is not None:
             eft_labels = [(label, term) for (label,) in labels for term in eft_theta]
-            eft_weight = eft_term_weights(raw, [eft_theta[term] for term in eft_theta])
+            eft_weight = syst_weight_eft_struct_const(weight_syst_stack, [eft_theta[term] for term in eft_theta])
 
         def event_values(*names):
             return {name: ak.to_numpy(ak.fill_none(ntuple[name], np.nan)) for name in names}
@@ -2238,12 +2128,12 @@ class wzinclusive_processor(processor.ProcessorABC):
                         continue
                     for pol in ('long', 'left', 'right'):
                         postfix = f'_{wpref}_{pol}'
-                        fill_variable(var, var + postfix, scaled_weights(raw, pol_factors[postfix]))
+                        fill_variable(var, var + postfix, syst_weight(weight_syst_stack, pol_factors[postfix]))
                 for var in self.pol_gen_vars:
                     if var in histos:
                         fill_variable(var)
                 onshell = ak.to_numpy(ak.fill_none(ak.values_astype(ntuple['tau_loosetovtight_rescued'] < 0.5, np.float32), 1.0))
-                fill_variable('qcos_theta_w_gen', 'tau_loosetovtight_qcos_theta_w_gen_onshell', scaled_weights(raw, onshell))
+                fill_variable('qcos_theta_w_gen', 'tau_loosetovtight_qcos_theta_w_gen_onshell', syst_weight(weight_syst_stack, onshell))
                 if None in systematics:
                     matched = ak.to_numpy(ak.fill_none(ntuple['tau_matched'], 0.0))
                     for wk in self.pol_weight_keys:
@@ -2253,10 +2143,10 @@ class wzinclusive_processor(processor.ProcessorABC):
                     # tau pT response (slope) and the resolution handle for f0
                     fill_map('tau_pt_gen', 'tau_vtight_pt', 'tau_pt_gen_vs_tau_vtight_pt')
                     # matched-only version: fit the tau pT slope on THIS one
-                    fill_map('tau_pt_gen', 'tau_vtight_pt', 'tau_pt_gen_vs_tau_vtight_pt_tau_loosetovtight_matched', scaled_weights(raw, matched))
+                    fill_map('tau_pt_gen', 'tau_vtight_pt', 'tau_pt_gen_vs_tau_vtight_pt_tau_loosetovtight_matched', syst_weight(weight_syst_stack, matched))
                     fill_map('tau_loosetovtight_qcos_theta_w_reco', 'tau_loosetovtight_corr_pt', 'tau_loosetovtight_qcos_theta_w_reco_vs_corr_pt')
                     fill_map('tau_vtight_pt', 'tau_loosetovtight_pt_ratio', 'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt')
-                    fill_map('tau_vtight_pt', 'tau_loosetovtight_pt_ratio', 'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt_matched', scaled_weights(raw, matched))
+                    fill_map('tau_vtight_pt', 'tau_loosetovtight_pt_ratio', 'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt_matched', syst_weight(weight_syst_stack, matched))
         else:
             # ── standard inclusive analysis ────────────────────────────────────
             for var in STANDARD_FILL_VARIABLES:

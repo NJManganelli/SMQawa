@@ -443,7 +443,7 @@ def main():
                     events_samples,
                     processor_instance=proc_configured,
                 )
-                from qawa.process.wztau2lnu_inclusive import dataset_record
+                from qawa.utils import dataset_record
                 bh_output = {key: dataset_record(key, content, sumw_out[key]) for key, content in events_out.items()}
                 with gzip.open("histogram_%s.pkl.gz" % str(options.jobNum), "wb") as f:
                     pickle.dump(bh_output, f)

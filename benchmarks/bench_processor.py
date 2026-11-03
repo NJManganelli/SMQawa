@@ -159,8 +159,8 @@ class Instrument:
         def timed_process_shift(self, event, shift_name=''):
             if shift_name not in (None, ''):
                 inst.expected_shift.add(shift_name)
-            record = {"shift": shift_name, "n_events": len(event), "raw_bytes": 0, "block_cache_bytes": 0,
-                      "blocks": 0, "max_rows": 0, "multicell_buffer_bytes": 0}
+            record = {"shift": shift_name, "n_events": len(event), "weight_syst_stack_bytes": 0, "block_cache_bytes": 0,
+                      "blocks": 0, "max_selected_events": 0, "multicell_buffer_bytes": 0}
             inst.current = record
             t0 = time.perf_counter()
             result = process_shift(self, event, shift_name)
@@ -194,10 +194,11 @@ class Instrument:
             self.install_engine(wzmod)
 
     def install_engine(self, wzmod):
+        import qawa.utils as utils
         inst = self
         fill_histogram = wzmod.fill_histogram
-        channel_block = wzmod.channel_block
-        standard_weights = wzmod.standard_weights
+        channel_selection_cache = utils.channel_selection_cache
+        syst_weight = wzmod.syst_weight
 
         def recorded_fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
             result = fill_histogram(histos, key, values, labels, weight, exclude, pass_state)
@@ -206,27 +207,31 @@ class Instrument:
                 cache = pass_state["block_cache"]
                 rec["blocks"] = max(rec["blocks"], len(cache))
                 rec["block_cache_bytes"] = max(
-                    rec["block_cache_bytes"], sum(rows.nbytes for block in cache.values() for _, rows in block)
+                    rec["block_cache_bytes"],
+                    sum(selected_event_indices.nbytes for block in cache.values() for _, selected_event_indices in block)
                 )
                 buffers = [v.nbytes for k, v in pass_state.items() if k.endswith("_buffer")]
                 rec["multicell_buffer_bytes"] = max([rec["multicell_buffer_bytes"]] + buffers)
             return result
         wzmod.fill_histogram = recorded_fill_histogram
 
-        def recorded_channel_block(exclude, pass_state):
-            result = channel_block(exclude, pass_state)
+        def recorded_channel_selection_cache(exclude, pass_state):
+            result = channel_selection_cache(exclude, pass_state)
             rec = inst.current
             if rec is not None:
-                rec["max_rows"] = max(rec["max_rows"], sum(len(rows) for _, rows in result))
+                rec["max_selected_events"] = max(
+                    rec["max_selected_events"],
+                    sum(len(selected_event_indices) for _, selected_event_indices in result)
+                )
             return result
-        wzmod.channel_block = recorded_channel_block
+        utils.channel_selection_cache = recorded_channel_selection_cache
 
-        def recorded_standard_weights(raw):
+        def recorded_syst_weight(weight_syst_stack, scale=None):
             rec = inst.current
             if rec is not None:
-                rec["raw_bytes"] = max(rec["raw_bytes"], raw.nbytes)
-            return standard_weights(raw)
-        wzmod.standard_weights = recorded_standard_weights
+                rec["weight_syst_stack_bytes"] = max(rec["weight_syst_stack_bytes"], weight_syst_stack.nbytes)
+            return syst_weight(weight_syst_stack, scale)
+        wzmod.syst_weight = recorded_syst_weight
 
     def expected(self):
         return {"nominal": ["nominal"], "shift": sorted(self.expected_shift), "weight": sorted(self.expected_weight)}
@@ -1674,7 +1679,7 @@ def cmd_scale_worker(args):
         "merge_in_process": sum(c["merge"] for c in inst.chunks),
         "outside_process": total - sum(c["wall"] for c in inst.chunks),
         "output_bytes": histogram_bytes(output),
-        "max_raw_bytes": max((p["raw_bytes"] for p in inst.passes), default=0),
+        "max_weight_syst_stack_bytes": max((p["weight_syst_stack_bytes"] for p in inst.passes), default=0),
         "max_block_cache_bytes": max((p["block_cache_bytes"] for p in inst.passes), default=0),
         "max_blocks": max((p["blocks"] for p in inst.passes), default=0),
         "multicell_buffer_bytes": max((p["multicell_buffer_bytes"] for p in inst.passes), default=0),

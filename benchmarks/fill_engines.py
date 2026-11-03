@@ -3,7 +3,7 @@ import hist
 import numpy as np
 from hist.chunked import ChunkedHist
 
-import qawa.process.wztau2lnu_inclusive as wzmod
+import qawa.utils as utils
 
 MULTICELL_BUFFER_BYTES = 32 * 2**20
 
@@ -21,11 +21,11 @@ def slot_axis_names(categories):
 
 def concatenated_block(block):
     channel_list = [channel for channel, _ in block]
-    row_sets = [rows for _, rows in block]
+    selected_event_index_sets = [selected_event_indices for _, selected_event_indices in block]
     dtype = np.result_type(np.int16, np.min_scalar_type(len(channel_list)))
-    cidx = np.repeat(np.arange(len(channel_list), dtype=dtype), [len(r) for r in row_sets])
-    rows = np.concatenate([np.empty(0, dtype=np.intp)] + row_sets)
-    return channel_list, cidx, rows
+    cidx = np.repeat(np.arange(len(channel_list), dtype=dtype), [len(r) for r in selected_event_index_sets])
+    selected_event_indices = np.concatenate([np.empty(0, dtype=np.intp)] + selected_event_index_sets)
+    return channel_list, cidx, selected_event_indices
 
 
 def output_like(target, channel_list, labels):
@@ -51,41 +51,41 @@ def output_like(target, channel_list, labels):
     return output, slot_index, dense
 
 
-def group_cells(pass_state, name, n_rows, k):
+def group_cells(pass_state, name, n_selected_events, k):
     key = name + "_buffer"
-    need = n_rows * 2 * k
+    need = n_selected_events * 2 * k
     if key not in pass_state or pass_state[key].size < need:
         pass_state[key] = np.empty(max(need, MULTICELL_BUFFER_BYTES // 8))
-    return pass_state[key][:need].reshape(n_rows, 2 * k)
+    return pass_state[key][:need].reshape(n_selected_events, 2 * k)
 
 
-def write_columns(weight, group, rows, out):
-    for j, k in enumerate(group):
-        out[:, j] = weight(k, rows)
+def write_columns(weight, group, selected_event_indices, out):
+    for j, syst_index in enumerate(group):
+        out[:, j] = weight(syst_index, selected_event_indices)
 
 
-def group_size_for(n_rows):
-    return max(1, MULTICELL_BUFFER_BYTES // (max(n_rows, 1) * 16))
+def group_size_for(n_selected_events):
+    return max(1, MULTICELL_BUFFER_BYTES // (max(n_selected_events, 1) * 16))
 
 
 def multicell(histos, key, values, labels, weight, exclude, pass_state):
     target_categories(histos, key)
-    block = wzmod.channel_block(exclude, pass_state)
+    block = utils.channel_selection_cache(exclude, pass_state)
     if not block:
         return
-    channel_list, cidx, rows = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_block(block)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     assert "channel_index" not in [ax.name for ax in dense]
     view = output.view(flow=True)
-    gathered = {ax.name: values[ax.name][rows] for ax in dense}
-    n_rows = len(rows)
+    gathered = {ax.name: values[ax.name][selected_event_indices] for ax in dense}
+    n_selected_events = len(selected_event_indices)
     n_slots = len(labels)
-    group_size = group_size_for(n_rows)
+    group_size = group_size_for(n_selected_events)
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "multicell", n_rows, k)
-        write_columns(weight, group, rows, cells[:, :k])
+        cells = group_cells(pass_state, "multicell", n_selected_events, k)
+        write_columns(weight, group, selected_event_indices, cells[:, :k])
         np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
         transient = hist.Hist(
             hist.axis.Integer(0, len(channel_list), name="channel_index", underflow=False, overflow=False),
@@ -103,23 +103,23 @@ def multicell(histos, key, values, labels, weight, exclude, pass_state):
 
 def multicell_pr20(histos, key, values, labels, weight, exclude, pass_state):
     target_categories(histos, key)
-    block = wzmod.channel_block(exclude, pass_state)
+    block = utils.channel_selection_cache(exclude, pass_state)
     if not block:
         return
     channel_list = [channel for channel, _ in block]
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
-    gathered = [{ax.name: values[ax.name][rows] for ax in dense} for _, rows in block]
+    gathered = [{ax.name: values[ax.name][selected_event_indices] for ax in dense} for _, selected_event_indices in block]
     n_slots = len(labels)
-    group_size = group_size_for(max(len(rows) for _, rows in block))
+    group_size = group_size_for(max(len(selected_event_indices) for _, selected_event_indices in block))
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
         transient = hist.Hist(hist.axis.StrCategory(channel_list, name="channel_label", overflow=False), *dense,
                               storage=hist.storage.MultiCell(2 * k))
-        for (channel, rows), gathered_c in zip(block, gathered):
-            cells = group_cells(pass_state, "multicell_pr20", len(rows), k)
-            write_columns(weight, group, rows, cells[:, :k])
+        for (channel, selected_event_indices), gathered_c in zip(block, gathered):
+            cells = group_cells(pass_state, "multicell_pr20", len(selected_event_indices), k)
+            write_columns(weight, group, selected_event_indices, cells[:, :k])
             np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
             transient.fill(channel_label=channel, **gathered_c, weight=cells)
         cell_view = transient.view(flow=True)
@@ -132,22 +132,22 @@ def multicell_pr20(histos, key, values, labels, weight, exclude, pass_state):
 
 def multicell_string(histos, key, values, labels, weight, exclude, pass_state):
     target_categories(histos, key)
-    block = wzmod.channel_block(exclude, pass_state)
+    block = utils.channel_selection_cache(exclude, pass_state)
     if not block:
         return
-    channel_list, cidx, rows = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_block(block)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
     channel_labels = np.array(channel_list, dtype=object)[cidx]
-    gathered = {ax.name: values[ax.name][rows] for ax in dense}
-    n_rows = len(rows)
+    gathered = {ax.name: values[ax.name][selected_event_indices] for ax in dense}
+    n_selected_events = len(selected_event_indices)
     n_slots = len(labels)
-    group_size = group_size_for(n_rows)
+    group_size = group_size_for(n_selected_events)
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "multicell_string", n_rows, k)
-        write_columns(weight, group, rows, cells[:, :k])
+        cells = group_cells(pass_state, "multicell_string", n_selected_events, k)
+        write_columns(weight, group, selected_event_indices, cells[:, :k])
         np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
         transient = hist.Hist(hist.axis.StrCategory(channel_list, name="channel_label", overflow=False), *dense,
                               storage=hist.storage.MultiCell(2 * k))
@@ -165,10 +165,10 @@ def chunked(histos, key, values, labels, weight, exclude, pass_state):
     slot_names = slot_axis_names(target_categories(histos, key))
     dense_names = [ax.name for ax in target.axes if not isinstance(ax, hist.axis.StrCategory)]
     sink = ChunkedHist(*target.axes, storage=bh.storage.Weight())
-    for channel, rows in wzmod.channel_block(exclude, pass_state):
-        gathered = {name: values[name][rows] for name in dense_names}
-        for k, label in enumerate(labels):
-            sink.fill(channel=channel, **dict(zip(slot_names, label)), **gathered, weight=weight(k, rows))
+    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
+        gathered = {name: values[name][selected_event_indices] for name in dense_names}
+        for syst_index, label in enumerate(labels):
+            sink.fill(channel=channel, **dict(zip(slot_names, label)), **gathered, weight=weight(syst_index, selected_event_indices))
     if not sink.chunks:
         return
     dense = sink.to_hist()
@@ -189,21 +189,21 @@ def chunked(histos, key, values, labels, weight, exclude, pass_state):
 
 def integer_axis(histos, key, values, labels, weight, exclude, pass_state):
     target_categories(histos, key)
-    block = wzmod.channel_block(exclude, pass_state)
+    block = utils.channel_selection_cache(exclude, pass_state)
     if not block:
         return
-    channel_list, cidx, rows = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_block(block)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
-    gathered = {ax.name: values[ax.name][rows] for ax in dense}
-    n_rows = len(rows)
+    gathered = {ax.name: values[ax.name][selected_event_indices] for ax in dense}
+    n_selected_events = len(selected_event_indices)
     n_slots = len(labels)
-    group_size = group_size_for(n_rows)
+    group_size = group_size_for(n_selected_events)
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "integer_axis", n_rows, k)
-        write_columns(weight, group, rows, cells[:, :k])
+        cells = group_cells(pass_state, "integer_axis", n_selected_events, k)
+        write_columns(weight, group, selected_event_indices, cells[:, :k])
         transient = hist.Hist(
             hist.axis.Integer(0, len(channel_list), name="channel_index", underflow=False, overflow=False),
             hist.axis.Integer(0, k, name="slot_index", underflow=False, overflow=False),
@@ -211,7 +211,7 @@ def integer_axis(histos, key, values, labels, weight, exclude, pass_state):
         )
         transient.fill(
             channel_index=np.repeat(cidx, k),
-            slot_index=np.tile(np.arange(k), n_rows),
+            slot_index=np.tile(np.arange(k), n_selected_events),
             **{name: np.repeat(v, k) for name, v in gathered.items()},
             weight=np.ascontiguousarray(cells[:, :k]).reshape(-1),
         )
