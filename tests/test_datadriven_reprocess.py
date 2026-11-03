@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pickle
+import re
 import subprocess
 import sys
 
@@ -19,7 +20,7 @@ DD_RUN2 = os.path.join(ROOT, "src", "qawa", "data", "dd", "Run2", "WZ_inclusive_
 DD_ESTIMATE = "LNTTau_HighMET_DY_to_Data_Estimate"
 CAPS = {"OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4", "MKL_NUM_THREADS": "4", "NUMEXPR_MAX_THREADS": "4"}
 ENV = {**os.environ, **CAPS, "PYTHONPATH": os.path.join(ROOT, "src")}
-MESSAGE = "must be an uncompressed correctionlib JSON (.json)"
+MESSAGE = "must be a correctionlib JSON (.json or .json.gz)"
 
 
 def doubled(node):
@@ -55,7 +56,9 @@ def gzip_copies(tmp_path):
     gz.write_bytes(raw)
     fake = tmp_path / "gzip_bytes.json"
     fake.write_bytes(raw)
-    return str(gz), str(fake)
+    plain = tmp_path / "plain_text.json.gz"
+    plain.write_bytes(gzip.decompress(raw))
+    return str(gz), str(fake), str(plain)
 
 
 def run_data(dd_file=None):
@@ -160,19 +163,22 @@ def test_check_reprocessed_cli(tmp_path):
 
 
 def test_check_dd_file(tmp_path):
+    gz, fake, plain = gzip_copies(tmp_path)
     assert datadriven.check_dd_file(DD_RUN2) is None
-    bad = list(gzip_copies(tmp_path))
+    assert datadriven.check_dd_file(gz) is None
+    assert datadriven.discover_systematics(gz) == datadriven.discover_systematics(DD_RUN2)
+    bad = [fake, plain]
     for name, text in (("text.json", "not json"), ("empty.json", "{}"), ("list.json", "[]"),
                        ("v1.json", json.dumps({"schema_version": 1, "corrections": []}))):
         (tmp_path / name).write_text(text)
         bad.append(str(tmp_path / name))
     for path in bad:
-        with pytest.raises(ValueError, match=r"must be an uncompressed correctionlib JSON \(\.json\)"):
+        with pytest.raises(ValueError, match=re.escape(MESSAGE)):
             datadriven.check_dd_file(path)
 
 
 def test_brewer_refusals(tmp_path):
-    gz, fake = gzip_copies(tmp_path)
+    gz, fake, plain = gzip_copies(tmp_path)
     infile = "/store/data/Run2018C/DoubleMuon/NANOAOD/UL2018_MiniAODv2_NanoAODv9-v1/x.root"
     mc_infile = "/store/mc/RunIISummer20UL18NanoAODv9/WZTo3LNu_TuneCP5_13TeV-powheg-pythia8/NANOAODSIM/106X-v2/x.root"
     base = [sys.executable, os.path.join(ROOT, "brewer-remote-inclusive.py"), "--jobNum", "0", "--era", "2018"]
@@ -180,20 +186,21 @@ def test_brewer_refusals(tmp_path):
               "re-processes inc-WZ data only"),
              (["--infile", infile, "--isMC", "0", "--analysis", "inc-ZZ", "--dd-file", DD_RUN2],
               "re-processes inc-WZ data only"),
-             (["--infile", infile, "--isMC", "0", "--analysis", "inc-WZ", "--dd-file", gz], MESSAGE),
+             (["--infile", infile, "--isMC", "0", "--analysis", "inc-WZ", "--dd-file", plain], MESSAGE),
              (["--infile", infile, "--isMC", "0", "--analysis", "inc-WZ", "--dd-file", fake], MESSAGE)]
     for args, message in cases:
         run = subprocess.run(base + args, capture_output=True, text=True, env=ENV, cwd=tmp_path)
         assert run.returncode != 0 and message in run.stderr and "Opening" not in run.stdout + run.stderr, args
     with open(tmp_path / "input.txt", "w") as f:
         f.write("/DoubleMuon/Run2018C-UL2018_MiniAODv2_NanoAODv9-v1/NANOAOD\n")
-    for path in (gz, fake):
+    for path in (plain, fake):
         run = subprocess.run([sys.executable, os.path.join(ROOT, "brewer-htcondor-inclusive.py"), "-a", "inc-WZ",
                               "-i", "input.txt", "-t", "t", "-e", "2018", "--dryrun", "--dd-file", path],
                              capture_output=True, text=True, env=ENV, cwd=tmp_path)
         assert run.returncode != 0 and MESSAGE in run.stderr, run.stderr
         assert not [d for d in os.listdir(tmp_path) if d.startswith("jobs_")]
     from qawa.process.wztau2lnu_inclusive import wzinclusive_processor
-    for path in (gz, fake):
-        with pytest.raises(ValueError, match=r"must be an uncompressed correctionlib JSON"):
+    for path in (plain, fake):
+        with pytest.raises(ValueError, match=re.escape(MESSAGE)):
             wzinclusive_processor(era="2018", run_period="C", version="v9", dd_file=path)
+    wzinclusive_processor(era="2018", run_period="C", version="v9", dd_file=gz)

@@ -1,5 +1,6 @@
 import copy
 import correctionlib
+import gzip
 import itertools
 import json
 import os
@@ -29,7 +30,7 @@ def discover_systematics(json_path):
     - ``has_legacy_dddy``: whether the legacy single combined statistical nuisance "DDDY"
       (paired DDDYUp/DDDYDown) is present. It is excluded from ``mc_systematics``.
     """
-    with open(json_path) as f:
+    with (gzip.open if str(json_path).endswith(".gz") else open)(json_path, "rt") as f:
         data = json.load(f)
     keys = set()
 
@@ -413,14 +414,13 @@ def combine_era_corrections(per_era_ratios, eras, lumis, templates, is_probdy):
 
 
 def check_dd_file(path):
-    message = f"{path}: must be an uncompressed correctionlib JSON (.json): qawa.datadriven reads it with json.load"
-    if not str(path).endswith(".json"):
+    message = f"{path}: must be a correctionlib JSON (.json or .json.gz)"
+    if not str(path).endswith((".json", ".json.gz")):
         raise ValueError(message)
     try:
-        with open(path) as f:
-            json.load(f)
+        discover_systematics(path)
         correctionlib.CorrectionSet.from_file(str(path))
-    except (ValueError, RuntimeError) as error:
+    except (ValueError, RuntimeError, gzip.BadGzipFile) as error:
         raise ValueError(message) from error
 
 
@@ -531,7 +531,6 @@ if __name__ == "__main__":
     options = parser.parse_args()
 
     if options.check_reprocessed:
-        import gzip
         import pickle
         import sys
         contents = []

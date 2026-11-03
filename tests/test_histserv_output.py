@@ -1406,11 +1406,17 @@ def test_dd_register_refusals(server, tmp_path):
     gz = tmp_path / "dd.json.gz"
     with open(DD_RUN2, "rb") as f:
         gz.write_bytes(gzip.compress(f.read()))
-    for sample, path in ((f"{DAS_X}=mc", DD_RUN2), (f"{DAS_C}=data", str(gz))):
+    plain = tmp_path / "plain_text.json.gz"
+    plain.write_text(open(DD_RUN2).read())
+    for sample, path in ((f"{DAS_X}=mc", DD_RUN2), (f"{DAS_C}=data", str(plain))):
         args = ["register", "--address", server, "--tag", "t", "--era", "2024", "--version", "v15",
                 "--sample", sample, "--dd-file", path, "--output", str(tmp_path / "reg.json")]
         assert ho.main(args) == 2
         assert not (tmp_path / "reg.json").exists()
+    args = ["register", "--address", server, "--tag", "t", "--era", "2024", "--version", "v15",
+            "--sample", f"{DAS_C}=data", "--dd-file", str(gz), "--output", str(tmp_path / "reg.json")]
+    assert ho.main(args) == 0
+    assert (tmp_path / "reg.json").exists()
 
 
 def test_constructor_dd_checks(tmp_path):
