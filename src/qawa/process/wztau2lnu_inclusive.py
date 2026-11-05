@@ -565,7 +565,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         jec_tag = ''
         jer_tag = ''
         jetveto_tag = None
-        if len(run_period)==0:
+        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
+            # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
+            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
+            jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
+        elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
                     jec_tag = 'Summer19UL16APV_V7_MC'
@@ -609,11 +613,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
         self._use_clib_jme = self._era == "2024" or self._ver == "v15"
-        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
-            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
-            jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
 
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
