@@ -203,7 +203,7 @@ def main():
         os.environ[histserv_output.POISON_FILE_ENV] = os.path.abspath(histserv_output.POISON_FILE_NAME)
         reason = histserv_output.poison_reason(None)
         if reason:
-            coffea_console.print("C4 poison marker from an earlier run in this directory: " + reason)
+            coffea_console.print("histserv poison marker from an earlier run in this directory: " + reason)
             sys.exit(histserv_registry["poison_exit_code"])
         derived = production_keys.das_name_from_path(ref_infile)
         das = options.das_name or derived
@@ -263,7 +263,7 @@ def main():
                       "for data there will similarly not be an appropriate scaling of MC to match the processed luminosity in data."
                       )
                 if histserv_registry is not None:
-                    coffea_console.print("C4: the outputs will be marked .TRUNCATED, and MC sumw follows the processed chunks")
+                    coffea_console.print("histserv mode: the outputs will be marked .TRUNCATED, and MC sumw follows the processed chunks")
 
             if is_data:
                 if 'Run20' in ref_infile:
@@ -460,7 +460,7 @@ def main():
         except Exception as err:
             reason = histserv_output.poison_reason(err) if histserv_registry is not None else None
             if reason:
-                coffea_console.print("C4 poison: " + reason)
+                coffea_console.print("histserv poison: " + reason)
                 sys.exit(histserv_registry["poison_exit_code"])
             coffea_console.print(f"[WARNING] {aliases[ixrd]} failed with the following error : ")
             coffea_console.print(f"Unexpected {err=}, {type(err)=}")

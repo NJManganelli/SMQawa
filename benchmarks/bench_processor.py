@@ -20,9 +20,10 @@ Subcommands:
   run       run the processor on one entry range of one file and dump the output
   compare   compare two dumps under the comparison rule of the optimisation plan
   selftest  check that compare reaches the expected verdict on mutated dumps
-  scale     at-scale run of one variant (the reference tree, the worktree's C1 engine or a benchmark
+  scale     at-scale run of one variant (the reference tree, the standard Hist fill or a benchmark
             engine of fill_engines.py) in a fresh subprocess, with machine state and memory sampling
-  report    G1 verdict (required) and the R2-R4 information rows over the scale results in a directory
+  report    the reference-agreement verdict (required) and the time, memory and fill-time rows (information)
+            over the scale results in a directory
 
 The tree under test is chosen with PYTHONPATH (<tree>/src); `run` asserts that
 qawa is imported from below the first PYTHONPATH entry.
@@ -472,8 +473,8 @@ def order_tolerant_values(rval, oval, rvar, key, res):
     with np.errstate(invalid="ignore", over="ignore"):
         diff = np.abs(r - o)
         cancellation = np.isfinite(diff) & (diff <= CANCELLATION_RTOL * np.sqrt(np.abs(var)))
-    res.fail("2t", key, f"{len(cells)} value cells outside rule 2t ({int(cancellation.sum())} cancellation, "
-                        f"{int((~cancellation).sum())} real)")
+    res.fail("order-tolerant", key, f"{len(cells)} value cells outside the order-tolerant rule "
+                                    f"({int(cancellation.sum())} cancellation, {int((~cancellation).sum())} real)")
     for i in range(min(len(cells), MAX_LISTED_CELLS)):
         cell = tuple(int(c) for c in cells[i])
         res.note(f"{key}{cell}: |R-O| {diff[i]:.6g}, |R| {abs(r[i]):.6g}, |O| {abs(o[i]):.6g}, "
@@ -639,11 +640,11 @@ def label_slices(h, label):
 def check_vacuity(rdump, odump, res, report=True):
     rexp, oexp = rdump.get("expected"), odump.get("expected")
     if rexp is None or oexp is None:
-        res.fail(4, "-", "expected labels not recorded")
+        res.fail("empty-label", "-", "expected labels not recorded")
         return
     for cls in ("nominal", "shift", "weight"):
         if sorted(rexp.get(cls, [])) != sorted(oexp.get(cls, [])):
-            res.fail(4, "-", f"expected sets differ ({cls})")
+            res.fail("empty-label", "-", f"expected sets differ ({cls})")
     expected = sorted(set(itertools.chain.from_iterable(rexp.values())))
     present = set()
     for hists in rdump["output"].values():
@@ -655,7 +656,7 @@ def check_vacuity(rdump, odump, res, report=True):
     identical_to_nominal = []
     for label in expected:
         if label not in present:
-            res.fail(4, label, "expected label absent in R")
+            res.fail("empty-label", label, "expected label absent in R")
             continue
         total, nhists, has_nan, same = 0.0, 0, False, True
         for hists in rdump["output"].values():
@@ -671,7 +672,7 @@ def check_vacuity(rdump, odump, res, report=True):
                     if nom is None or not np.array_equal(sl, nom, equal_nan=True):
                         same = False
         if total <= 0:
-            res.fail(4, label, "NaN-only" if has_nan else "zero finite content")
+            res.fail("empty-label", label, "NaN-only" if has_nan else "zero finite content")
         if label != "nominal" and same:
             identical_to_nominal.append(label)
         lines.append(f"  {label:<40} hists {nhists:4d}  finite sum|value| {total:.6g}")
@@ -1129,14 +1130,14 @@ def cmd_selftest(args):
     row("one variance x(1+5e-10)", "m1", ("PASS",), standard("m1", scale_variance(5e-10)))
     row("one zero variance -> 1e-300", "m1", ("FAIL", "3"), standard("m1", zero_variance))
     row("one systematic label dropped", "m1", ("FAIL", "1"), standard("m1", drop_one_label))
-    row(f"expected label {m1_label} zeroed in R and O", "m1", ("FAIL", "4"),
+    row(f"expected label {m1_label} zeroed in R and O", "m1", ("FAIL", "empty-label"),
         standard("m1", lambda o: zero_label_everywhere(o, m1_label), lambda r: zero_label_everywhere(r, m1_label)))
-    row("nominal finite cells zeroed (NaN kept) in R and O", "m7", ("FAIL", "4", "NaN-only"),
+    row("nominal finite cells zeroed (NaN kept) in R and O", "m7", ("FAIL", "empty-label", "NaN-only"),
         standard("m7", lambda o: zero_label_everywhere(o, "nominal", True),
                  lambda r: zero_label_everywhere(r, "nominal", True)))
-    row(f"expected label {m1_label} removed from hists in R and O", "m1", ("FAIL", "4", "absent"),
+    row(f"expected label {m1_label} removed from hists in R and O", "m1", ("FAIL", "empty-label", "absent"),
         standard("m1", lambda o: drop_label_everywhere(o, m1_label), lambda r: drop_label_everywhere(r, m1_label)))
-    row("label added to O's expected set only", "m1", ("FAIL", "4", "expected sets differ"),
+    row("label added to O's expected set only", "m1", ("FAIL", "empty-label", "expected sets differ"),
         standard("m1", add_expected))
     row("key renamed without map", "m1", ("FAIL", "1"), standard("m1", lambda o: rename_key(o, "dilep_deta", "dilep_deta_r")))
     row("key renamed with a one-entry map", "m1", ("PASS",),
@@ -1270,11 +1271,11 @@ def cmd_selftest(args):
 
     row("order-tolerant: one value cell x(1+5e-10)", "m1", ("PASS", "strict value mismatches"),
         standard("m1", scale_value(5e-10)), order_tolerant=True)
-    row("order-tolerant: one value cell x(1+2e-9)", "m1", ("FAIL", "2t"), standard("m1", scale_value(2e-9)),
+    row("order-tolerant: one value cell x(1+2e-9)", "m1", ("FAIL", "order-tolerant"), standard("m1", scale_value(2e-9)),
         order_tolerant=True)
     row("order-tolerant: one value cell +1 ulp", "m1", ("PASS", "bitwise"), standard("m1", nextafter_value),
         order_tolerant=True)
-    row("order-tolerant: one zero value cell -> 1e-300", "m1", ("FAIL", "2t"), standard("m1", zero_value),
+    row("order-tolerant: one zero value cell -> 1e-300", "m1", ("FAIL", "order-tolerant"), standard("m1", zero_value),
         order_tolerant=True)
     row("order-tolerant: NaN cells kept, one finite cell x(1+5e-10)", "m7", ("PASS",),
         standard("m7", lambda o: modify_values_by(oh(o), "dilep_deta_eft", 1 + 5e-10)), order_tolerant=True)
@@ -1282,13 +1283,13 @@ def cmd_selftest(args):
         order_tolerant=True)
     row("order-tolerant: one variance x(1+2e-9)", "m1", ("FAIL", "3"), standard("m1", scale_variance(2e-9)),
         order_tolerant=True)
-    row("order-tolerant: a NaN value cell of R is 1.0 in O", "m7", ("FAIL", "2t"), standard("m7", nan_to_one),
-        order_tolerant=True)
-    row("order-tolerant: a finite non-zero value cell is NaN in O", "m7", ("FAIL", "2t"),
+    row("order-tolerant: a NaN value cell of R is 1.0 in O", "m7", ("FAIL", "order-tolerant"),
+        standard("m7", nan_to_one), order_tolerant=True)
+    row("order-tolerant: a finite non-zero value cell is NaN in O", "m7", ("FAIL", "order-tolerant"),
         standard("m7", finite_to_nan), order_tolerant=True)
-    row("order-tolerant: near-cancellation, O + 0.5e-9 sqrt(var)", "m1", ("FAIL", "2t", "class cancellation"),
-        near_cancellation(0.5e-9), order_tolerant=True)
-    row("order-tolerant: near-cancellation, O + 2e-9 sqrt(var)", "m1", ("FAIL", "2t", "class real"),
+    row("order-tolerant: near-cancellation, O + 0.5e-9 sqrt(var)", "m1",
+        ("FAIL", "order-tolerant", "class cancellation"), near_cancellation(0.5e-9), order_tolerant=True)
+    row("order-tolerant: near-cancellation, O + 2e-9 sqrt(var)", "m1", ("FAIL", "order-tolerant", "class real"),
         near_cancellation(2e-9), order_tolerant=True)
 
     failures = 0
@@ -1430,14 +1431,14 @@ def cmd_selftest(args):
 WORKTREE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CAP_ENV = {k: "4" for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                             "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")}
-ENGINE_CHOICES = ("reference", "worktree", "multicell", "multicell_pr20", "multicell_string", "chunked",
+ENGINE_CHOICES = ("reference", "standard", "multicell", "multicell_pr20", "multicell_string", "chunked",
                   "integer_axis")
 SCALE_DESCRIPTIONS = {
     "reference": "unmodified reference tree: per-(channel, systematic, variable) _histogram_filler closures",
-    "worktree": "C1: hist.fill per (channel, slot) into the booked Weight hist, on the shared prep",
+    "standard": "standard Hist fill: hist.fill per (channel, slot) into the booked Weight hist, on the shared prep",
 }
-R3_REFERENCE_MB = 256.0
-R4_REFERENCE_RATIO = 1.25
+MEMORY_REFERENCE_MB = 256.0
+FILL_REFERENCE_RATIO = 1.25
 PROTOTYPE_FILL_SECONDS = {"A1": 15.9, "A2": 13.47, "A3": 1.56, "A4": 10.11, "A5": 2.13, "E1": 82.8}
 PHASE_A_REFERENCE_PEAK_MB = {"A1": 2813, "A2": 2707, "A3": 1185, "A4": 5301, "A5": 1517, "E1": 3869}
 PHASE_A_SPREAD_CONFIGS = ("A2", "A4", "E1")
@@ -1640,7 +1641,7 @@ def cmd_scale_worker(args):
     description = SCALE_DESCRIPTIONS.get(args.engine)
     fill_seconds = [0.0]
     if args.engine != "reference":
-        if args.engine != "worktree":
+        if args.engine != "standard":
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import fill_engines
             wzmod.fill_histogram = fill_engines.ENGINES[args.engine]
@@ -1831,7 +1832,7 @@ def cmd_report(args):
     if args.names:
         configs = [c for c in configs if c in split_names(args.names)]
     lines = []
-    g1_failures = []
+    agreement_failures = []
     for name in configs:
         results = {}
         for fn in sorted(os.listdir(os.path.join(args.out, name))):
@@ -1849,45 +1850,47 @@ def cmd_report(args):
             for r in rs:
                 lines.append(sample_row(r["label"], r))
         ref = [r for r in results.get("reference", []) if not r.get("failed") and not r.get("stopped")]
-        c1 = [r for r in results.get("worktree", []) if not r.get("failed") and not r.get("stopped")]
-        g1 = [r for r in results.get("worktree", [])
+        standard = [r for r in results.get("standard", []) if not r.get("failed") and not r.get("stopped")]
+        disagreeing = [r for r in results.get("standard", [])
               if r.get("failed") or r.get("stopped") or not (r.get("agreement") or {}).get("passed")]
-        if not results.get("worktree") or g1:
-            g1_failures.append(name)
-            lines.append(f"\n**G1 (required): FAIL** - C1 samples without a passing agreement: "
-                         f"{[r['label'] for r in g1] or 'no C1 sample'}")
+        if not results.get("standard") or disagreeing:
+            agreement_failures.append(name)
+            lines.append("\n**Agreement with the reference (required): FAIL** - standard Hist fill samples without a "
+                         f"passing agreement: {[r['label'] for r in disagreeing] or 'no standard Hist fill sample'}")
         else:
-            lines.append(f"\n**G1 (required): PASS** ({len(c1)} C1 sample(s) agree with the reference)")
-        if not ref or not c1:
-            lines.append("R2-R4: not evaluated (reference or C1 missing)")
+            lines.append(f"\n**Agreement with the reference (required): PASS** ({len(standard)} standard Hist fill "
+                         f"sample(s) agree with the reference)")
+        if not ref or not standard:
+            lines.append("Time, memory and fill time: not evaluated (reference or standard Hist fill missing)")
             continue
-        ref_total, c1_total = median_of(ref, "total"), median_of(c1, "total")
-        lines.append(f"- R2 time: reference {ref_total:.1f} s, C1 {c1_total:.1f} s (medians), "
-                     f"C1/reference {c1_total / ref_total:.3f}. Recommendation: "
-                     + ("C1 is the default." if c1_total <= ref_total else
-                        "C1 is slower than the reference here; the hand-back names the slower stage "
-                        "(nominal pass, shift passes or merge columns above)."))
+        ref_total, standard_total = median_of(ref, "total"), median_of(standard, "total")
+        lines.append(f"- Time: reference {ref_total:.1f} s, standard Hist fill {standard_total:.1f} s (medians), "
+                     f"standard Hist fill/reference {standard_total / ref_total:.3f}. Recommendation: "
+                     + ("The standard Hist fill is faster than the reference." if standard_total <= ref_total else
+                        "The standard Hist fill is slower than the reference here; the hand-back names the slower "
+                        "stage (nominal pass, shift passes or merge columns above)."))
         ref_mem = float(np.median([memory_metric(r) for r in ref]))
-        c1_mems = [memory_metric(r) for r in c1]
-        delta = float(np.median(c1_mems)) - ref_mem
-        metric = "lifetime max footprint" if c1[0].get("lifetime_max_footprint_mb") is not None else "ru_maxrss"
-        lines.append(f"- R3 memory ({metric}): reference {ref_mem:.0f} MB, C1 {np.median(c1_mems):.0f} MB, "
-                     f"C1 - reference {delta:+.0f} MB (reference line +{R3_REFERENCE_MB:.0f} MB). "
-                     f"Recommendation: HTCondor request_memory >= {1.2 * max(c1_mems):.0f} MB "
-                     f"(measured C1 peak {max(c1_mems):.0f} MB + 20 %).")
+        standard_mems = [memory_metric(r) for r in standard]
+        delta = float(np.median(standard_mems)) - ref_mem
+        metric = "lifetime max footprint" if standard[0].get("lifetime_max_footprint_mb") is not None else "ru_maxrss"
+        lines.append(f"- Memory ({metric}): reference {ref_mem:.0f} MB, "
+                     f"standard Hist fill {np.median(standard_mems):.0f} MB, standard Hist fill - reference "
+                     f"{delta:+.0f} MB (reference line +{MEMORY_REFERENCE_MB:.0f} MB). "
+                     f"Recommendation: HTCondor request_memory >= {1.2 * max(standard_mems):.0f} MB "
+                     f"(measured standard Hist fill peak {max(standard_mems):.0f} MB + 20 %).")
         if (SAMPLING_BAND_MB[0] <= delta <= SAMPLING_BAND_MB[1] or name in PHASE_A_SPREAD_CONFIGS) \
-                and (len(ref) < 3 or len(c1) < 3):
+                and (len(ref) < 3 or len(standard) < 3):
             lines.append("  sampling rule: two more samples of each variant")
         proto = PROTOTYPE_FILL_SECONDS.get(name)
-        c1_fill = median_of(c1, "fill_seconds")
-        if proto is not None and c1_fill is not None:
-            ratio = c1_fill / proto
-            lines.append(f"- R4 fill against the phase-A prototype: C1 {c1_fill:.2f} s, prototype {proto:.2f} s, "
-                         f"ratio {ratio:.3f} (reference line {R4_REFERENCE_RATIO})"
-                         + ("; above the line: investigate and explain in impl-notes." if ratio > R4_REFERENCE_RATIO
+        standard_fill = median_of(standard, "fill_seconds")
+        if proto is not None and standard_fill is not None:
+            ratio = standard_fill / proto
+            lines.append(f"- Fill time against the MultiCell prototype: standard Hist fill {standard_fill:.2f} s, "
+                         f"prototype {proto:.2f} s, ratio {ratio:.3f} (reference line {FILL_REFERENCE_RATIO})"
+                         + ("; above the line: investigate and explain in impl-notes." if ratio > FILL_REFERENCE_RATIO
                             else "."))
         for variant, rs in results.items():
-            if variant not in ("reference", "worktree"):
+            if variant not in ("reference", "standard"):
                 fills = median_of(rs, "fill_seconds")
                 lines.append(f"- information, {variant}: fill {fmt(fills, '.2f')} s, "
                              f"total {fmt(median_of(rs, 'total'))} s")
@@ -1898,10 +1901,10 @@ def cmd_report(args):
                          + ", ".join(f"{t['name']} ({t['pid']}) {t['rise_mb']:+.0f} MB" for t in top))
     print("\n".join(lines))
     print()
-    if g1_failures:
-        print("G1 FAILED: " + ", ".join(g1_failures))
+    if agreement_failures:
+        print("Agreement with the reference FAILED: " + ", ".join(agreement_failures))
         return 1
-    print("G1 passed in every configuration (R2-R4 are information)")
+    print("Agreement with the reference passed in every configuration (time, memory and fill time are information)")
     return 0
 
 
@@ -1948,7 +1951,7 @@ def main(argv=None):
     p.add_argument("--restored", action="append")
     p.add_argument("--identical", action="store_true", help="also fail on bitwise or variance differences")
     p.add_argument("--order-tolerant", action="store_true",
-                   help="rule 2t: values within 1e-9 relative (for different summation orders); strict mismatches "
+                   help="values within 1e-9 relative (for different summation orders); strict mismatches "
                         "are printed as information and failing cells are classed cancellation or real")
     p.add_argument("--lumi-record", action="store_true",
                    help="data dumps: a lumi record present in O must equal the dump's expected_lumis")
@@ -1982,7 +1985,8 @@ def main(argv=None):
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_scale)
 
-    p = sub.add_parser("report", help="G1 verdict and R2-R4 information rows over the scale results in a directory")
+    p = sub.add_parser("report", help="reference-agreement verdict and the time, memory and fill-time information rows "
+                                      "over the scale results in a directory")
     p.add_argument("--out", required=True)
     p.add_argument("--names", action="append")
     p.set_defaults(func=cmd_report)

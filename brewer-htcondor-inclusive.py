@@ -127,7 +127,7 @@ def check_registry(registry, samples, options):
         if '#' in sample or len(sample.split("/")) <= 1:
             continue
         if '*' in sample:
-            raise SystemExit(f"C4 needs one DAS dataset per line: expand the wildcard in {sample}")
+            raise SystemExit(f"histserv mode needs one DAS dataset per line: expand the wildcard in {sample}")
         try:
             production_keys.das_parts(sample)
         except ValueError as error:
@@ -136,7 +136,7 @@ def check_registry(registry, samples, options):
         auto_isMC, sample_name = sample_name_of(sample)
         if sample_name in names:
             raise SystemExit(f"{names[sample_name]} and {sample} share the job directory of {sample_name}: "
-                             "in C4 mode one job directory must hold one registry entry")
+                             "in histserv mode one job directory must hold one registry entry")
         names[sample_name] = sample
         keys = [key for key, entry in registry["samples"].items()
                 if entry["das"] == sample and all(entry["variations"][name] == value for name, value in variations.items())]
@@ -151,7 +151,7 @@ def check_registry(registry, samples, options):
         if not kind_matches[kind]:
             problems.append(f"{sample}: registered kind {kind} contradicts the sample")
     if problems:
-        raise SystemExit("C4 registry check failed: " + "; ".join(problems))
+        raise SystemExit("histserv registry check failed: " + "; ".join(problems))
     return keys_of
 
 
@@ -173,7 +173,7 @@ def main():
     parser.add_argument("-ex", "--executor", type=str, default="FuturesExecutor", help="coffea executor to use",
                         choices=["FuturesExecutor","IterativeExecutor","DaskExecutor"])
     parser.add_argument("--histserv-registry", type=str, default=None,
-                        help="C4: fill the central histserv server of this registry JSON (python -m qawa.histserv_output register) instead of job pickles")
+                        help="fill the central histserv server of this registry JSON (python -m qawa.histserv_output register) instead of job pickles")
     options = parser.parse_args()
 
     with open(options.input, 'r') as stream:
@@ -294,9 +294,9 @@ def main():
             max_chunks = f" --maxChunks={histserv_registry['max_chunks']}" if histserv_registry["max_chunks"] is not None else ""
             histserv = f" --histserv-registry=histserv_registry.json --das-name={sample}{max_chunks}\nrc=$?\nif [ $rc -eq {code} ]; then exit {code}; fi"
             histserv_hold = (f"\non_exit_hold          = (ExitBySignal == False) && (ExitCode == {code})"
-                             "\non_exit_hold_reason   = \"C4 poison: do not release; re-register under a new tag and re-run\"")
+                             "\non_exit_hold_reason   = \"histserv poison: do not release; re-register under a new tag and re-run\"")
             done_file = "histserv_done_$1.json"
-            done_message = "No C4 done file found"
+            done_message = "No histserv done file found"
             transfer_output = "# transfer_output_files = histserv_done_$(ProcId).json"
             collect_manifests.append(keys_of[sample] + "=" + os.path.abspath(jobs_dir) + "/inputfiles.dat")
         # eosoutdir =  eosbase.format(tag=options.tag,sample=sample_name)
@@ -359,7 +359,7 @@ def main():
         except Exception as e:
             print(f"HTCondor submission error: {e}")
     if histserv_registry is not None:
-        logging.info("C4 collect, once no job is running, held or failed: python -m qawa.histserv_output collect --registry "
+        logging.info("histserv collect, once no job is running, held or failed: python -m qawa.histserv_output collect --registry "
                      + shlex.quote(os.path.abspath(options.histserv_registry))
                      + "".join(" --manifest " + shlex.quote(manifest) for manifest in collect_manifests) + " --outdir <outdir>")
 

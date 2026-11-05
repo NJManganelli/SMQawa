@@ -232,7 +232,7 @@ ENGINES = {
 }
 
 ENGINE_DESCRIPTIONS = {
-    "multicell": "phase-A MultiCell: Integer channel index axis, one fill per target per slot group",
+    "multicell": "MultiCell prototype: Integer channel index axis, one fill per target per slot group",
     "multicell_pr20": "MultiCell, PR #20 layout: pre-declared StrCategory channel, one fill per (channel, slot group)",
     "multicell_string": "MultiCell, pre-declared StrCategory channel, one fill per slot group with a label array",
     "chunked": "ChunkedHist as a per-fill sink (scalar chunk keys only), converted per pass with to_hist()",

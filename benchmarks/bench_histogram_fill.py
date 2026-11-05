@@ -22,7 +22,7 @@ import qawa.utils as utils  # noqa: E402
 
 DESCRIPTION = """Synthetic, file-free micro-benchmark of the histogram fill strategies of wzinclusive_processor.
 
-Every strategy fills the same selected events with the same weights as C1 (utils.fill_histogram),
+Every strategy fills the same selected events with the same weights as the standard Hist fill (utils.fill_histogram),
 through the shared prep of qawa.utils (ChannelSelections, syst_weight, syst_weight_eft_struct_const).
 
 Shapes (channels x slots x variables):
@@ -43,9 +43,9 @@ with a growing channel axis, which shows the boost-histogram growth-resize bug).
 
 Per strategy: best-of-repeat fill time, accumulation time, deterministic bytes, peak RSS and
 lifetime-max footprint (fresh subprocess, --only X --rss), pickle+gzip sizes of the native object and
-of hist.Hist, and exactness against C1 under the comparison rule of bench_processor.py. A mismatch
+of hist.Hist, and exactness against the standard Hist fill under the comparison rule of bench_processor.py. A mismatch
 is reported as a failure of that strategy. The accumulation row compares Hist +, ChunkedHist += and
-merge_histogram_sets on the C1 outputs.
+merge_histogram_sets on the standard Hist fill outputs.
 """
 
 COMMON = ["triggers", "lumimask", "metfilter", "require-ossf", "require-2lep", "dilep_m", "dilep_dphi_met", "dilep_pt"]
@@ -352,7 +352,7 @@ def print_shape(shape, results):
         for failure in row.get("failures", []):
             print(f"    FAIL {failure}")
     if "accumulation" in results:
-        print("accumulation of the C1 outputs:", results["accumulation"])
+        print("accumulation of the standard Hist fill outputs:", results["accumulation"])
     if "multicell_vs_chunkedhist" in results:
         print("MultiCell against ChunkedHist:", "PASS" if results["multicell_vs_chunkedhist"] else "FAIL")
 

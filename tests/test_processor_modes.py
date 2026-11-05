@@ -73,7 +73,8 @@ MAP_FILE = os.path.join(ROOT, "benchmarks", "rename_map_wz_inclusive.tsv")
 KINDS = {"hist", "axis", "ntuple", "selection"}
 KEPT_OVERLAP = {"met_pt", "met_pt_fv", "dilep_m_fv", "dilep_pt_fv"}
 T24_ROWS = {"tau_pt_gen_vs_tau_vtight_pt", "tau_pt_gen_vs_tau_vtight_pt_tau_loosetovtight_matched"}
-U4_REMOVED = {"dilep_tau_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_dphi", "dilep_loose_tau_phi", "dilep_tau_phi"}
+REMOVED_BOOKINGS = {"dilep_tau_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_dphi", "dilep_loose_tau_phi",
+                    "dilep_tau_phi"}
 WPREFS = ("wZW", "wZWp", "wZWm", "wWZ", "wWpZ", "wWmZ")
 POLS = ("long", "left", "right")
 
@@ -86,7 +87,8 @@ ALLOWED = {
     ("nbjets", "0nbjets"),
 } | {(f"nhtaus_{wp}", f"{n}nhtaus_{wp}") for wp in ("loose", "tight", "vtight") for n in ("1", "2plus")}
 
-# build_histos booked 75 keys at 76984ce; U4 removes 5. The pol builder booked 35 (107 with the signal clones).
+# build_histos booked 75 keys at 76984ce; this PR removes 5 never-filled bookings. The pol builder booked 35
+# (107 with the signal clones).
 BOOKED_COUNTS = {"standard": 70, "pol": 35, "pol_signal": 107}
 
 
@@ -268,8 +270,8 @@ def test_rename_inventory(inventory):
     for mode, rec in inventory.items():
         for builder, n in rec["counts"].items():
             assert n == BOOKED_COUNTS[builder], (mode, builder, n)
-    assert not U4_REMOVED & keys
-    assert not U4_REMOVED & {k[:-len("_eft")] if k.endswith("_eft") else k for k in outputs}
+    assert not REMOVED_BOOKINGS & keys
+    assert not REMOVED_BOOKINGS & {k[:-len("_eft")] if k.endswith("_eft") else k for k in outputs}
 
 
 RESTORED = "tau_loosetovtight_mT_WZ"

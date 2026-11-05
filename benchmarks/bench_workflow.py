@@ -20,8 +20,8 @@ DESCRIPTION = """End-to-end workflow driver and benchmark for wzinclusive_proces
 
 Subcommands:
   run      one workflow (reference, c1 or c4) of one configuration: setup, jobs on --slots single-core
-           job processes, then the merge (hist-merger.py --legacy) or the C4 collect, with process
-           sampling; with --scenario, one of the C4 dedup, completeness, poisoning and truncation
+           job processes, then the merge (hist-merger.py --legacy) or the histserv collect, with process
+           sampling; with --scenario, one of the histserv dedup, completeness, poisoning and truncation
            scenarios, whose expected outcomes and exit codes are checked
   job      (internal) one harness job: the brewer's processor and coffea Runner on a WorkItem list
   compare  compare two outputs in the pickle layout ({dataset: {"hist", "sumw", ...}}), with the
@@ -30,7 +30,7 @@ Subcommands:
 
 The tree under test is --tree (its src/ goes first on the jobs' PYTHONPATH); every job asserts that
 qawa is imported from below it. Jobs are started with one thread each; the driver and the merge use
-four. The C4 server is benchmarks/loopback_histserv.py on 127.0.0.1, stopped at the end of the run.
+four. The histserv server is benchmarks/loopback_histserv.py on 127.0.0.1, stopped at the end of the run.
 On macOS run the driver under `caffeinate -i -s -m --` for the final benchmark. The footprint and
 per-process disk columns, the pressure level and the pmset probes are macOS only.
 """
@@ -321,7 +321,7 @@ def cmd_job(args):
         os.environ[ho.POISON_FILE_ENV] = os.path.abspath(ho.POISON_FILE_NAME)
         reason = ho.poison_reason(None)
         if reason:
-            print("C4 poison marker from an earlier run in this directory: " + reason)
+            print("histserv poison marker from an earlier run in this directory: " + reason)
             return ho.POISON_EXIT_CODE
         key = ho.resolve_key(registry, args.das_name, pol=bool(cfg.get("pol")),
                              split_by_charge=bool(cfg.get("split_by_charge")), split_FV=False)
@@ -376,7 +376,7 @@ def cmd_job(args):
             reason = ho.poison_reason(err)
             if reason is None:
                 raise
-            print("C4 poison: " + reason)
+            print("histserv poison: " + reason)
             record.update(exit=ho.POISON_EXIT_CODE, poison=reason, counts=counter.totals, calls=counter.calls)
             write_json(f"job_{args.job_num}.json", record)
             return ho.POISON_EXIT_CODE
@@ -782,8 +782,8 @@ def compare_outputs(ref_paths, opt_paths, identical=False, order_tolerant=False,
     hist_res = bench_processor.compare_dumps(rdump, odump, hist_map, axis_map, changed, removed, restored,
                                              identical=identical, report=report, order_tolerant=order_tolerant)
     if expected is None:
-        hist_res.failures = [f for f in hist_res.failures if f[0] != "4"]
-        res.note("rule 4 (vacuity) not checked: no --expected job records given")
+        hist_res.failures = [f for f in hist_res.failures if f[0] != "empty-label"]
+        res.note("empty-label check skipped: no --expected job records given")
     res.failures += hist_res.failures
     res.notes += hist_res.notes
     res.stats += hist_res.stats
@@ -941,7 +941,7 @@ def scenario_kill(wf, rerun, midpass=False):
              counts_of(again).get("duplicate", 0) == wanted, f"{counts_of(again)} vs {wanted}")
     rc, text, finals = wf.collect("main", os.path.join(wf.out, "final"))
     wf.check("collect after the re-run exits 0", rc == 0, text[-1000:])
-    hist_equal_2t(wf, "collect equals the clean run (rule 2t)", baseline, finals, sumw_mode="order_tolerant")
+    hist_equal_2t(wf, "collect equals the clean run (order-tolerant)", baseline, finals, sumw_mode="order_tolerant")
     return finals
 
 
@@ -963,9 +963,10 @@ def scenario_never_started(wf):
     wf.check("collect --allow-incomplete exits 3 with .PARTIAL files",
              rc == 3 and finals and all(".PARTIAL" in f for f in finals), f"{rc} {finals}")
     c1 = wf.run_jobs([wf.job_run(job0, "c1_job0", workflow="c1")])["c1_job0"]
-    wf.check("the C1 job over job 0's chunk exits 0", c1["rc"] == 0, c1["rc"])
+    wf.check("the standard Hist fill run over job 0's chunk exits 0", c1["rc"] == 0, c1["rc"])
     c1_pickle = os.path.join(c1["workdir"], f"histogram_{job0['num']}.pkl.gz")
-    hist_equal_2t(wf, ".PARTIAL hists equal the C1 run over job 0's chunk (rule 2t)", [c1_pickle], finals)
+    hist_equal_2t(wf, ".PARTIAL hists equal the standard Hist fill run over job 0's chunk (order-tolerant)",
+                  [c1_pickle], finals)
     check_genweight(wf, finals, [job0["workitems"]])
     return finals
 
@@ -1060,7 +1061,7 @@ def scenario_no_poison(wf, lost_response):
     wf.check("the ledger has no poisoned entry", not poison_entries(wf, "main"))
     rc, text, finals = wf.collect("main", os.path.join(wf.out, "final"))
     wf.check("collect exits 0", rc == 0, text[-1000:])
-    hist_equal_2t(wf, "collect equals the clean run (rule 2t)", baseline, finals, sumw_mode="order_tolerant")
+    hist_equal_2t(wf, "collect equals the clean run (order-tolerant)", baseline, finals, sumw_mode="order_tolerant")
     return finals
 
 
@@ -1079,7 +1080,7 @@ def scenario_truncated(wf):
              or ("\"kept\": 1" in production and f"\"total\": {total}" in production), production[:500])
     job0 = wf.jobs[0]
     c1 = wf.run_jobs([wf.job_run(job0, "c1_job0", workflow="c1")])["c1_job0"]
-    hist_equal_2t(wf, "hists equal a C1 run over that chunk (rule 2t)",
+    hist_equal_2t(wf, "hists equal a standard Hist fill run over that chunk (order-tolerant)",
                   [os.path.join(c1["workdir"], f"histogram_{job0['num']}.pkl.gz")], finals)
     check_genweight(wf, finals, [job0["workitems"]])
     for name, max_chunks in (("max2", 2), ("nomax", None)):
@@ -1343,7 +1344,7 @@ def cmd_report(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("run", help="one workflow of one configuration, or one C4 scenario")
+    p = sub.add_parser("run", help="one workflow of one configuration, or one histserv scenario")
     p.add_argument("--workflow", required=True, choices=("reference", "c1", "c4"))
     p.add_argument("--config", required=True, choices=sorted(CONFIGS))
     p.add_argument("--tree", required=True, help="tree under test; its src/ goes first on the jobs' PYTHONPATH")
@@ -1395,7 +1396,8 @@ def main(argv=None):
     p.add_argument("--identical", action="store_true")
     p.add_argument("--order-tolerant", action="store_true")
     p.add_argument("--sumw-mode", default="strict", choices=bench_processor.SUMW_MODES + ("skip",))
-    p.add_argument("--expected", nargs="+", help="job records (job_<n>.json) whose expected labels rule 4 checks")
+    p.add_argument("--expected", nargs="+",
+                   help="job records (job_<n>.json) whose expected labels the empty-label check uses")
     p.add_argument("--lumi-record", action="store_true", help="print data datasets without a lumi record")
     p.add_argument("--require-lumi-record", action="store_true",
                    help="every data dataset must carry a lumi record on both sides, and the two must be equal")

@@ -746,7 +746,7 @@ def test_nondeterministic_reason():
     era2024 = ho.make_processor(OPTIONS)
     for kind in ("mc", "signal", "eft"):
         reason = ho.nondeterministic_reason(era2018, kind)
-        assert "roccor.py:31" in reason and "N15" in reason
+        assert "roccor.py:31" in reason and "histserv mode needs deterministic chunk processing" in reason
         assert ho.nondeterministic_reason(era2024, kind) is None
     assert ho.nondeterministic_reason(era2018, "data") is None
     assert ho.nondeterministic_reason(era2024, "data") is None
@@ -773,7 +773,7 @@ def test_constructor_consistency_errors():
 
 def test_constructor_refuses_nondeterministic():
     options = dict(OPTIONS, era="2018", version="v9")
-    with pytest.raises(ValueError, match="N15"):
+    with pytest.raises(ValueError, match="histserv mode needs deterministic chunk processing"):
         wzmod.wzinclusive_processor(era="2018", version="v9", histserv_registry=hand_registry("signal", options),
                                     histserv_sample=DAS_S)
     wzmod.wzinclusive_processor(era="2018", version="v9", run_period="C", histserv_registry=hand_registry("data", options),
@@ -933,7 +933,8 @@ def test_register_cli(server, tmp_path):
     count = histserv.Client(server).stats()["histogram_count"]
     run = run_cli("register", "--address", server, "--tag", "t", "--era", "2018", "--version", "v9",
                   "--sample", f"{DAS_X}=mc", "--output", str(tmp_path / "r2018.json"))
-    assert run.returncode == 2 and "roccor.py:31" in run.stderr and "N15" in run.stderr
+    assert run.returncode == 2 and "roccor.py:31" in run.stderr
+    assert "histserv mode needs deterministic chunk processing" in run.stderr
     assert not (tmp_path / "r2018.json").exists()
     assert histserv.Client(server).stats()["histogram_count"] == count
     run = run_cli("register", "--address", server, "--tag", "t", "--era", "2018", "--version", "v9",

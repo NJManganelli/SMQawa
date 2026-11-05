@@ -130,7 +130,7 @@ def poison_reason(error):
                 lines.append(f"unreadable poison marker line {group[0]['line']!r} (the poison write did not finish)")
             else:
                 pending = group[0]
-                lines.append(f"C4 poison pending for {pending.get('sample')} {pending.get('key')} "
+                lines.append(f"histserv poison pending for {pending.get('sample')} {pending.get('key')} "
                              f"({pending.get('code')}: {pending.get('details')}) (the poison write did not finish)")
         return "\n".join(lines)
     if error is not None and is_poison(error):
@@ -142,8 +142,8 @@ def poison_reason(error):
 def nondeterministic_reason(proc, kind):
     if kind == "data" or "muon_scalesmearing" in proc.clibhandler.keys():
         return None
-    return (f"C4 needs deterministic chunk processing: {proc._era} MC uses the Rochester smearing, which draws unseeded "
-            f"random numbers (roccor.py:31); see user decision N15")
+    return (f"histserv mode needs deterministic chunk processing: {proc._era} MC uses the Rochester smearing, which "
+            f"draws unseeded random numbers (roccor.py:31)")
 
 
 def client(address):
@@ -201,7 +201,7 @@ def lumi_template():
 
 def chunk_id(fileuuid, entrystart, entrystop):
     if not fileuuid:
-        raise ValueError("C4 needs the chunk's fileuuid, which is empty")
+        raise ValueError("histserv mode needs the chunk's fileuuid, which is empty")
     return f"{fileuuid}:{entrystart}:{entrystop}"
 
 
@@ -395,7 +395,7 @@ def poison(registry, key, where, error):
         details = (str(error.details() or "").splitlines() or [""])[0][:200]
     code = error_code_name(error)
     pid = os.getpid()
-    POISONED[pid] = f"C4 poison pending for {key} {tuple(where)} ({code}: {details})"
+    POISONED[pid] = f"histserv poison pending for {key} {tuple(where)} ({code}: {details})"
     pending = {"pid": pid, "sample": key, "key": list(where), "code": code, "details": details, "state": "pending"}
     marker_errors = [write_poison_marker(pending)]
     fills = [marker_fill(where[0], where[1], "poisoned", where[2])]
@@ -418,11 +418,12 @@ def poison(registry, key, where, error):
             recorded = True
             break
     if recorded:
-        message = (f"C4 poison recorded for {key} {tuple(where)} ({code}: {details}): re-register under a new tag and "
-                   f"re-run the production")
+        message = (f"histserv poison recorded for {key} {tuple(where)} ({code}: {details}): re-register under a new "
+                   f"tag and re-run the production")
     else:
-        message = (f"C4 poison NOT recorded on the server for {key} {tuple(where)} ({code}: {details}) after {attempts} "
-                   f"attempts: do not retry or release this job; re-register under a new tag and re-run the production")
+        message = (f"histserv poison NOT recorded on the server for {key} {tuple(where)} ({code}: {details}) after "
+                   f"{attempts} attempts: do not retry or release this job; re-register under a new tag and re-run the "
+                   f"production")
     final = dict(pending, state="recorded" if recorded else "not recorded", attempts=attempts, message=message)
     marker_errors.append(write_poison_marker(final))
     failed = [text for text in marker_errors if text]
@@ -438,8 +439,8 @@ def check_poison(registry, key):
     ledger = remote(registry, entry_of(registry, key)["ledger"])
     poisoned = [chunk_key for chunk_key, _ in ledger[{"state": "poisoned"}].snapshot(timeout=TIMEOUT).items()]
     if poisoned:
-        raise HistservPoisoned(f"C4 sample {key} is poisoned at {poisoned}: re-register under a new tag and re-run the "
-                               f"production")
+        raise HistservPoisoned(f"histserv sample {key} is poisoned at {poisoned}: re-register under a new tag and "
+                               f"re-run the production")
 
 
 def begin_job(registry, key, expected, files, truncated=None):
@@ -994,7 +995,7 @@ def read_manifest(path):
         return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 
-REGISTER_DESCRIPTION = """Register a C4 production on a central histserv server and write its registry JSON.
+REGISTER_DESCRIPTION = """Register a histserv production on a central histserv server and write its registry JSON.
 
 The server is the operator's. Start it with
   python -m histserv --port 0 --prune-after-seconds <seconds >= the production's lifetime>
@@ -1004,11 +1005,11 @@ so keep the registry (it holds the access token) private.
 
 --sample takes the full DAS dataset name (/primary/processed/NANOAOD or NANOAODSIM) and the kind
 (data, mc, signal or eft); private datasets (tier USER) are refused. MC on the Rochester smearing
-path (Run 2) is refused, because C4 needs deterministic chunk processing (roccor.py:31, N15).
+path (Run 2) is refused, because histserv mode needs deterministic chunk processing (roccor.py:31).
 --max-chunks makes a truncated test production: every output name is marked .TRUNCATED.
 """
 
-COLLECT_DESCRIPTION = """Audit a C4 production and write its final histogram files.
+COLLECT_DESCRIPTION = """Audit a histserv production and write its final histogram files.
 
 Collect only when no job is running, held or failed; re-run a failed job first (deduplication
 makes that safe). A refusal names what is missing; a "poisoned" refusal means re-registering
@@ -1039,7 +1040,7 @@ def parse_pairs(values, option):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m qawa.histserv_output",
-                                     description="C4: fill one central histserv server instead of job pickles.")
+                                     description="Fill one central histserv server instead of job pickles.")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("register", description=REGISTER_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--address", default=os.environ.get("HISTSERV_ADDRESS"),
