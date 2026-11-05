@@ -60,8 +60,8 @@ def standard_case():
 
 def fill_with(engine, key, axes, values, labels, weight, selection, eft=False):
     histos = {key: helpers.booked(*axes, eft=eft)}
-    state = helpers.pass_state_for(selection, CHANNELS)
-    engine(histos, key, values, labels, weight, ("met_pt",), state)
+    state = helpers.channel_selections_for(selection, CHANNELS)
+    engine(histos, key, values, labels, weight, state)
     return histos[key], state
 
 
@@ -133,6 +133,6 @@ def test_engines_add_nothing_to_processor_module(name):
     selection, weight_syst_stack, values, labels = standard_case()
     _, state = fill_with(fill_engines.ENGINES[name], "met_pt", (helpers.axes_for("met_pt"),), values, labels,
                          utils.syst_weight(weight_syst_stack), selection)
-    added = set(state) - {"selection", "channels", "block_cache"}
+    added = set(vars(state)) - {"selection", "channels", "cache"}
     assert all(key.startswith(name) for key in added)
     assert not [a for a in [*vars(wzmod), *vars(utils)] if "multicell" in a.lower() or "buffer" in a.lower()]

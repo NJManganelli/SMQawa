@@ -43,8 +43,8 @@ CHANNELS = {
 }
 
 
-def pass_state_for(selection, channels=CHANNELS):
-    return {"selection": selection, "channels": channels, "block_cache": {}}
+def channel_selections_for(selection, channels=CHANNELS):
+    return utils.ChannelSelections(selection, channels)
 
 
 def make_weight_syst_stack(k=4, n=N, seed=2):
@@ -132,8 +132,8 @@ def test_fill_histogram_matches_naive(var):
     values = make_values()
     labels = [(f"s{k}",) for k in range(len(weight_syst_stack))]
     histos = {var: booked(axes_for(var))}
-    utils.fill_histogram(histos, var, {var: values[var]}, labels, utils.syst_weight(weight_syst_stack), (var,),
-                         pass_state_for(selection))
+    utils.fill_histogram(histos, var, {var: values[var]}, labels, utils.syst_weight(weight_syst_stack),
+                         channel_selections_for(selection))
     ref = naive_fill(booked(axes_for(var)), selection, CHANNELS, {var: values[var]}, weight_syst_stack, labels, (var,),
                      standard_ref(weight_syst_stack))
     assert_same(ref, histos[var])
@@ -157,7 +157,7 @@ def test_all_empty_target_untouched():
     histos = {"met_pt": target}
     counting = Counting(utils.syst_weight(weight_syst_stack))
     utils.fill_histogram(histos, "met_pt", {"met_pt": make_values()["met_pt"]}, [("s0",), ("s1",)], counting,
-                         ("met_pt",), pass_state_for(selection, channels))
+                         channel_selections_for(selection, channels))
     assert counting.calls == 0
     assert histos["met_pt"] is target
     assert len(target.axes[0]) == 0 and len(target.axes[1]) == 0
@@ -179,7 +179,7 @@ def test_2d_extra_weight():
     axes = (axes_for("met_pt"), axes_for("njets"))
     histos = {"m": booked(*axes)}
     utils.fill_histogram(histos, "m", {"met_pt": values["met_pt"], "njets": values["njets"]}, [("nominal",)],
-                         utils.syst_weight(weight_syst_stack, factor), ("met_pt", "njets"), pass_state_for(selection))
+                         utils.syst_weight(weight_syst_stack, factor), channel_selections_for(selection))
 
     def ref_weight(k, cut):
         weight = weight_syst_stack[k][cut] * ak.to_numpy(ak.fill_none(extra, 0.0))[cut]
@@ -199,8 +199,8 @@ def test_one_bin_many_entries():
     values = {"met_pt": np.full(n, 42.0)}
     histos = {"met_pt": booked(axes_for("met_pt"))}
     labels = [("a",), ("b",)]
-    utils.fill_histogram(histos, "met_pt", values, labels, utils.syst_weight(weight_syst_stack), ("met_pt",),
-                         pass_state_for(selection, channels))
+    utils.fill_histogram(histos, "met_pt", values, labels, utils.syst_weight(weight_syst_stack),
+                         channel_selections_for(selection, channels))
     ref = naive_fill(booked(axes_for("met_pt")), selection, channels, values, weight_syst_stack, labels, ("met_pt",),
                      standard_ref(weight_syst_stack))
     assert_same(ref, histos["met_pt"])
@@ -299,8 +299,8 @@ def test_pol_clone_operation_order(factor_kind):
     axis = hist.axis.Regular(4, -1, 1, name="x")
     histos = {"x_w": booked(axis)}
     labels = [("a",), ("b",), ("c",)]
-    utils.fill_histogram(histos, "x_w", values, labels, utils.syst_weight(weight_syst_stack, factor), ("x",),
-                         pass_state_for(selection, channels))
+    utils.fill_histogram(histos, "x_w", values, labels, utils.syst_weight(weight_syst_stack, factor),
+                         channel_selections_for(selection, channels))
     ref = booked(axis)
     for k, (label,) in enumerate(labels):
         ref.fill(channel="c", systematic=label, x=values["x"][cut], weight=pol_reference(weight_syst_stack, pol_w, cut, k))
@@ -338,7 +338,7 @@ def test_eft_target_matches_naive():
     values = make_values()
     histos = {"met_pt_eft": booked(axes_for("met_pt"), eft=True)}
     utils.fill_histogram(histos, "met_pt_eft", {"met_pt": values["met_pt"]}, labels,
-                         utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts), ("met_pt",), pass_state_for(selection))
+                         utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts), channel_selections_for(selection))
     out = histos["met_pt_eft"]
     assert_same(eft_reference(selection, weight_syst_stack, terms, eft_struct_consts, values), out)
     assert np.isnan(out.view(flow=True)["value"]).any()
@@ -362,7 +362,7 @@ def test_n_minus_one_key():
 
 MUTABLE = (dict, list, set, collections.abc.MutableMapping, collections.abc.MutableSet,
            collections.abc.MutableSequence)
-ENGINE = ("fill_histogram", "channel_selection_cache", "n_minus_one_key", "syst_weight",
+ENGINE = ("fill_histogram", "n_minus_one_key", "syst_weight",
           "syst_weight_eft_struct_const")
 
 
@@ -397,14 +397,14 @@ def fill_one(histos, key, selection, channels, weight_syst_stack, values, state,
     labels = [(f"s{k}",) for k in range(len(weight_syst_stack))]
     histos[key] = booked(axes_for("met_pt"))
     utils.fill_histogram(histos, key, {"met_pt": values["met_pt"]}, labels, weight or utils.syst_weight(weight_syst_stack),
-                         ("met_pt",), state)
+                         state)
     return histos[key]
 
 
-def assert_blocks_hold_event_indices(state):
-    for block in state["block_cache"].values():
-        assert isinstance(block, tuple)
-        for pair in block:
+def assert_cache_holds_event_indices(state):
+    for selected in state.cache.values():
+        assert isinstance(selected, tuple)
+        for pair in selected:
             assert isinstance(pair, tuple) and len(pair) == 2
             name, selected_event_indices = pair
             assert isinstance(name, str)
@@ -417,7 +417,7 @@ def test_cache_safety():
     values = make_values()
 
     selection = make_selection()
-    state = pass_state_for(selection)
+    state = channel_selections_for(selection)
     histos = {}
     out2 = fill_one(histos, "a", selection, CHANNELS, weight_syst_stack, values, state, utils.syst_weight(weight_syst_stack, np.full(N, 2.0)))
     out3 = fill_one(histos, "b", selection, CHANNELS, weight_syst_stack, values, state, utils.syst_weight(weight_syst_stack, np.full(N, 3.0)))
@@ -430,39 +430,39 @@ def test_cache_safety():
     assert not np.array_equal(out2.view(flow=True)["value"], out3.view(flow=True)["value"])
 
     renamed = {f"{k}_x": v for k, v in CHANNELS.items()}
-    out_a = fill_one({}, "c", selection, CHANNELS, weight_syst_stack, values, pass_state_for(selection))
-    out_b = fill_one({}, "c", selection, renamed, weight_syst_stack, values, pass_state_for(selection, renamed))
+    out_a = fill_one({}, "c", selection, CHANNELS, weight_syst_stack, values, channel_selections_for(selection))
+    out_b = fill_one({}, "c", selection, renamed, weight_syst_stack, values, channel_selections_for(selection, renamed))
     assert set(out_b.axes[0]) == {f"{c}_x" for c in out_a.axes[0]}
 
-    state = pass_state_for(selection)
-    first = utils.channel_selection_cache(("leading_lep_pt",), state)
-    second = utils.channel_selection_cache(("dilep_deta",), state)
-    assert len(state["block_cache"]) == 1 and first is second
-    utils.channel_selection_cache(("met_pt",), state)
-    assert len(state["block_cache"]) == 2
-    assert_blocks_hold_event_indices(state)
+    state = channel_selections_for(selection)
+    first = state.selected_event_indices(("leading_lep_pt",))
+    second = state.selected_event_indices(("dilep_deta",))
+    assert len(state.cache) == 1 and first is second
+    state.selected_event_indices(("met_pt",))
+    assert len(state.cache) == 2
+    assert_cache_holds_event_indices(state)
 
     sel1, sel2 = make_selection(seed=11), make_selection(seed=12)
-    s1, s2 = pass_state_for(sel1), pass_state_for(sel2)
+    s1, s2 = channel_selections_for(sel1), channel_selections_for(sel2)
     o1 = fill_one({}, "d", sel1, CHANNELS, weight_syst_stack, values, s1)
     o2 = fill_one({}, "d", sel2, CHANNELS, weight_syst_stack, values, s2)
     for sel, state_, out in ((sel1, s1, o1), (sel2, s2, o2)):
         ref = naive_fill(booked(axes_for("met_pt")), sel, CHANNELS, {"met_pt": values["met_pt"]}, weight_syst_stack,
                          [(f"s{k}",) for k in range(len(weight_syst_stack))], ("met_pt",), standard_ref(weight_syst_stack))
         assert_same(ref, out)
-        block = utils.channel_selection_cache(("met_pt",), state_)
+        selected = state_.selected_event_indices(("met_pt",))
         expected_event_indices = np.concatenate([np.flatnonzero(cut_for(sel, r, ("met_pt",))) for r in CHANNELS.values()])
-        assert np.array_equal(np.concatenate([selected_event_indices for _, selected_event_indices in block]), expected_event_indices)
-        assert_blocks_hold_event_indices(state_)
+        assert np.array_equal(np.concatenate([selected_event_indices for _, selected_event_indices in selected]), expected_event_indices)
+        assert_cache_holds_event_indices(state_)
     assert not np.array_equal(o1.view(flow=True)["value"], o2.view(flow=True)["value"])
 
     sel3 = make_selection(seed=13)
-    s3 = pass_state_for(sel3)
+    s3 = channel_selections_for(sel3)
     o3 = fill_one({}, "e", sel3, CHANNELS, weight_syst_stack, values, s3)
     del sel3, s3
     gc.collect()
     sel4 = make_selection(seed=14)
-    s4 = pass_state_for(sel4)
+    s4 = channel_selections_for(sel4)
     o4 = fill_one({}, "e", sel4, CHANNELS, weight_syst_stack, values, s4)
     ref4 = naive_fill(booked(axes_for("met_pt")), sel4, CHANNELS, {"met_pt": values["met_pt"]}, weight_syst_stack,
                       [(f"s{k}",) for k in range(len(weight_syst_stack))], ("met_pt",), standard_ref(weight_syst_stack))

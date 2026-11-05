@@ -3,7 +3,6 @@ import hist
 import numpy as np
 from hist.chunked import ChunkedHist
 
-import qawa.utils as utils
 
 MULTICELL_BUFFER_BYTES = 32 * 2**20
 
@@ -19,9 +18,9 @@ def slot_axis_names(categories):
     return [ax.name for ax in categories[1:]]
 
 
-def concatenated_block(block):
-    channel_list = [channel for channel, _ in block]
-    selected_event_index_sets = [selected_event_indices for _, selected_event_indices in block]
+def concatenated_selection(selected):
+    channel_list = [channel for channel, _ in selected]
+    selected_event_index_sets = [selected_event_indices for _, selected_event_indices in selected]
     dtype = np.result_type(np.int16, np.min_scalar_type(len(channel_list)))
     cidx = np.repeat(np.arange(len(channel_list), dtype=dtype), [len(r) for r in selected_event_index_sets])
     selected_event_indices = np.concatenate([np.empty(0, dtype=np.intp)] + selected_event_index_sets)
@@ -51,12 +50,13 @@ def output_like(target, channel_list, labels):
     return output, slot_index, dense
 
 
-def group_cells(pass_state, name, n_selected_events, k):
+def group_cells(channel_selections, name, n_selected_events, k):
+    buffers = vars(channel_selections)
     key = name + "_buffer"
     need = n_selected_events * 2 * k
-    if key not in pass_state or pass_state[key].size < need:
-        pass_state[key] = np.empty(max(need, MULTICELL_BUFFER_BYTES // 8))
-    return pass_state[key][:need].reshape(n_selected_events, 2 * k)
+    if key not in buffers or buffers[key].size < need:
+        buffers[key] = np.empty(max(need, MULTICELL_BUFFER_BYTES // 8))
+    return buffers[key][:need].reshape(n_selected_events, 2 * k)
 
 
 def write_columns(weight, group, selected_event_indices, out):
@@ -68,12 +68,12 @@ def group_size_for(n_selected_events):
     return max(1, MULTICELL_BUFFER_BYTES // (max(n_selected_events, 1) * 16))
 
 
-def multicell(histos, key, values, labels, weight, exclude, pass_state):
+def multicell(histos, key, values, labels, weight, channel_selections):
     target_categories(histos, key)
-    block = utils.channel_selection_cache(exclude, pass_state)
-    if not block:
+    selected = channel_selections.selected_event_indices(tuple(values))
+    if not selected:
         return
-    channel_list, cidx, selected_event_indices = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_selection(selected)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     assert "channel_index" not in [ax.name for ax in dense]
     view = output.view(flow=True)
@@ -84,7 +84,7 @@ def multicell(histos, key, values, labels, weight, exclude, pass_state):
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "multicell", n_selected_events, k)
+        cells = group_cells(channel_selections, "multicell", n_selected_events, k)
         write_columns(weight, group, selected_event_indices, cells[:, :k])
         np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
         transient = hist.Hist(
@@ -101,24 +101,24 @@ def multicell(histos, key, values, labels, weight, exclude, pass_state):
     histos[key] = output
 
 
-def multicell_pr20(histos, key, values, labels, weight, exclude, pass_state):
+def multicell_pr20(histos, key, values, labels, weight, channel_selections):
     target_categories(histos, key)
-    block = utils.channel_selection_cache(exclude, pass_state)
-    if not block:
+    selected = channel_selections.selected_event_indices(tuple(values))
+    if not selected:
         return
-    channel_list = [channel for channel, _ in block]
+    channel_list = [channel for channel, _ in selected]
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
-    gathered = [{ax.name: values[ax.name][selected_event_indices] for ax in dense} for _, selected_event_indices in block]
+    gathered = [{ax.name: values[ax.name][selected_event_indices] for ax in dense} for _, selected_event_indices in selected]
     n_slots = len(labels)
-    group_size = group_size_for(max(len(selected_event_indices) for _, selected_event_indices in block))
+    group_size = group_size_for(max(len(selected_event_indices) for _, selected_event_indices in selected))
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
         transient = hist.Hist(hist.axis.StrCategory(channel_list, name="channel_label", overflow=False), *dense,
                               storage=hist.storage.MultiCell(2 * k))
-        for (channel, selected_event_indices), gathered_c in zip(block, gathered):
-            cells = group_cells(pass_state, "multicell_pr20", len(selected_event_indices), k)
+        for (channel, selected_event_indices), gathered_c in zip(selected, gathered):
+            cells = group_cells(channel_selections, "multicell_pr20", len(selected_event_indices), k)
             write_columns(weight, group, selected_event_indices, cells[:, :k])
             np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
             transient.fill(channel_label=channel, **gathered_c, weight=cells)
@@ -130,12 +130,12 @@ def multicell_pr20(histos, key, values, labels, weight, exclude, pass_state):
     histos[key] = output
 
 
-def multicell_string(histos, key, values, labels, weight, exclude, pass_state):
+def multicell_string(histos, key, values, labels, weight, channel_selections):
     target_categories(histos, key)
-    block = utils.channel_selection_cache(exclude, pass_state)
-    if not block:
+    selected = channel_selections.selected_event_indices(tuple(values))
+    if not selected:
         return
-    channel_list, cidx, selected_event_indices = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_selection(selected)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
     channel_labels = np.array(channel_list, dtype=object)[cidx]
@@ -146,7 +146,7 @@ def multicell_string(histos, key, values, labels, weight, exclude, pass_state):
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "multicell_string", n_selected_events, k)
+        cells = group_cells(channel_selections, "multicell_string", n_selected_events, k)
         write_columns(weight, group, selected_event_indices, cells[:, :k])
         np.multiply(cells[:, :k], cells[:, :k], out=cells[:, k:])
         transient = hist.Hist(hist.axis.StrCategory(channel_list, name="channel_label", overflow=False), *dense,
@@ -160,12 +160,12 @@ def multicell_string(histos, key, values, labels, weight, exclude, pass_state):
     histos[key] = output
 
 
-def chunked(histos, key, values, labels, weight, exclude, pass_state):
+def chunked(histos, key, values, labels, weight, channel_selections):
     target = histos[key]
     slot_names = slot_axis_names(target_categories(histos, key))
     dense_names = [ax.name for ax in target.axes if not isinstance(ax, hist.axis.StrCategory)]
     sink = ChunkedHist(*target.axes, storage=bh.storage.Weight())
-    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
+    for channel, selected_event_indices in channel_selections.selected_event_indices(tuple(values)):
         gathered = {name: values[name][selected_event_indices] for name in dense_names}
         for syst_index, label in enumerate(labels):
             sink.fill(channel=channel, **dict(zip(slot_names, label)), **gathered, weight=weight(syst_index, selected_event_indices))
@@ -187,12 +187,12 @@ def chunked(histos, key, values, labels, weight, exclude, pass_state):
     histos[key] = output
 
 
-def integer_axis(histos, key, values, labels, weight, exclude, pass_state):
+def integer_axis(histos, key, values, labels, weight, channel_selections):
     target_categories(histos, key)
-    block = utils.channel_selection_cache(exclude, pass_state)
-    if not block:
+    selected = channel_selections.selected_event_indices(tuple(values))
+    if not selected:
         return
-    channel_list, cidx, selected_event_indices = concatenated_block(block)
+    channel_list, cidx, selected_event_indices = concatenated_selection(selected)
     output, slot_index, dense = output_like(histos[key], channel_list, labels)
     view = output.view(flow=True)
     gathered = {ax.name: values[ax.name][selected_event_indices] for ax in dense}
@@ -202,7 +202,7 @@ def integer_axis(histos, key, values, labels, weight, exclude, pass_state):
     for start in range(0, n_slots, group_size):
         group = np.arange(start, min(start + group_size, n_slots))
         k = len(group)
-        cells = group_cells(pass_state, "integer_axis", n_selected_events, k)
+        cells = group_cells(channel_selections, "integer_axis", n_selected_events, k)
         write_columns(weight, group, selected_event_indices, cells[:, :k])
         transient = hist.Hist(
             hist.axis.Integer(0, len(channel_list), name="channel_index", underflow=False, overflow=False),

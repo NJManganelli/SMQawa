@@ -532,28 +532,29 @@ def open_attempt(ctx):
     return attempt
 
 
-def send_histogram(histos, key, values, labels, weight, exclude, pass_state):
-    ctx = pass_state["histserv"]
+def send_histogram(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn, channel_selections,
+                   histserv_context):
+    ctx = histserv_context
     if ctx["pass"] in open_attempt(ctx)["ended"]:
-        raise RuntimeError(f"send_histogram: {key} sent after pass {ctx['pass']} of chunk {ctx['chunk']} ended")
-    if key in ctx["keys"]:
-        raise RuntimeError(f"send_histogram: {key} sent twice in pass {ctx['pass']} of chunk {ctx['chunk']}")
-    ctx["keys"].add(key)
-    target = histos[key]
+        raise RuntimeError(f"send_histogram: {hist_name} sent after pass {ctx['pass']} of chunk {ctx['chunk']} ended")
+    if hist_name in ctx["keys"]:
+        raise RuntimeError(f"send_histogram: {hist_name} sent twice in pass {ctx['pass']} of chunk {ctx['chunk']}")
+    ctx["keys"].add(hist_name)
+    target = histograms_dict[hist_name]
     slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
     fills = []
-    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
-        dense = {name: v[selected_event_indices] for name, v in values.items()}
-        for syst_index, label in enumerate(labels):
+    for channel, selected_event_indices in channel_selections.selected_event_indices(tuple(axes_variables)):
+        dense = {name: v[selected_event_indices] for name, v in axes_variables.items()}
+        for syst_index, label in enumerate(category_labels):
             fills.append({"channel": channel, **dict(zip(slot_names, label)), **dense,
-                          "weight": weight(syst_index, selected_event_indices)})
+                          "weight": syst_weight_fn(syst_index, selected_event_indices)})
     registry = ctx["registry"]
-    hist_id = registry["samples"][ctx["key"]]["hists"][key]
-    return send(registry, ctx["key"], hist_id, fills, ctx["unique_id"] + [key], ("-", ctx["chunk"], ctx["pass"]))
+    hist_id = registry["samples"][ctx["key"]]["hists"][hist_name]
+    return send(registry, ctx["key"], hist_id, fills, ctx["unique_id"] + [hist_name], ("-", ctx["chunk"], ctx["pass"]))
 
 
-def end_pass(pass_state):
-    ctx = pass_state["histserv"]
+def end_pass(histserv_context):
+    ctx = histserv_context
     registry, key, chunk, pass_name = ctx["registry"], ctx["key"], ctx["chunk"], ctx["pass"]
     attempt = open_attempt(ctx)
     result = send(registry, key, entry_of(registry, key)["ledger"], [marker_fill("-", chunk, "pass", pass_name)],

@@ -236,9 +236,9 @@ def install_c4_hooks(ho, histserv, counter, registry, key, args):
 
     end_pass = ho.end_pass
 
-    def counted_end_pass(pass_state):
-        result = end_pass(pass_state)
-        counter.pass_end(pass_state["histserv"]["chunk"], pass_state["histserv"]["pass"])
+    def counted_end_pass(histserv_context):
+        result = end_pass(histserv_context)
+        counter.pass_end(histserv_context["chunk"], histserv_context["pass"])
         return result
     ho.end_pass = counted_end_pass
 
@@ -281,9 +281,9 @@ def install_timers(wzmod, workflow, ho=None):
         owner, name = (ho, "send_histogram") if workflow == "c4" else (wzmod, "fill_histogram")
         fill = getattr(owner, name)
 
-        def timed_fill(*fill_args):
+        def timed_fill(*fill_args, **fill_kwargs):
             t0 = time.perf_counter()
-            result = fill(*fill_args)
+            result = fill(*fill_args, **fill_kwargs)
             seconds["fill"] += time.perf_counter() - t0
             return result
         setattr(owner, name, timed_fill)

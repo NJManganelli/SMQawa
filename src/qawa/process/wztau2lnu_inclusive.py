@@ -41,7 +41,7 @@ from qawa import uproot_float16_patch  # noqa: F401
 from qawa.flashsim_shim import patch_flashsim
 from qawa.eft_weights import points_from_events, stack_named_weights
 from qawa import lumi_record
-from qawa.utils import KIND_KEY, fill_histogram, merge_histogram_sets, syst_weight, syst_weight_eft_struct_const
+from qawa.utils import KIND_KEY, ChannelSelections, fill_histogram, merge_histogram_sets, syst_weight, syst_weight_eft_struct_const
 
 from qawa.polarization import (
     POL_WEIGHT_KEYS,
@@ -2061,16 +2061,12 @@ class wzinclusive_processor(processor.ProcessorABC):
         else:
             systematics = [shift_name]
 
-        pass_state = {
-            "selection": selection,
-            "channels": channels,
-            "block_cache": {},
-        }
+        channel_selections = ChannelSelections(selection, channels)
         fill = fill_histogram
         if self.histserv_registry is not None:
             from qawa import histserv_output
-            fill = histserv_output.send_histogram
-            pass_state["histserv"] = histserv_output.pass_context(self.histserv_registry, self.histserv_sample, event.metadata, shift_name, eft_theta is not None)
+            histserv_context = histserv_output.pass_context(self.histserv_registry, self.histserv_sample, event.metadata, shift_name, eft_theta is not None)
+            fill = partial(histserv_output.send_histogram, histserv_context=histserv_context)
         weight_syst_stack = np.stack(
             [weights.weight(modifier=s) if s in weights.variations else weights.weight() for s in systematics],
             axis=0,
@@ -2091,11 +2087,11 @@ class wzinclusive_processor(processor.ProcessorABC):
                 eft_key = var + "_eft"
                 if eft_key not in histos:
                     histos[eft_key] = _wh_eft(*list(histos[var].axes)[2:])
-                fill(histos, eft_key, values, eft_labels, eft_weight, (var,), pass_state)
-            fill(histos, var if key is None else key, values, slot_labels, weight, (var,), pass_state)
+                fill(histos, eft_key, values, eft_labels, eft_weight, channel_selections)
+            fill(histos, var if key is None else key, values, slot_labels, weight, channel_selections)
 
         def fill_map(xvar, yvar, key, weight=standard_weight):
-            fill(histos, key, event_values(xvar, yvar), nominal_labels, weight, (xvar, yvar), pass_state)
+            fill(histos, key, event_values(xvar, yvar), nominal_labels, weight, channel_selections)
 
         if self._pol:
             for var in self.pol_reco_vars:
@@ -2146,7 +2142,7 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         if self.histserv_registry is not None:
-            histserv_output.end_pass(pass_state)
+            histserv_output.end_pass(histserv_context)
         return {dataset: {} if self.histserv_registry is not None else histos}
 
     def process(self, event):

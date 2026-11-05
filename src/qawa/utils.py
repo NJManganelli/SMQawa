@@ -17,18 +17,23 @@ def n_minus_one_collisions(variables, selection_names):
     return sorted({(v, s) for v in variables for s in selection_names if v != s and v in s})
 
 
-def channel_selection_cache(exclude, pass_state):
-    key = tuple((name, n_minus_one_key(reqs, exclude)) for name, reqs in pass_state["channels"].items())
-    block = pass_state["block_cache"].get(key)
-    if block is None:
-        selection = pass_state["selection"]
-        block = tuple(
-            (name, selected_event_indices) for name, selected_event_indices in
-            ((name, np.flatnonzero(selection.require(**dict(channel_key)))) for name, channel_key in key)
-            if len(selected_event_indices)
-        )
-        pass_state["block_cache"][key] = block
-    return block
+class ChannelSelections:
+    def __init__(self, selection, channels):
+        self.selection = selection
+        self.channels = channels
+        self.cache = {}
+
+    def selected_event_indices(self, n_minus_one_vars):
+        key = tuple((name, n_minus_one_key(reqs, n_minus_one_vars)) for name, reqs in self.channels.items())
+        selected = self.cache.get(key)
+        if selected is None:
+            selected = tuple(
+                (name, selected_event_indices) for name, selected_event_indices in
+                ((name, np.flatnonzero(self.selection.require(**dict(channel_key)))) for name, channel_key in key)
+                if len(selected_event_indices)
+            )
+            self.cache[key] = selected
+        return selected
 
 
 def syst_weight(weight_syst_stack, scale=None):
@@ -50,14 +55,14 @@ def syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts):
     return weight
 
 
-def fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
-    target = histos[key]
+def fill_histogram(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn, channel_selections):
+    target = histograms_dict[hist_name]
     slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
-    for channel, selected_event_indices in channel_selection_cache(exclude, pass_state):
-        dense = {name: v[selected_event_indices] for name, v in values.items()}
-        for syst_index, label in enumerate(labels):
+    for channel, selected_event_indices in channel_selections.selected_event_indices(tuple(axes_variables)):
+        dense = {name: v[selected_event_indices] for name, v in axes_variables.items()}
+        for syst_index, label in enumerate(category_labels):
             target.fill(channel=channel, **dict(zip(slot_names, label)), **dense,
-                        weight=weight(syst_index, selected_event_indices))
+                        weight=syst_weight_fn(syst_index, selected_event_indices))
 
 
 def merge_histograms(hists):

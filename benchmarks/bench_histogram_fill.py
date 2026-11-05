@@ -23,7 +23,7 @@ import qawa.utils as utils  # noqa: E402
 DESCRIPTION = """Synthetic, file-free micro-benchmark of the histogram fill strategies of wzinclusive_processor.
 
 Every strategy fills the same selected events with the same weights as C1 (utils.fill_histogram),
-through the shared prep of qawa.utils (channel_selection_cache, syst_weight, syst_weight_eft_struct_const).
+through the shared prep of qawa.utils (ChannelSelections, syst_weight, syst_weight_eft_struct_const).
 
 Shapes (channels x slots x variables):
   nominal  27 x 35 x 55, one pass per chunk
@@ -152,7 +152,7 @@ def pass_inputs(shape, axes, n, chunk, p):
         weight = utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts)
     else:
         weight = utils.syst_weight(weight_syst_stack)
-    state = {"selection": selection, "channels": CHANNELS, "block_cache": {}}
+    state = utils.ChannelSelections(selection, CHANNELS)
     return values, labels, weight, state
 
 
@@ -182,14 +182,14 @@ def as_target(target, dense):
     return output
 
 
-def multicell_growth(histos, key, values, labels, weight, exclude, pass_state):
+def multicell_growth(histos, key, values, labels, weight, channel_selections):
     target = histos[key]
     dense_axes = [ax for ax in target.axes if not isinstance(ax, hist.axis.StrCategory)]
     k = len(labels)
     grown = hist.Hist(hist.axis.StrCategory([], name="channel", growth=True), *dense_axes,
                       storage=hist.storage.MultiCell(2 * k))
     channel_list = []
-    for channel, selected_event_indices in utils.channel_selection_cache(exclude, pass_state):
+    for channel, selected_event_indices in channel_selections.selected_event_indices(tuple(values)):
         cells = np.empty((len(selected_event_indices), 2 * k))
         for s in range(k):
             cells[:, s] = weight(s, selected_event_indices)
@@ -227,13 +227,13 @@ def run_strategy(name, shape, axes, events, chunks):
                     target = histos[key]
                     slot_names = [ax.name for ax in target.axes[1:] if isinstance(ax, hist.axis.StrCategory)]
                     sink = sinks.setdefault(key, ChunkedHist(*target.axes, storage=bh.storage.Weight()))
-                    for channel, selected_event_indices in utils.channel_selection_cache((var,), state):
+                    for channel, selected_event_indices in state.selected_event_indices((var,)):
                         gathered = {var: values[var][selected_event_indices]}
                         for syst_index, label in enumerate(labels):
                             sink.fill(channel=channel, **dict(zip(slot_names, label)), **gathered,
                                       weight=weight(syst_index, selected_event_indices))
                 else:
-                    STRATEGIES[name](histos, key, {var: values[var]}, labels, weight, (var,), state)
+                    STRATEGIES[name](histos, key, {var: values[var]}, labels, weight, state)
             fill_seconds += time.perf_counter() - t0
             if name != "chunked_persistent":
                 outputs.append({DATASET: histos})

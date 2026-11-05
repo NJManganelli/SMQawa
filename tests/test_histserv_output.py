@@ -113,11 +113,8 @@ def fill_inputs():
 SELECTION, VALUES, WEIGHT = fill_inputs()
 
 
-def pass_state(ctx=None):
-    state = {"selection": SELECTION, "channels": CHANNELS, "block_cache": {}}
-    if ctx is not None:
-        state["histserv"] = ctx
-    return state
+def channel_selections(channels=CHANNELS):
+    return utils.ChannelSelections(SELECTION, channels)
 
 
 def file_uuid(i):
@@ -133,10 +130,9 @@ def meta(reg, key, fileuuid, start, stop):
 def send_pass(reg, key, md, pass_name="nominal", end=True):
     ctx = ho.pass_context(reg, key, md, None if pass_name == "nominal" else pass_name,
                           reg["samples"][key]["kind"] == "eft")
-    state = pass_state(ctx)
-    result = ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), state)
+    result = ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, channel_selections(), ctx)
     if end:
-        ho.end_pass(state)
+        ho.end_pass(ctx)
     return result
 
 
@@ -189,7 +185,7 @@ def assert_same_hist(a, b):
 
 def local_fill():
     local = template()
-    utils.fill_histogram({"met_pt": local}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), pass_state())
+    utils.fill_histogram({"met_pt": local}, "met_pt", VALUES, LABELS, WEIGHT, channel_selections())
     return local
 
 
@@ -282,9 +278,8 @@ def test_three_way_result(server, synthetic):
     reg = synthetic_registry(server)
     md = open_chunk(reg, DAS_S)
     ctx = ho.pass_context(reg, DAS_S, md, None, False)
-    empty_state = pass_state(ctx)
-    empty_state["channels"] = {"chEmpty": ["triggers", "empty"]}
-    assert ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), empty_state) == ho.EMPTY
+    empty = channel_selections({"chEmpty": ["triggers", "empty"]})
+    assert ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, empty, ctx) == ho.EMPTY
     assert list(remote_hist(reg, DAS_S).snapshot().items()) == []
     ho.ATTEMPTS.clear()
     ho.begin_chunk(reg, DAS_S, md, ["nominal"])
@@ -308,22 +303,20 @@ def test_repeat_rules(server, synthetic, monkeypatch):
     reg = synthetic_registry(server)
     md = open_chunk(reg, DAS_S)
     ctx = ho.pass_context(reg, DAS_S, md, None, False)
-    state = pass_state(ctx)
-    state["channels"] = {"chEmpty": ["triggers", "empty"]}
-    assert ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), state) == ho.EMPTY
+    empty = channel_selections({"chEmpty": ["triggers", "empty"]})
+    assert ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, empty, ctx) == ho.EMPTY
     with pytest.raises(RuntimeError):
-        ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), state)
+        ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, empty, ctx)
     with pytest.raises(RuntimeError):
         ho.begin_chunk(reg, DAS_S, md, ["nominal", "nominal"])
     with pytest.raises(RuntimeError):
         ho.begin_chunk(reg, DAS_S, md, ["nominal", "started"])
     with pytest.raises(RuntimeError):
         ho.end_chunk(reg, DAS_S, md, 10, sumw=1.0)
-    ho.end_pass(state)
+    ho.end_pass(ctx)
     calls = wrap_fill_many(monkeypatch, lambda self, fills, kwargs, n: REAL_FILL_MANY(self, fills, **kwargs))
-    state2 = dict(state, histserv=dict(ctx, keys=set()))
     with pytest.raises(RuntimeError):
-        ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, ("met_pt",), state2)
+        ho.send_histogram({"met_pt": template()}, "met_pt", VALUES, LABELS, WEIGHT, empty, dict(ctx, keys=set()))
     assert calls == []
     ho.ATTEMPTS.clear()
     with pytest.raises(RuntimeError):
@@ -891,8 +884,8 @@ def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
     results = []
     real_send = ho.send_histogram
 
-    def counting(*args):
-        result = real_send(*args)
+    def counting(*args, **kwargs):
+        result = real_send(*args, **kwargs)
         results.append(result)
         return result
     monkeypatch.setattr(ho, "send_histogram", counting)
@@ -1113,7 +1106,7 @@ def test_force_replaces_incomplete_set(server, synthetic, tmp_path, monkeypatch)
     assert ho.collect(reg_c, manifests_c, str(out), force=True) == 1
     assert {name: sha(out / name) for name in os.listdir(out)} == before
     md1 = meta(reg, DAS_X, file_uuid(0), 10, 20)
-    ho.end_pass(pass_state(ho.pass_context(reg, DAS_X, md1, None, False)))
+    ho.end_pass(ho.pass_context(reg, DAS_X, md1, None, False))
     ho.end_chunk(reg, DAS_X, md1, 10, sumw=1.0)
     events = []
     real_replace, real_remove = os.replace, os.remove

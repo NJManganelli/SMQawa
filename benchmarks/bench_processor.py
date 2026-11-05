@@ -197,34 +197,36 @@ class Instrument:
         import qawa.utils as utils
         inst = self
         fill_histogram = wzmod.fill_histogram
-        channel_selection_cache = utils.channel_selection_cache
+        selected_event_indices = utils.ChannelSelections.selected_event_indices
         syst_weight = wzmod.syst_weight
 
-        def recorded_fill_histogram(histos, key, values, labels, weight, exclude, pass_state):
-            result = fill_histogram(histos, key, values, labels, weight, exclude, pass_state)
+        def recorded_fill_histogram(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn,
+                                    channel_selections):
+            result = fill_histogram(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn,
+                                    channel_selections)
             rec = inst.current
             if rec is not None:
-                cache = pass_state["block_cache"]
+                cache = channel_selections.cache
                 rec["blocks"] = max(rec["blocks"], len(cache))
                 rec["block_cache_bytes"] = max(
                     rec["block_cache_bytes"],
-                    sum(selected_event_indices.nbytes for block in cache.values() for _, selected_event_indices in block)
+                    sum(indices.nbytes for selected in cache.values() for _, indices in selected)
                 )
-                buffers = [v.nbytes for k, v in pass_state.items() if k.endswith("_buffer")]
+                buffers = [v.nbytes for k, v in vars(channel_selections).items() if k.endswith("_buffer")]
                 rec["multicell_buffer_bytes"] = max([rec["multicell_buffer_bytes"]] + buffers)
             return result
         wzmod.fill_histogram = recorded_fill_histogram
 
-        def recorded_channel_selection_cache(exclude, pass_state):
-            result = channel_selection_cache(exclude, pass_state)
+        def recorded_selected_event_indices(channel_selections, n_minus_one_vars):
+            result = selected_event_indices(channel_selections, n_minus_one_vars)
             rec = inst.current
             if rec is not None:
                 rec["max_selected_events"] = max(
                     rec["max_selected_events"],
-                    sum(len(selected_event_indices) for _, selected_event_indices in result)
+                    sum(len(indices) for _, indices in result)
                 )
             return result
-        utils.channel_selection_cache = recorded_channel_selection_cache
+        utils.ChannelSelections.selected_event_indices = recorded_selected_event_indices
 
         def recorded_syst_weight(weight_syst_stack, scale=None):
             rec = inst.current
@@ -1645,9 +1647,9 @@ def cmd_scale_worker(args):
             description = fill_engines.ENGINE_DESCRIPTIONS[args.engine]
         fill = wzmod.fill_histogram
 
-        def timed_fill(histos, key, values, labels, weight, exclude, pass_state):
+        def timed_fill(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn, channel_selections):
             t0 = time.perf_counter()
-            result = fill(histos, key, values, labels, weight, exclude, pass_state)
+            result = fill(histograms_dict, hist_name, axes_variables, category_labels, syst_weight_fn, channel_selections)
             fill_seconds[0] += time.perf_counter() - t0
             return result
         wzmod.fill_histogram = timed_fill

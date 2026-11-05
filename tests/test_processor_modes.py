@@ -190,7 +190,7 @@ def inventory():
     result = {}
     process_shift = wzmod.wzinclusive_processor.process_shift
     n_minus_one_key = utils.n_minus_one_key
-    channel_selection_cache = utils.channel_selection_cache
+    selected_event_indices = utils.ChannelSelections.selected_event_indices
     for mode, (kwargs, (path, dataset, is_data, is_signal)) in MODES.items():
         excludes, selections = set(), set()
 
@@ -198,16 +198,16 @@ def inventory():
             excludes.add(tuple(exclude))
             return n_minus_one_key(requirements, exclude)
 
-        def recorded_channel_selection_cache(exclude, pass_state):
-            selections.update(pass_state["selection"].names)
-            return channel_selection_cache(exclude, pass_state)
+        def recorded_selected_event_indices(channel_selections, n_minus_one_vars):
+            selections.update(channel_selections.selection.names)
+            return selected_event_indices(channel_selections, n_minus_one_vars)
 
         def nominal_only(self, event, shift_name=''):
             return process_shift(self, event, shift_name) if shift_name is None else {}
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(utils, "n_minus_one_key", recorded_key)
-            mp.setattr(utils, "channel_selection_cache", recorded_channel_selection_cache)
+            mp.setattr(utils.ChannelSelections, "selected_event_indices", recorded_selected_event_indices)
             mp.setattr(wzmod.wzinclusive_processor, "process_shift", nominal_only)
             proc = wzmod.wzinclusive_processor(era="2024", version="v15", **kwargs)
             out = proc.process(mode_events(path, 1000, dataset, is_data, is_signal))[dataset]
