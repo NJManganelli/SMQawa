@@ -6,9 +6,8 @@ import numpy as np
 LT, GT, GE = operator.lt, operator.gt, operator.ge
 INF = float("inf")
 
-# AK4 PUPPI jet ID recipes. Each region covers |eta| up to abseta_max, above the previous region; the Tight cuts apply
-# in the region, and TightLepVeto is Tight plus the lep_veto cuts. Run 2 UL: JetID13TeVUL NanoAODv15 recipe, with
-# |eta| <= abseta_max (no central jetid.json exists for Run 2). Run 3 2024: the JME jetid.json.gz cuts, with |eta| < abseta_max.
+# AK4 PUPPI jet ID: a region spans |eta| above the previous abseta_max; Tight needs its tight cuts, TightLepVeto also lep_veto.
+# UL*: TWiki JetID13TeVUL NanoAODv15 recipe, |eta| <= abseta_max. Summer24: the 2024 jetid.json, |eta| < abseta_max.
 JET_ID_RECIPES = {
     "UL16PUPPI": dict(upper_inclusive=True, regions=[
         dict(abseta_max=2.4,
@@ -73,8 +72,7 @@ def recipe_jet_id(jets, recipe):
 
 
 class JetID:
-    """AK4 jet ID in the NanoAOD jetId encoding: the stored branch up to NanoAODv11, else the central jetid.json from
-    the CorrectionlibHandler when it provides one, else the JET_ID_RECIPES recipe for the era."""
+    """AK4 jet ID in the NanoAOD jetId encoding, from the stored branch, the jetid.json, or JET_ID_RECIPES."""
 
     def __init__(self, era, nanoAODversion, clibhandler=None):
         self.stored = nanoAODversion in [f"v{V}" for V in range(12)]
