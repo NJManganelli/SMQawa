@@ -178,7 +178,7 @@ def jersmear_factors(pt_jec, eta, rho, event_id, pt_gen, jer, jersf, jer_smear, 
     for column, variation in enumerate(('nom', 'up', 'down')):
         values['JERSF'] = scale_factors[:, :, column]
         factor = evaluate(jer_smear, values)
-        smear[variation] = ak.where(unsmeared | ~((factor > 0) & np.isfinite(factor)), 1.0, factor)
+        smear[variation] = ak.where(unsmeared, 1.0, factor)
     return values['JER'], smear
 
 def jersmear_jets(injets, jets, event_id, jer, jersf, jer_smear, jes_sources, genmatched_only_eta):

@@ -373,10 +373,6 @@ def gen_pt_dr(jets, max_dr):
     return ak.values_astype(ak.where(dr < max_dr, ak.fill_none(jets.matched_gen.pt, 0), 0), np.float32), dr
 
 
-def jme_guard(s):
-    return np.where((s > 0) & np.isfinite(s), s, 1.0)
-
-
 def jersmear_ind(pt_jec, eta, genpt, rho, eid, sigma, sf):
     return eval_named(smear_corr(), {
         "JetPt": pt_jec, "JetEta": eta, "GenPt": genpt, "Rho": rho, "EventID": eid, "JER": sigma, "JERSF": sf,
@@ -390,14 +386,12 @@ def smear_inputs(pt_jec, eta, rho, eid, pt_gen, sigma, window):
     matched = (pt_gen > 0) & (np.abs((pt_jec - pt_gen) / pt_jec) < 3 * window)
     genpt = np.where(matched, pt_gen, -1.0)
     s = {v: jersmear_ind(pt_jec, eta, genpt, rho, eid, sigma, sf[v]) for v in VARIATIONS}
-    guard = {v: jme_guard(s[v]) for v in VARIATIONS}
-    g_sets = {v: ~((s[v] > 0) & np.isfinite(s[v])) for v in VARIATIONS}
     z = jersmear_ind(pt_jec, eta, np.full_like(pt_jec, -1.0), rho, eid, np.ones_like(pt_jec), np.full_like(pt_jec, np.sqrt(2.0))) - 1
     he = regions_ind(eta, HE_IND)
-    final = {v: np.where(he & ~matched, 1.0, guard[v]) for v in VARIATIONS}
+    final = {v: np.where(he & ~matched, 1.0, s[v]) for v in VARIATIONS}
     return {
         "pt_jec": pt_jec, "eta": eta, "rho": rho, "eid": eid, "pt_gen": pt_gen, "sigma": sigma, "sf": sf,
-        "matched": matched, "genpt": genpt, "s": s, "guard": guard, "G": g_sets, "z": z, "he": he, "final": final,
+        "matched": matched, "genpt": genpt, "s": s, "z": z, "he": he, "final": final,
     }
 
 
@@ -719,9 +713,8 @@ def test_jer_hybrid_smearing_matches_recipe():
     pt_jec, pt_gen = J["pt_jec"], J["pt_gen"]
     for var, obs in (("nom", jets.pt), ("up", jets.JER.up.pt), ("down", jets.JER.down.pt)):
         s = J["s"][var][hyb]
-        n_guard = int((~((s > 0) & np.isfinite(s))).sum())
-        print(f"  {var}: guard active on hybrid jets = {n_guard}")
-        assert n_guard == 0, f"guard acts on {n_guard} hybrid jets ({var})"
+        n_bad = int((~((s > 0) & np.isfinite(s))).sum())
+        assert n_bad == 0, f"non-positive or non-finite JERSmear factor on {n_bad} hybrid jets ({var})"
         smear = 1 + (J["sf"][var] - 1) * (pt_jec - pt_gen) / pt_jec
         x = flat(obs)[hyb]
         y = (pt_jec * smear)[hyb]
@@ -742,16 +735,10 @@ def test_jer_smearing_matches_jersmear():
     }
     pts = {"nom": flat(jets.pt), "up": flat(jets.JER.up.pt), "down": flat(jets.JER.down.pt)}
     for v in VARIATIONS:
-        assert_close(obs[v], J["final"][v], f"factor {v} vs independent JERSmear + guard + HE rule")
+        assert_close(obs[v], J["final"][v], f"factor {v} vs independent JERSmear + HE rule")
         assert_close(pts[v], J["pt_jec"] * J["final"][v], f"pt {v} vs pt_jec * factor")
-    he_unm = J["he"] & ~J["matched"]
     for v in VARIATIONS:
         assert np.isfinite(obs[v]).all() and (obs[v] > 0).all(), f"{v}: non-finite or non-positive factor"
-        g = J["G"][v]
-        assert (obs[v][g] == 1.0).all(), f"{v}: guarded factors are not exactly 1"
-        print(f"  guard set {v}: {int(g.sum())} jets, outside HE-unmatched {int((g & ~he_unm).sum())}")
-    assert J["G"]["up"].sum() >= 1, "no guarded 'up' factor: the guard is not exercised"
-    assert (J["G"]["up"] & ~he_unm).sum() >= 1, "no guarded 'up' factor outside the HE-unmatched set"
     stoch = ~J["matched"]
     print(f"  stochastic population: {int(stoch.sum())}")
     assert stoch.sum() >= 1000, f"stochastic population too small: {stoch.sum()}"
@@ -766,7 +753,7 @@ def test_jer_smearing_matches_jersmear():
     assert abs(z.std() - 1) < bound, f"std(z) = {z.std():.4g}"
     coffea = coffea_rng_jets(jm, ev)
     pop = stoch & ~J["he"] & (J["sf"]["nom"] > 1)
-    frac, n = frac_differ(flat(coffea.jet_energy_resolution_correction)[pop], J["guard"]["nom"][pop])
+    frac, n = frac_differ(flat(coffea.jet_energy_resolution_correction)[pop], J["s"]["nom"][pop])
     print(f"  negative control (coffea RNG): fraction differing = {frac:.4f} of N={n} non-HE stochastic jets with sf>1 (threshold > 0.5)")
     assert frac > 0.5, f"coffea-RNG control not distinguishable: {frac:.3f}"
 
@@ -806,14 +793,9 @@ def test_corrt1_jersmear_factors(monkeypatch):
     he_unm = C["he"] & ~m
     for v in VARIATIONS:
         assert np.isfinite(obs[v]).all() and (obs[v] > 0).all(), f"CorrT1 {v}: non-finite or non-positive factor"
-        g = C["G"][v]
-        assert (obs[v][g] == 1.0).all(), f"CorrT1 {v}: guarded factors are not exactly 1"
-        print(f"  CorrT1 guard set {v}: {int(g.sum())}, outside HE-unmatched {int((g & ~he_unm).sum())}")
-    assert C["G"]["up"].sum() >= 1, "no guarded CorrT1 'up' factor"
-    assert (C["G"]["up"] & ~he_unm).sum() >= 1, "no guarded CorrT1 'up' factor outside the HE-unmatched set"
     s_nomatch = jersmear_ind(C["pt_jec"], C["eta"], np.full_like(C["pt_jec"], -1.0), C["rho"], C["eid"], C["sigma"], C["sf"]["nom"])
     pop = m & (C["sf"]["nom"] > 1)
-    frac, n = frac_differ(jme_guard(s_nomatch)[pop], C["guard"]["nom"][pop])
+    frac, n = frac_differ(s_nomatch[pop], C["s"]["nom"][pop])
     print(f"  negative control (no CorrT1 matching): fraction differing = {frac:.4f} of N={n} (threshold > 0.5)")
     assert frac > 0.5, f"no-matching control not distinguishable: {frac:.3f}"
     assert clib_name_map["CorrT1JetJERSmearFactor"] == "jet_energy_resolution_correction"
@@ -831,12 +813,12 @@ def test_corrt1_jersmear_factors(monkeypatch):
     for v in VARIATIONS:
         assert (obs[v][he_unm] == 1.0).all(), f"CorrT1 HE-unmatched factor {v} != 1"
     assert pop_sf.sum() >= 90, f"CorrT1 HE-unmatched with sf>1 too small: {pop_sf.sum()}"
-    frac, n = frac_differ(C["guard"]["nom"][pop_sf], np.ones(int(pop_sf.sum())))
+    frac, n = frac_differ(C["s"]["nom"][pop_sf], np.ones(int(pop_sf.sum())))
     print(f"  CorrT1 HE negative control (no rule): fraction differing from 1 = {frac:.4f} of N={n}")
     assert frac > 0.5, f"CorrT1 HE-rule control not distinguishable: {frac:.3f}"
     assert he_m.sum() >= 10, f"CorrT1 HE matched population too small: {he_m.sum()}"
     for v in VARIATIONS:
-        assert (obs[v][he_m] == C["guard"][v][he_m]).all(), f"CorrT1 HE matched factor {v} changed by the rule"
+        assert (obs[v][he_m] == C["s"][v][he_m]).all(), f"CorrT1 HE matched factor {v} changed by the rule"
     for jm_other, ev_other, label in ((clib_jme(False, False), cached_events("dataC"), "data C"), (clib_jme(True, False), ev, "MC doJER=False")):
         rec = {}
         orig = jm_other.met_factory.build
@@ -902,7 +884,7 @@ def test_corrt1_match_window_rho_clamp():
         }
 
     def ref(genpt, sigma, v):
-        return jme_guard(jersmear_ind(C["pt_jec"], C["eta"], genpt, C["rho"], C["eid"], sigma, C["sf"][v]))
+        return jersmear_ind(C["pt_jec"], C["eta"], genpt, C["rho"], C["eid"], sigma, C["sf"][v])
 
     r_out = (3 * sigma_cl + 3) / 2
     assert ((r_out[hi] >= 3 * sigma_cl[hi]) & (r_out[hi] < 3 * sigma_un[hi])).all(), "r_out not in [3 sigma_cl, 3 sigma_un)"
@@ -941,9 +923,9 @@ def test_corrt1_match_window_rho_clamp():
     print(f"  high-rho Jets: {int(hi_jet.sum())}, with sf_nom > 1: {int(pop_j.sum())}")
     assert hi_jet.sum() >= 100, f"too few high-rho Jets: {hi_jet.sum()}"
     assert pop_j.sum() >= 90, f"too few high-rho Jets with sf_nom > 1: {pop_j.sum()}"
-    hyb = jme_guard(jersmear_ind(J["pt_jec"], J["eta"], pt_gen_mod, J["rho"], J["eid"], J["sigma"], J["sf"]["nom"]))
+    hyb = jersmear_ind(J["pt_jec"], J["eta"], pt_gen_mod, J["rho"], J["eid"], J["sigma"], J["sf"]["nom"])
     assert_close(nom[hi_jet], hyb[hi_jet], "high-rho Jets keep the payload window (hybrid)")
-    sto = np.where(J["he"], 1.0, jme_guard(jersmear_ind(J["pt_jec"], J["eta"], np.full_like(J["pt_jec"], -1.0), J["rho"], J["eid"], J["sigma"], J["sf"]["nom"])))
+    sto = np.where(J["he"], 1.0, jersmear_ind(J["pt_jec"], J["eta"], np.full_like(J["pt_jec"], -1.0), J["rho"], J["eid"], J["sigma"], J["sf"]["nom"]))
     frac, n = frac_differ(sto[pop_j], nom[pop_j])
     print(f"  Jet stochastic alternative differs: {frac:.4f} of N={n}")
     assert frac > 0.5, f"Jet window control not distinguishable: {frac:.3f}"
@@ -979,11 +961,11 @@ def test_jer_he_rule_jets():
     assert_close(flat(jets.JES_Total.down.pt)[h_unm], (pt_jec * (1 - delta))[h_unm], "HE-unmatched JES_Total down")
     for v in ("nom", "up"):
         pop = h_unm & (J["sf"][v] > 1)
-        frac, n = frac_differ(J["guard"][v][pop], np.ones(int(pop.sum())))
+        frac, n = frac_differ(J["s"][v][pop], np.ones(int(pop.sum())))
         print(f"  negative control {v} (no rule): {frac:.4f} of N={n} HE-unmatched jets with sf_{v} > 1")
         assert n >= 900, f"HE-unmatched with sf_{v} > 1 too small: {n}"
         assert frac > 0.5, f"HE-rule control {v} not distinguishable: {frac:.3f}"
-    n_down = int((np.abs(J["guard"]["down"][h_unm] - 1) > 1e-6).sum())
+    n_down = int((np.abs(J["s"]["down"][h_unm] - 1) > 1e-6).sum())
     print(f"  HE-unmatched jets whose down factor the rule changes: {n_down}")
     assert n_down >= 100, f"too few HE-unmatched down factors changed: {n_down}"
     h_m = he & m
@@ -1000,7 +982,7 @@ def test_jer_he_rule_jets():
     print(f"  non-HE unmatched jets: {int(nh_unm.sum())}")
     assert nh_unm.sum() >= 800, f"non-HE unmatched population too small: {nh_unm.sum()}"
     for v in VARIATIONS:
-        assert_close(obs[v][nh_unm], J["guard"][v][nh_unm], f"non-HE unmatched {v}")
+        assert_close(obs[v][nh_unm], J["s"][v][nh_unm], f"non-HE unmatched {v}")
     pop = nh_unm & (J["sf"]["nom"] > 1)
     frac, n = frac_differ(obs["nom"][pop], np.ones(int(pop.sum())))
     print(f"  non-HE unmatched with sf>1 differing from 1: {frac:.4f} of N={n}")
@@ -1018,7 +1000,7 @@ def test_jer_he_rule_jets():
     sig = res.evaluate(eta.astype(np.float64), pt, rho_s.astype(np.float64))
     sf = {v: sfc.evaluate(eta.astype(np.float64), pt, v) for v in VARIATIONS}
     eid_flat = np.full(n_pts, 123456789, dtype=np.int64)
-    sto = {v: jme_guard(jersmear_ind(pt, eta.astype(np.float64), np.full(n_pts, -1.0), rho_s.astype(np.float64), eid_flat, sig, sf[v])) for v in VARIATIONS}
+    sto = {v: jersmear_ind(pt, eta.astype(np.float64), np.full(n_pts, -1.0), rho_s.astype(np.float64), eid_flat, sig, sf[v]) for v in VARIATIONS}
     for regions in (jm.jer_smear[4], ()):
         _, s_unm = jersmear_factors(one(pt), one(eta), one(rho_s), eid, one(np.zeros(n_pts, dtype=np.float32)), *jm.jer_smear[:3], regions)
         _, s_m = jersmear_factors(one(pt), one(eta), one(rho_s), eid, one(np.full(n_pts, 38.0, dtype=np.float32)), *jm.jer_smear[:3], regions)
@@ -1184,7 +1166,7 @@ def test_jersmear_jets_match_factory_contract():
     assert (pop & J["he"]).sum() >= 100, f"HE part of P_pop too small: {(pop & J['he']).sum()}"
     for v in VARIATIONS:
         s = J["s"][v][pop]
-        assert ((s > 0) & np.isfinite(s)).all(), f"guard acts on P_pop ({v})"
+        assert ((s > 0) & np.isfinite(s)).all(), f"non-positive or non-finite JERSmear factor on P_pop ({v})"
     fields = ["jet_energy_resolution_correction", "pt", "mass", "pt_jer", "mass_jer"]
     for f in fields:
         assert_close(flat(ours[f])[pop], flat(coffea[f])[pop], f"parity {f}")
@@ -1590,7 +1572,7 @@ def test_empty_chunk_no_genjet_no_corrt1(monkeypatch):
     assert len(obs["nom"]) >= 100, f"too few CorrT1 jets: {len(obs['nom'])}"
     for v in VARIATIONS:
         s = jersmear_ind(C["pt_jec"], C["eta"], minus1, C["rho"], C["eid"], C["sigma"], C["sf"][v])
-        assert_close(obs[v], np.where(C["he"], 1.0, jme_guard(s)), f"no-GenJet CorrT1 factor {v}")
+        assert_close(obs[v], np.where(C["he"], 1.0, s), f"no-GenJet CorrT1 factor {v}")
     for jm, key in ((clib_jme(True, True), "mc"), (clib_jme(False, False), "dataC")):
         ev = cached_events(key)[:200]
         run = ev.run if key == "dataC" else None
