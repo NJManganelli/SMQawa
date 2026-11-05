@@ -238,11 +238,12 @@ class JMEUncertainty:
             doJER: bool = True,
             clibhandler = None,
             version: str = "v9",
+            isAPV: bool = False,
     ):
         if clibhandler is not None:
             self.__init_clib__(jec_tag=jec_tag,
                                jer_tag=jer_tag,
-                               era=era,
+                               era=f"{era}APV" if isAPV else era,
                                is_mc=is_mc,
                                doJER=doJER,
                                clibhandler=clibhandler,

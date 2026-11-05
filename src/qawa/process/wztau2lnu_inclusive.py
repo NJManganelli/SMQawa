@@ -606,7 +606,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 raise ValueError(reason)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
-        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver)
+        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver, isAPV=self._isAPV)
         self._jetid = JetID(self._era, self._ver, self.clibhandler)
         self._purw = pileup_weights(era=self._era, clibhandler=self.clibhandler, clibkey=None) #auto key mode until we find a case that doesn't work
         self._leSF = LeptonScaleFactors(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
