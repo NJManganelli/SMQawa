@@ -78,7 +78,13 @@ JETMET_RUN3_MITIGATIONS = {
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
-JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05, "Summer19UL18_JRV3": 90.0}
+JER_RESOLUTION_RHO_MAX = {
+    "Summer23BPixPrompt23_RunD_JRV1": 52.05,
+    "Summer20UL16APV_JRV5": 90.0,
+    "Summer20UL16_JRV5": 90.0,
+    "Summer19UL17_JRV4": 90.0,
+    "Summer19UL18_JRV3": 90.0,
+}
 
 def jetmet_mitigations(era):
     return JETMET_RUN3_MITIGATIONS.get(era, NO_MITIGATIONS)
