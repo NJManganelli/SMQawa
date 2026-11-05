@@ -1,3 +1,5 @@
+import os
+
 import awkward as ak
 import numpy as np
 import hist
@@ -10,6 +12,7 @@ from qawa.egammaSS import EGM_scale_and_smear, EGM_scale_and_smear_v9
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 from coffea.analysis_tools import Weights, PackedSelection
+from conftest import CVMFS_HEAD, DATA, require_input
 
 def build_htaus(tau, lepton, nanoAODversion="v9", analysisID="inc-WZ-vtight", tauIDvse_wp="VTight", tauIDvsmu_wp="Tight"):
     tau_e_branch = None
@@ -78,15 +81,21 @@ def build_htaus(tau, lepton, nanoAODversion="v9", analysisID="inc-WZ-vtight", ta
 
     return tau[base_selection & ~overlap_leptons]
 
-clibhandler9 = CorrectionlibHandler(era="2018", subera=None, analysis="inc-WZ", nanoAODversion="v9", cvmfs_head="/Users/nmangane/Downloads/cvmfs")
+inputs = {name: os.path.join(DATA, f"{name}.root") for name in [
+    "WZ_TuneCP5_13p6TeV_pythia8", "Run2024G_Muon0_PromptReco-v1", "WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8", "DoubleMuon_UL2018_NanoAODv9",
+]}
+for path in [CVMFS_HEAD, *inputs.values()]:
+    require_input(path)
+
+clibhandler9 = CorrectionlibHandler(era="2018", subera=None, analysis="inc-WZ", nanoAODversion="v9", cvmfs_head=CVMFS_HEAD)
 lsf = LeptonScaleFactors(era="2018", clibhandler=clibhandler9, electronID="wp90iso", muonID="Tight", muonISO="TightRelIso")
 leg = LeptonScaleFactors(era="2018", clibhandler=None, electronID="wp90iso", muonID="Tight", muonISO="TightRelIso")
-e15 = NanoEventsFactory.from_root({"WZ_TuneCP5_13p6TeV_pythia8.root": "Events"}, schemaclass=NanoAODSchema).events()
-d15 = NanoEventsFactory.from_root({"Run2024G_Muon0_PromptReco-v1.root": "Events"}, schemaclass=NanoAODSchema).events()
-e9 = NanoEventsFactory.from_root({"WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8.root": "Events"}, schemaclass=NanoAODSchema).events()
-d9 = NanoEventsFactory.from_root({"DoubleMuon_UL2018_NanoAODv9.root": "Events"}, schemaclass=NanoAODSchema).events()
+e15 = NanoEventsFactory.from_root({inputs["WZ_TuneCP5_13p6TeV_pythia8"]: "Events"}, schemaclass=NanoAODSchema).events()
+d15 = NanoEventsFactory.from_root({inputs["Run2024G_Muon0_PromptReco-v1"]: "Events"}, schemaclass=NanoAODSchema).events()
+e9 = NanoEventsFactory.from_root({inputs["WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8"]: "Events"}, schemaclass=NanoAODSchema).events()
+d9 = NanoEventsFactory.from_root({inputs["DoubleMuon_UL2018_NanoAODv9"]: "Events"}, schemaclass=NanoAODSchema).events()
 
-clibhandler15 = CorrectionlibHandler(era="2024", subera=None, analysis="inc-WZ", nanoAODversion="v15", cvmfs_head="/Users/nmangane/Downloads/cvmfs")
+clibhandler15 = CorrectionlibHandler(era="2024", subera=None, analysis="inc-WZ", nanoAODversion="v15", cvmfs_head=CVMFS_HEAD)
 def _add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=None):
     mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
     mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)

@@ -4,6 +4,7 @@ import functools
 import gzip
 import inspect
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -29,11 +30,12 @@ from qawa.jme import (
 )
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.met_shim import prepare_met_for_factory
+from conftest import CVMFS_HEAD, DATA, STORE, require_input
 
-MC_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root"
-DATA_C_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
-DATA_I_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024I/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
-FLASHSIM_FILE = "/Volumes/WDMac/eft-studies/flashsim/fullsim/WZto3LNu_powheg_pythia8_RunIII2024Summer24_flashsim_Student_000.root"
+MC_FILE = os.path.join(STORE, "mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
+DATA_C_FILE = os.path.join(STORE, "data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
+DATA_I_FILE = os.path.join(STORE, "data/Run2024I/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
+FLASHSIM_FILE = os.path.join(DATA, "WZto3LNu_powheg_pythia8_RunIII2024Summer24_flashsim_Student_000.root")
 FILES = {"mc": MC_FILE, "dataC": DATA_C_FILE, "dataI": DATA_I_FILE}
 
 TXT_DIR = Path(qawa.__file__).resolve().parent / "data" / "jme" / "2024"
@@ -81,6 +83,7 @@ def require_txt():
 
 
 def load(path, entry_stop, schema=NanoAODSchema, metadata=None, entry_start=None):
+    require_input(path)
     return NanoEventsFactory.from_root(
         {path: "Events"}, schemaclass=schema, entry_start=entry_start, entry_stop=entry_stop, metadata=metadata or {},
     ).events()
@@ -93,6 +96,7 @@ def cached_events(key):
 
 @functools.lru_cache(maxsize=None)
 def handler():
+    require_input(CVMFS_HEAD)
     return CorrectionlibHandler(era="2024", analysis="inc-WZ", nanoAODversion="v15")
 
 
@@ -1299,6 +1303,8 @@ def systematics(out, dataset):
 
 def test_processor_type1_wiring(monkeypatch):
     from qawa.process.wztau2lnu_inclusive import wzinclusive_processor
+    for path in (CVMFS_HEAD, MC_FILE, DATA_C_FILE):
+        require_input(path)
     eras = []
     original_build_jets = wzproc.build_jets
 
@@ -1360,6 +1366,8 @@ def test_processor_type1_wiring(monkeypatch):
 
 def test_processor_flashsim_wiring():
     from qawa.process.wztau2lnu_inclusive import wzinclusive_processor
+    for path in (CVMFS_HEAD, FLASHSIM_FILE):
+        require_input(path)
     proc = wzinclusive_processor(era="2024", version="v15", run_period="")
     original, record = install_recorder(proc)
     meta = {"dataset": "WZto3LNu_flashsim", "is_data": False, "is_signal": False, "is_flashsim": True}

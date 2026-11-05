@@ -198,9 +198,8 @@ class CorrectionlibHandler:
         self._analysis = analysis
         self._ver = nanoAODversion
         self._head = Path(cvmfs_head)
-        if not self._head.exists():
-            # local fallback for testing only
-            self._head = Path("/Users/nmangane/Downloads/cvmfs")
+        if not self._head.exists() and os.environ.get("QAWA_CVMFS_HEAD"):
+            self._head = Path(os.environ["QAWA_CVMFS_HEAD"])
         if not self._head.exists():
             raise ValueError(f"{str(self._head)} is not a valid cvmfs head directory for fetching CAT POG corrections")
         self._poghead = self._head / "cms-griddata.cern.ch/cat/metadata/"
