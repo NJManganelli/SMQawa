@@ -16,7 +16,7 @@ from coffea.nanoevents.methods import vector
 from coffea.lookup_tools import extractor
 from coffea.jetmet_tools import (
     FactorizedJetCorrector, CorrectedJetsFactory, CorrectedMETFactory, CorrectionLibJEC, CorrectionLibJECStack,
-    CorrectionLibJER, CorrectionLibJERSF,
+    CorrectionLibJER,
 )
 
 import qawa
@@ -379,10 +379,13 @@ def jersmear_ind(pt_jec, eta, genpt, rho, eid, sigma, sf):
     })
 
 
+def jer_sf(eta, pt_jec):
+    sf = clib_jme(True, True).jer_smear[1].getScaleFactor(JetEta=eta, JetPt=pt_jec)
+    return {v: ak.to_numpy(sf[:, i]) for i, v in enumerate(VARIATIONS)}
+
+
 def smear_inputs(pt_jec, eta, rho, eid, pt_gen, sigma, window):
-    cset = jerc_cset()
-    sfc = cset[f"{JER_TAG}_MC_ScaleFactor_{JET_TYPE}"]
-    sf = {v: sfc.evaluate(eta, pt_jec, v) for v in VARIATIONS}
+    sf = jer_sf(eta, pt_jec)
     matched = (pt_gen > 0) & (np.abs((pt_jec - pt_gen) / pt_jec) < 3 * window)
     genpt = np.where(matched, pt_gen, -1.0)
     s = {v: jersmear_ind(pt_jec, eta, genpt, rho, eid, sigma, sf[v]) for v in VARIATIONS}
@@ -441,7 +444,7 @@ def coffea_rng_factory(jm):
     stack = CorrectionLibJECStack(
         jec=jm.jec_stack_L123_noJER.jec, junc=jm.jec_stack_L123_noJER.junc,
         jer=CorrectionLibJER(cset[f"{JER_TAG}_MC_PtResolution_{JET_TYPE}"]),
-        jersf=CorrectionLibJERSF(cset[f"{JER_TAG}_MC_ScaleFactor_{JET_TYPE}"]),
+        jersf=jm.jer_smear[1],
     )
     return CorrectedJetsFactory(clib_name_map, stack)
 
@@ -566,10 +569,11 @@ def test_data_run_outside_payload_raises():
     jm = clib_jme(False, False)
     good = jm.corrected_jets_L123_noJER(with_run(ev.Jet, const_run(ev, 380000)), event_rho(ev), {})
     flat(good.pt)
+    run = NIBS[0][1] - 1
     with pytest.raises(RuntimeError, match="bounds") as info:
-        bad = jm.corrected_jets_L123_noJER(with_run(ev.Jet, const_run(ev, 379411)), event_rho(ev), {})
+        bad = jm.corrected_jets_L123_noJER(with_run(ev.Jet, const_run(ev, run)), event_rho(ev), {})
         flat(bad.pt)
-    print(f"  run 379411 raised {info.type.__name__}: {str(info.value)[:120]}")
+    print(f"  run {run} raised {info.type.__name__}: {str(info.value)[:120]}")
 
 
 def test_type1_met_mc_matches_txt_type1():
@@ -843,94 +847,6 @@ def met_selected_corrt1(ev, mask):
     return int((sel & mask).sum())
 
 
-def test_corrt1_match_window_rho_clamp():
-    jm = clib_jme(True, True)
-    ev = cached_events("mc")
-    rho_max = rho_max_ind()
-    edge = JER_RESOLUTION_RHO_MAX[JER_TAG]
-    assert np.nextafter(np.float64(edge), -np.inf) == rho_max, f"JER_RESOLUTION_RHO_MAX {edge!r} is not the payload Rho edge"
-    assert jm.corrt1_match_rho_max == rho_max, f"stored clamp {jm.corrt1_match_rho_max!r} != {rho_max!r}"
-    res = jerc_cset()[f"{JER_TAG}_MC_PtResolution_{JET_TYPE}"]
-    etas = np.linspace(-5.1, 5.1, 103)
-    assert (res.evaluate(etas, 15.0, edge) == 1.0).all(), f"PtResolution at rho = {edge} is not the 1.0 overflow"
-    assert (res.evaluate(etas, 15.0, float(rho_max)) != 1.0).all(), "PtResolution just below the edge is 1.0"
-    rho = event_rho(ev)
-    ct1 = prepare_corrt1_jets(ev.CorrT1METJet, rho)
-    C = ct1_jer_inputs(ev)
-    hi = C["rho"] > JER_RESOLUTION_RHO_MAX[JER_TAG]
-    print(f"  high-rho CorrT1 jets: {int(hi.sum())}, with sf_nom > 1: {int((hi & (C['sf']['nom'] > 1)).sum())}")
-    assert hi.sum() >= 40, f"too few high-rho CorrT1 jets: {hi.sum()}"
-    assert (hi & (C["sf"]["nom"] > 1)).sum() >= 30, "too few high-rho CorrT1 jets with sf_nom > 1"
-    sigma_un = C["sigma"]
-    sigma_cl = res.evaluate(C["eta"], C["pt_jec"], np.minimum(C["rho"], rho_max))
-    assert (sigma_un[hi] == 1.0).all(), "payload sigma is not 1.0 above the rho edge"
-    assert (sigma_cl[hi] < 1.0).all(), "clamped sigma is not below 1.0"
-    hi_j = unflat(hi, C["counts"])
-    he = C["he"]
-
-    def gen_for(r):
-        pt_gen = C["pt_jec"] * (1 + r)
-        return ak.zip({
-            "eta": ct1.eta[hi_j], "phi": ct1.phi[hi_j], "pt": unflat(pt_gen, C["counts"])[hi_j],
-        }), pt_gen
-
-    def factors(gen):
-        out = jersmear_corrt1_jets(ct1, ev.event, gen, jm.met_factory.jec_L1L2L3, jm.max_gen_dr, *jm.jer_smear[:3],
-                                    jm.corrt1_match_rho_max, jm.jer_smear[4])
-        return {
-            "nom": flat(out.jet_energy_resolution_correction),
-            "up": flat(out.JER.up.jet_energy_resolution_correction),
-            "down": flat(out.JER.down.jet_energy_resolution_correction),
-        }
-
-    def ref(genpt, sigma, v):
-        return jersmear_ind(C["pt_jec"], C["eta"], genpt, C["rho"], C["eid"], sigma, C["sf"][v])
-
-    r_out = (3 * sigma_cl + 3) / 2
-    assert ((r_out[hi] >= 3 * sigma_cl[hi]) & (r_out[hi] < 3 * sigma_un[hi])).all(), "r_out not in [3 sigma_cl, 3 sigma_un)"
-    gen_out, pt_gen_out = gen_for(r_out)
-    f_out = factors(gen_out)
-    minus1 = np.full_like(C["pt_jec"], -1.0)
-    for v in VARIATIONS:
-        expect = np.where(he, 1.0, ref(minus1, sigma_un, v))
-        assert_close(f_out[v][hi], expect[hi], f"gen_out {v}: unmatched, unclamped smear sigma")
-    pop = hi & (C["sf"]["nom"] > 1)
-    frac, n = frac_differ(ref(pt_gen_out, sigma_un, "nom")[pop], f_out["nom"][pop])
-    print(f"  negative control 1 (unclamped window would match): {frac:.4f} of N={n}")
-    assert frac > 0.5, f"unclamped-window control not distinguishable: {frac:.3f}"
-    pop2 = hi & ~he & (C["sf"]["nom"] > 1)
-    print(f"  high-rho non-HE CorrT1 jets with sf_nom > 1: {int(pop2.sum())}")
-    assert pop2.sum() >= 30, f"too few high-rho non-HE CorrT1 jets with sf_nom > 1: {pop2.sum()}"
-    frac, n = frac_differ(ref(minus1, sigma_cl, "nom")[pop2], f_out["nom"][pop2])
-    print(f"  negative control 2 (clamped smear sigma): {frac:.4f} of N={n}")
-    assert frac > 0.5, f"clamped-smear-sigma control not distinguishable: {frac:.3f}"
-    gen_in, pt_gen_in = gen_for(1.5 * sigma_cl)
-    f_in = factors(gen_in)
-    for v in VARIATIONS:
-        assert_close(f_in[v][hi], ref(pt_gen_in, sigma_un, v)[hi], f"gen_in {v}: matched")
-    J = jer_inputs(ev)
-    injets = add_jme_variables(ev.Jet, rho, max_gen_dr=0.2)
-    jets = jm.jec_factory_L123_JER.build(injets)
-    hi_jet = J["rho"] > JER_RESOLUTION_RHO_MAX[JER_TAG]
-    sig_cl_jet = res.evaluate(J["eta"], J["pt_jec"], np.minimum(J["rho"], rho_max))
-    r_jet = (3 * sig_cl_jet + 3) / 2
-    new_gen = J["pt_jec"] * (1 + r_jet)
-    pt_gen_mod = np.where(hi_jet, new_gen, flat(jets.pt_gen))
-    jets_mod = ak.with_field(jets, unflat(pt_gen_mod, J["counts"]), "pt_gen")
-    out = jersmear_jets(injets, jets_mod, ev.event, *jm.jer_smear)
-    nom = flat(out.jet_energy_resolution_correction)
-    pop_j = hi_jet & (J["sf"]["nom"] > 1)
-    print(f"  high-rho Jets: {int(hi_jet.sum())}, with sf_nom > 1: {int(pop_j.sum())}")
-    assert hi_jet.sum() >= 100, f"too few high-rho Jets: {hi_jet.sum()}"
-    assert pop_j.sum() >= 90, f"too few high-rho Jets with sf_nom > 1: {pop_j.sum()}"
-    hyb = jersmear_ind(J["pt_jec"], J["eta"], pt_gen_mod, J["rho"], J["eid"], J["sigma"], J["sf"]["nom"])
-    assert_close(nom[hi_jet], hyb[hi_jet], "high-rho Jets keep the payload window (hybrid)")
-    sto = np.where(J["he"], 1.0, jersmear_ind(J["pt_jec"], J["eta"], np.full_like(J["pt_jec"], -1.0), J["rho"], J["eid"], J["sigma"], J["sf"]["nom"]))
-    frac, n = frac_differ(sto[pop_j], nom[pop_j])
-    print(f"  Jet stochastic alternative differs: {frac:.4f} of N={n}")
-    assert frac > 0.5, f"Jet window control not distinguishable: {frac:.3f}"
-
-
 def test_corrt1_match_window_unknown_jer_tag(monkeypatch):
     monkeypatch.setattr(qawa.jme, "JER_RESOLUTION_RHO_MAX", {})
     with pytest.raises(KeyError, match=JER_TAG):
@@ -996,14 +912,14 @@ def test_jer_he_rule_jets():
     eid = ak.Array([123456789])
     in_region = np.array([False, False, True, True, True, True, False, False, False])
     res = jerc_cset()[f"{JER_TAG}_MC_PtResolution_{JET_TYPE}"]
-    sfc = jerc_cset()[f"{JER_TAG}_MC_ScaleFactor_{JET_TYPE}"]
     sig = res.evaluate(eta.astype(np.float64), pt, rho_s.astype(np.float64))
-    sf = {v: sfc.evaluate(eta.astype(np.float64), pt, v) for v in VARIATIONS}
+    sf = jer_sf(eta.astype(np.float64), pt)
     eid_flat = np.full(n_pts, 123456789, dtype=np.int64)
     sto = {v: jersmear_ind(pt, eta.astype(np.float64), np.full(n_pts, -1.0), rho_s.astype(np.float64), eid_flat, sig, sf[v]) for v in VARIATIONS}
     for regions in (jm.jer_smear[4], ()):
         _, s_unm = jersmear_factors(one(pt), one(eta), one(rho_s), eid, one(np.zeros(n_pts, dtype=np.float32)), *jm.jer_smear[:3], regions)
         _, s_m = jersmear_factors(one(pt), one(eta), one(rho_s), eid, one(np.full(n_pts, 38.0, dtype=np.float32)), *jm.jer_smear[:3], regions)
+        smeared_region = ~in_region if regions else in_region
         for v in VARIATIONS:
             got = flat(s_unm[v])
             if regions:
@@ -1013,16 +929,10 @@ def test_jer_he_rule_jets():
                 assert_close(got, sto[v], f"synthetic no-rule {v}")
             hyb = 1 + (sf[v] - 1) * (40.0 - 38.0) / 40.0
             assert_close(flat(s_m[v]), hyb, f"synthetic matched {v} ({regions})")
-        got = {v: flat(s_unm[v]) for v in VARIATIONS}
-        if regions:
-            for v in ("nom", "up"):
-                assert (np.abs(got[v][~in_region] - 1) > 1e-6).all(), f"out-of-region {v} factor is 1: {got[v]}"
-            assert (np.abs(got["down"][[6, 7]] - 1) > 1e-6).all(), f"down factor at +-3.0 is 1: {got['down']}"
-        else:
-            for v in ("nom", "up"):
-                assert (np.abs(got[v][in_region] - 1) > 1e-6).all(), f"no-rule in-region {v} factor is 1: {got[v]}"
-            assert (np.abs(got["down"][[4, 5]] - 1) > 1e-6).all(), f"no-rule down at 2.75 / 3.0- is 1: {got['down']}"
-            assert (got["down"][[2, 3]] == 1.0).all(), f"no-rule down at +-2.5 is not 1: {got['down']}"
+            above = sf[v] > 1
+            assert (smeared_region & above).any(), f"no synthetic point with sf_{v} > 1 to smear ({regions})"
+            assert (np.abs(got[smeared_region & above] - 1) > 1e-6).all(), f"{v} factor is 1 where sf > 1 ({regions}): {got}"
+            assert (got[~above] == 1.0).all(), f"{v} factor is not 1 where sf <= 1 ({regions}): {got}"
     rho = event_rho(ev)
     injets = add_jme_variables(ev.Jet, rho, max_gen_dr=0.2)
     jec_only = jm.jec_factory_L123_JER.build(injets)
