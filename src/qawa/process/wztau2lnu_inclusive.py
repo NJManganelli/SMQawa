@@ -29,6 +29,7 @@ from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from qawa.btag import BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
+from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
@@ -397,37 +398,6 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wps=("VTight",), tauI
     keep = base_selection & ~overlap_leptons
     return {wp: tau[keep & (tau_j_branch >= tau_j_id_cuts[wp])] for wp in tauIDvsj_wps}
 
-def run2ul_puppi_jetid(jets, era):
-    # Run 2 UL AK4 PUPPI jet ID: Run 2 NanoAODv15 dropped Jet.jetId and no Run 2 v15 jetid.json exists centrally
-    # Cuts from the JetID13TeVUL TWiki NanoAODv15 recipe (UL2016 / UL2017-18 AK4 PUPPI). Known differences from CMSSW
-    # PFJetIDSelectionFunctor: RUN2UL16PUPPI uses nNeutrals > 1 for 2.7 < |eta| <= 3.0, and its RUN2ULPUPPI TIGHT block
-    # has NHF_EC < 0.99 and NEF_FW < 0.4, so Tight here uses the TightLepVeto forward values.
-    # Returns the NanoAOD encoding: 2*Tight + 4*TightLepVeto
-    abseta = np.abs(jets.eta)
-    nhf, nef, chf, cef, muf = jets.neHEF, jets.neEmEF, jets.chHEF, jets.chEmEF, jets.muEF
-    nch, nneu = jets.chMultiplicity, jets.neMultiplicity
-    if era == "2016":
-        eta_c = 2.4
-        tr = (nhf < 0.98) & (nef < 0.99)
-        ec = nneu >= 1
-    else:
-        eta_c = 2.6
-        tr = (nhf < 0.9) & (nef < 0.99)
-        ec = nhf < 0.9999
-    central = (nhf < 0.9) & (nef < 0.9) & ((nch + nneu) > 1) & (chf > 0) & (nch > 0)
-    fw = (nef < 0.9) & (nneu > 2)
-    lepveto = (muf < 0.8) & (cef < 0.8)
-    in_c = abseta <= eta_c
-    in_tr = (abseta > eta_c) & (abseta <= 2.7)
-    in_ec = (abseta > 2.7) & (abseta <= 3.0)
-    in_fw = abseta > 3.0
-    tight = (in_c & central) | (in_tr & tr) | (in_ec & ec) | (in_fw & fw)
-    # TightLepVeto adds MUF/CEF < 0.8 in the central region (and 2.6 < |eta| <= 2.7 for 2017/2018)
-    tlv_region = in_c if era == "2016" else (in_c | in_tr)
-    tight_lep_veto = tight & (~tlv_region | lepveto)
-    return 2 * ak.values_astype(tight, np.int32) + 4 * ak.values_astype(tight_lep_veto, np.int32)
-
-
 def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAODversion="v9", *, era):
 
     overlap_leptons = ak.any(jets.metric_table(tight_leptons) <= 0.4, axis=2)
@@ -637,10 +607,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver)
-        try:
-            self._jetid = self.clibhandler.getCorrectionSet("jetid")
-        except KeyError as ke:
-            self._jetid = None
+        self._jetid = JetID(self._era, self._ver, self.clibhandler)
         self._purw = pileup_weights(era=self._era, clibhandler=self.clibhandler, clibkey=None) #auto key mode until we find a case that doesn't work
         self._leSF = LeptonScaleFactors(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
                                         electronID=self.electronID, muonID=self.muonID, muonISO=self.muonISO)
@@ -2204,28 +2171,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 chunk_sumw = float(np.sum(ak.to_numpy(event.genWeight), dtype=np.float64))
                 chunk_entries = len(event)
 
-        if "jetId" not in event.Jet.fields and self._jetid is None and self._era in ["2016", "2017", "2018"]:
-            event["Jet", "jetId"] = run2ul_puppi_jetid(event.Jet, self._era)
         if "jetId" not in event.Jet.fields:
-            if self._ver in [f"v{V}" for V in range(12)]:
-                jet_type = "AK4CHS"
-            else:
-                jet_type = "AK4PUPPI"
-            # Match 2017-2018 encoding, no Loose bit active, with following inputs
-            jet_args = (event.Jet.eta,                                      # ('eta', 'real', 'pseudorapidity of the jet')
-                        event.Jet.chHEF,                                    # ('chHEF', 'real', 'charged Hadron Energy Fraction')
-                        event.Jet.neHEF,                                    # ('neHEF', 'real', 'neutral Hadron Energy Fraction')
-                        event.Jet.chEmEF,                                   # ('chEmEF', 'real', 'charged Electromagnetic Energy Fraction')
-                        event.Jet.neEmEF,                                   # ('neEmEF', 'real', 'neutral Electromagnetic Energy Fraction')
-                        event.Jet.muEF,                                     # ('muEF', 'real', 'muon Energy Fraction')
-                        event.Jet.chMultiplicity,                           # ('chMultiplicity', 'int', 'charged Multiplicity')
-                        event.Jet.neMultiplicity,                           # ('neMultiplicity', 'int', 'neutral Multiplicity')
-                        event.Jet.chMultiplicity + event.Jet.neMultiplicity # ('multiplicity', 'int', 'charged Multiplicity + neutral Multiplicity')]
-                        )
-            event["Jet", "jetId"] = (
-                4 * self._jetid[f"{jet_type}_TightLeptonVeto"].evaluate(*jet_args) + 
-                2 * self._jetid[f"{jet_type}_Tight"].evaluate(*jet_args)
-                )
+            event["Jet", "jetId"] = self._jetid(event.Jet)
 
         # JES/JER corrections
         Rho = event.Rho.fixedGridRhoFastjetAll if "Rho" in event.fields else event.fixedGridRhoFastjetAll # if self._ver in [f"v{V}" for V in range(12)]
