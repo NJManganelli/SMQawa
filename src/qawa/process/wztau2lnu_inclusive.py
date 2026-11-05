@@ -553,7 +553,12 @@ class wzinclusive_processor(processor.ProcessorABC):
         self._use_clib_jme = self._era == "2024" or self._ver == "v15"
         if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
             jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
-            jer_tag = 'Summer19UL18_JRV3' if self._era == "2018" else '' # FIXME: add 2016/2017 JER tags
+            jer_tag = {
+                "2016APV": 'Summer20UL16APV_JRV5',
+                "2016": 'Summer20UL16_JRV5',
+                "2017": 'Summer19UL17_JRV4',
+                "2018": 'Summer19UL18_JRV3',
+            }[f'{self._era}{"APV" if self._isAPV else ""}']
 
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
