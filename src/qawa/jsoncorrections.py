@@ -248,15 +248,6 @@ class CorrectionlibHandler:
                 continue
             if self._subera is not None and self._subera not in tag:
                 continue
-            if f"NanoAOD{self._ver}" not in tag:
-                if pog == "LUM" and self._era in ["2016", "2017", "2018"]:
-                    # exception for no PU reweighting for v15 Run2
-                    pass
-                elif pog == "MUO" and self._era in ["2016", "2017", "2018"]:
-                    # exception for no muon SFs for v15 Run2
-                    pass
-                else:
-                    continue
             path = self._poghead / pog / tag / pogtag / cset
             if path.exists():
                 key = cset.split(".")[0] if "." in cset else cset # strip filetype/compression
