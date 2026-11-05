@@ -373,8 +373,9 @@ class JMEUncertainty:
         jec_L1 = CorrectionLibJEC(cset[f"{jec_tag}_{data_type}_L1FastJet_{jet_type}"])
         # Regrouped set of uncertainties
         if is_mc:
+            # field names follow the processor's year suffix (_2016), payload names the APV era (_2016APV)
             sources = {
-                name: cset[f"{jec_tag}_MC_Regrouped_{name}_{jet_type}"]
+                name.replace("2016APV", "2016"): cset[f"{jec_tag}_MC_Regrouped_{name}_{jet_type}"]
                 for name in [
                     "Total",
                     "Absolute",
