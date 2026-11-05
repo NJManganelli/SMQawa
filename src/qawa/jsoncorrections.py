@@ -73,7 +73,7 @@ _runII_v15_pogs_tags_pogtags_csets = (
     ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
     ("JME", "Run2-2017-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
-    ("JME", "Run2-2018-UL-NanoAODv15", "newJERFormats", "jet_jerc.json.gz"), # same JECs as 2026-06-05, plus Summer19UL18_JRV3 JER
+    ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
     ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
     # ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "jmar.json.gz"),
     ("JME", "Run2-2018-UL-NanoAODv15", "2026-06-05", "met.json.gz"),
