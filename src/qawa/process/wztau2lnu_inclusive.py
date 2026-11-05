@@ -398,9 +398,11 @@ def build_htaus(tau, lepton, nanoAODversion="v9", tauIDvsj_wps=("VTight",), tauI
     return {wp: tau[keep & (tau_j_branch >= tau_j_id_cuts[wp])] for wp in tauIDvsj_wps}
 
 def run2ul_puppi_jetid(jets, era):
-    # Run 2 UL AK4 PUPPI jet ID (no central jetid.json.gz for Run 2 NanoAODv15, which dropped Jet.jetId)
-    # Cuts from CMSSW PhysicsTools/SelectorUtils/interface/PFJetIDSelectionFunctor.h, RUN2UL16PUPPI / RUN2ULPUPPI
-    # (forward cuts as in its TIGHTLEPVETO block / JetID13TeVUL twiki). Returns the NanoAOD encoding: 2*Tight + 4*TightLepVeto
+    # Run 2 UL AK4 PUPPI jet ID: Run 2 NanoAODv15 dropped Jet.jetId and no Run 2 v15 jetid.json exists centrally
+    # Cuts from the JetID13TeVUL TWiki NanoAODv15 recipe (UL2016 / UL2017-18 AK4 PUPPI). Known differences from CMSSW
+    # PFJetIDSelectionFunctor: RUN2UL16PUPPI uses nNeutrals > 1 for 2.7 < |eta| <= 3.0, and its RUN2ULPUPPI TIGHT block
+    # has NHF_EC < 0.99 and NEF_FW < 0.4, so Tight here uses the TightLepVeto forward values.
+    # Returns the NanoAOD encoding: 2*Tight + 4*TightLepVeto
     abseta = np.abs(jets.eta)
     nhf, nef, chf, cef, muf = jets.neHEF, jets.neEmEF, jets.chHEF, jets.chEmEF, jets.muEF
     nch, nneu = jets.chMultiplicity, jets.neMultiplicity
