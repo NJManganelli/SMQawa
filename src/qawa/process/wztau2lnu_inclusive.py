@@ -554,9 +554,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = 'Summer19UL18_V5_MC'
                 jer_tag = 'Summer19UL18_JRV2_MC'
             elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V2'
-                # JER payload as shipped in the 2024 jet_jerc.json.gz (borrowed from 2023BPix RunD)
-                jer_tag = 'Summer23BPixPrompt23_RunD_JRV1' #FIXME, temporary until new 2024 JER tag available in jsons (borrowed from Summer23BPix RunD)
+                jec_tag = 'Summer24Prompt24_V5'
+                jer_tag = 'Summer24Prompt24_JRV2'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
@@ -577,7 +576,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
             elif self._era == '2024':
                 # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
-                jec_tag = 'Summer24Prompt24_V2'
+                jec_tag = 'Summer24Prompt24_V5'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")

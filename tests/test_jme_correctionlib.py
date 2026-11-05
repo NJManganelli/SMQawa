@@ -40,8 +40,8 @@ FILES = {"mc": MC_FILE, "dataC": DATA_C_FILE, "dataI": DATA_I_FILE}
 
 TXT_DIR = Path(qawa.__file__).resolve().parent / "data" / "jme" / "2024"
 
-JEC_TAG = "Summer24Prompt24_V2"
-JER_TAG = "Summer23BPixPrompt23_RunD_JRV1"
+JEC_TAG = "Summer24Prompt24_V5"
+JER_TAG = "Summer24Prompt24_JRV2"
 TXT_MC_TAG = "Summer24Prompt24_V3_MC"
 TXT_JER_TAG = "Summer24Prompt24_JRV1_MC"
 JET_TYPE = "AK4PFPuppi"
@@ -52,7 +52,7 @@ FLOOR_ETA_IND = ((2.0, 2.5),)
 FLOOR_PT_IND = 30.0
 
 NIBS = (
-    ("Cnib1", 379412, 380253),
+    ("Cnib1", 378971, 380253),
     ("Dnib1", 380253, 380948),
     ("Enib1", 380948, 381944),
     ("Fnib1", 381944, 382298),
@@ -61,7 +61,7 @@ NIBS = (
     ("Gnib1", 383780, 384933),
     ("Gnib2", 384933, 385814),
     ("Hnib1", 385814, 386409),
-    ("Inib1", 386409, 387121),
+    ("Inib1", 386409, 387122),
 )
 
 JES_SOURCES = (
@@ -118,8 +118,8 @@ def rho_max_ind():
     assert data["input"] == "JetEta", f"unexpected PtResolution layout: {data['input']}"
     assert all(n["input"] == "Rho" for n in data["content"]), "PtResolution eta bins are not Rho binnings"
     edges = {n["edges"][-1] for n in data["content"]}
-    assert edges == {52.05}, f"upper Rho edges {edges}"
-    return np.nextafter(52.05, -np.inf)
+    assert edges == {JER_RESOLUTION_RHO_MAX[JER_TAG]}, f"upper Rho edges {edges}"
+    return np.nextafter(JER_RESOLUTION_RHO_MAX[JER_TAG], -np.inf)
 
 
 @functools.lru_cache(maxsize=None)
@@ -857,7 +857,7 @@ def test_corrt1_match_window_rho_clamp():
     rho = event_rho(ev)
     ct1 = prepare_corrt1_jets(ev.CorrT1METJet, rho)
     C = ct1_jer_inputs(ev)
-    hi = C["rho"] > 52.05
+    hi = C["rho"] > JER_RESOLUTION_RHO_MAX[JER_TAG]
     print(f"  high-rho CorrT1 jets: {int(hi.sum())}, with sf_nom > 1: {int((hi & (C['sf']['nom'] > 1)).sum())}")
     assert hi.sum() >= 40, f"too few high-rho CorrT1 jets: {hi.sum()}"
     assert (hi & (C["sf"]["nom"] > 1)).sum() >= 30, "too few high-rho CorrT1 jets with sf_nom > 1"
@@ -911,7 +911,7 @@ def test_corrt1_match_window_rho_clamp():
     J = jer_inputs(ev)
     injets = add_jme_variables(ev.Jet, rho, max_gen_dr=0.2)
     jets = jm.jec_factory_L123_JER.build(injets)
-    hi_jet = J["rho"] > 52.05
+    hi_jet = J["rho"] > JER_RESOLUTION_RHO_MAX[JER_TAG]
     sig_cl_jet = res.evaluate(J["eta"], J["pt_jec"], np.minimum(J["rho"], rho_max))
     r_jet = (3 * sig_cl_jet + 3) / 2
     new_gen = J["pt_jec"] * (1 + r_jet)
