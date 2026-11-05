@@ -11,7 +11,7 @@ DY_DAS = ("/DYto2Mu-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/"
           "RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v1/NANOAODSIM")
 MUON_DAS = "/Muon0/Run2024C-MINIv6NANOv15-v1/NANOAOD"
 
-M1_PATH = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
+M1_PATH = ("/data/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
            "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
 M3_PATH = ("/store/mc/RunIII2024Summer24NanoAODv15/DYto2Mu-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/"
            "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v1/90000/test.root")

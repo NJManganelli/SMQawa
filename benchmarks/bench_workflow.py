@@ -37,7 +37,7 @@ per-process disk columns, the pressure level and the pmset probes are macOS only
 
 WORKTREE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.abspath(__file__)
-STORE = "/Volumes/WDMac/SMQawaTestFiles/store"
+STORE = os.environ.get("QAWA_TEST_STORE", os.path.join(os.path.dirname(WORKTREE), "SMQawaTestFiles", "store"))
 ERA = "2024"
 VERSION = "v15"
 CAPS = {name: "4" for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_MAX_THREADS")}

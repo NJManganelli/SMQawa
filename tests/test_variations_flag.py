@@ -6,8 +6,8 @@ import pytest
 
 import qawa.process.wztau2lnu_inclusive as wzmod
 from qawa.tauSF import tauIDScaleFactors
+from conftest import STORE
 
-STORE = "/Volumes/WDMac/SMQawaTestFiles/store"
 M1_FILE = (f"{STORE}/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
            "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
 M9_FILE = (f"{STORE}/mc/RunIISummer20UL18NanoAODv9/WZTo3LNu_TuneCP5_13TeV-amcatnloFXFX-pythia8/"

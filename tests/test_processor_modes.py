@@ -6,10 +6,10 @@ import pytest
 
 import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.utils as utils
+from conftest import STORE, input_path
 
-M1_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
-           "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
-needs_m1 = pytest.mark.skipif(not os.path.exists(M1_FILE), reason="local 2024 WZto3LNu test file not available")
+M1_FILE, needs_m1 = input_path(STORE, "mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
+                                       "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
 
 FAKE_TERMS = ("sm", "lin_cW", "quad_cW")
 
@@ -78,8 +78,7 @@ REMOVED_BOOKINGS = {"dilep_tau_pt", "dilep_loose_tau_pt", "dilep_loose_tau_met_d
 WPREFS = ("wZW", "wZWp", "wZWm", "wWZ", "wWpZ", "wWmZ")
 POLS = ("long", "left", "right")
 
-D1_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
-needs_d1 = pytest.mark.skipif(not os.path.exists(D1_FILE), reason="local 2024 Muon0 data test file not available")
+D1_FILE, needs_d1 = input_path(STORE, "data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
 
 ALLOWED = {
     ("met_pt", "low_met_pt"), ("met_pt", "medium_met_pt"), ("met_pt", "high_met_pt"),

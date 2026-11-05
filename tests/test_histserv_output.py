@@ -28,6 +28,7 @@ import qawa.process.wztau2lnu_inclusive as wzmod
 import qawa.production_keys as pk
 import qawa.utils as utils
 from qawa import lumi_record
+from conftest import CVMFS_HEAD, DATA, STORE, input_path
 
 ROOT = os.environ.get("QAWA_EXPECTED_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CAPS = {"OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4", "MKL_NUM_THREADS": "4", "NUMEXPR_MAX_THREADS": "4"}
@@ -39,6 +40,7 @@ DAS_D = "/Muon0/Run2024D-v1/NANOAOD"
 OPTIONS = {"era": "2024", "version": "v15", "pol": False, "split_by_charge": False, "split_FV": False}
 CHANNELS = {"chA": ["triggers", "met_pt"], "chB": ["triggers", "~low"], "chEmpty": ["triggers", "empty"]}
 LABELS = [("nominal",), ("up",), ("down",)]
+CVMFS, needs_cvmfs = input_path(CVMFS_HEAD, "cms-griddata.cern.ch")
 
 
 def final_name(kind_label, markers="", tag="t", filename="latest", suffix=""):
@@ -741,6 +743,7 @@ def test_consistency_errors(server, synthetic):
         ho.begin_job(reg, "/U/RunX-v1/NANOAODSIM", {"f0": []}, {"f0": file_record(0, runs_sumw=1.0)})
 
 
+@needs_cvmfs
 def test_nondeterministic_reason():
     era2018 = ho.make_processor(dict(OPTIONS, era="2018", version="v9"))
     era2024 = ho.make_processor(OPTIONS)
@@ -757,6 +760,7 @@ def hand_registry(kind, options=OPTIONS, key=DAS_S, variations=None):
     return {"options": dict(options), "samples": {key: {"kind": kind, "variations": dict(variations, eft=False)}}}
 
 
+@needs_cvmfs
 def test_constructor_consistency_errors():
     reg = hand_registry("mc")
     for kwargs in (dict(histserv_registry=reg), dict(histserv_sample=DAS_S),
@@ -771,6 +775,7 @@ def test_constructor_consistency_errors():
     assert proc.histserv_registry is reg and proc.histserv_sample == DAS_S
 
 
+@needs_cvmfs
 def test_constructor_refuses_nondeterministic():
     options = dict(OPTIONS, era="2018", version="v9")
     with pytest.raises(ValueError, match="histserv mode needs deterministic chunk processing"):
@@ -780,11 +785,11 @@ def test_constructor_refuses_nondeterministic():
                                 histserv_sample=DAS_S)
 
 
-M1_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
-           "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
-M3_FILE = ("/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/DYto2Mu-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_"
-           "amcatnloFXFX-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v1/90000/test.root")
-D1_FILE = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
+M1_FILE = os.path.join(STORE, "mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
+                       "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
+M3_FILE = os.path.join(STORE, "mc/RunIII2024Summer24NanoAODv15/DYto2Mu-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_"
+                       "amcatnloFXFX-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v1/90000/test.root")
+D1_FILE = os.path.join(STORE, "data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
 FAKE_TERMS = ("sm", "lin_cW", "quad_cW")
 
 
@@ -912,6 +917,7 @@ def run_cli(*args, env=None):
                           env={**os.environ, **CAPS, **(env or {}), "PYTHONPATH": os.path.join(ROOT, "src")}, timeout=300)
 
 
+@needs_cvmfs
 def test_register_cli(server, tmp_path):
     output = tmp_path / "reg.json"
     (tmp_path / "reg.json.tmp").write_text("stale")
@@ -1389,7 +1395,7 @@ def test_reprocessed_data_register_and_collect(server, synthetic, tmp_path):
     assert len(problems) == 1 and "Muon0 met_pt: nominal differs" in problems[0]
 
 
-LOCAL_2018 = "/Users/nmangane/vz-main/SMQawa/DoubleMuon_UL2018_NanoAODv9.root"
+LOCAL_2018 = os.path.join(DATA, "DoubleMuon_UL2018_NanoAODv9.root")
 
 
 def lumi_fills(monkeypatch, reg, key):

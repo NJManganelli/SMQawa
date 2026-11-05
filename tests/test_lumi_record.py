@@ -12,14 +12,14 @@ import pytest
 
 import qawa.datadriven as datadriven
 from qawa import lumi_record
+from conftest import DATA, STORE
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CAPS = {"OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4", "MKL_NUM_THREADS": "4", "NUMEXPR_MAX_THREADS": "4"}
 ENV = {**os.environ, **CAPS, "PYTHONPATH": os.path.join(ROOT, "src")}
-LOCAL_2018 = "/Users/nmangane/vz-main/SMQawa/DoubleMuon_UL2018_NanoAODv9.root"
-STORE = "/Volumes/WDMac/SMQawaTestFiles/store/data/"
-D1_FILE = STORE + "Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
-D2_FILE = STORE + "Run2024I/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
+LOCAL_2018 = os.path.join(DATA, "DoubleMuon_UL2018_NanoAODv9.root")
+D1_FILE = os.path.join(STORE, "data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
+D2_FILE = os.path.join(STORE, "data/Run2024I/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
 RUN = 379000
 CSV_HEADER = ("#Data tag : 24v1 , Norm tag: None\n"
               "#run:fill,ls,time,beamstatus,E(GeV),delivered(/pb),recorded(/pb),avgpu,source\n")
