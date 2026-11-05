@@ -74,7 +74,7 @@ JETMET_RUN3_MITIGATIONS = {
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
-JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05, "Summer19UL18_JRV3": 90.0}
+JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05, "Summer20UL16APV_JRV5": 90.0, "Summer20UL16_JRV5": 90.0, "Summer19UL17_JRV4": 90.0, "Summer19UL18_JRV3": 90.0,}
 
 class SplitJERSF:
     # "newJERFormats" payloads ship the SF (JetEta, JetPt) and its uncertainty as separate corrections, with no
@@ -385,8 +385,11 @@ class JMEUncertainty:
         jec_L1 = CorrectionLibJEC(cset[f"{jec_tag}_{data_type}_L1FastJet_{jet_type}"])
         # Regrouped set of uncertainties
         if is_mc:
+            # Run 2 v15 2016preVFP payloads name the era-specific sources e.g. Absolute_2016APV; keep the
+            # source (and shift) names era-based so they match the processor's JES_*_{era} shifts
+            payload_era = f"{era}APV" if "UL16APV" in jec_tag else era
             sources = {
-                name: cset[f"{jec_tag}_MC_Regrouped_{name}_{jet_type}"]
+                name: cset[f"{jec_tag}_MC_Regrouped_{name.replace(f'_{era}', f'_{payload_era}')}_{jet_type}"]
                 for name in [
                     "Total",
                     "Absolute",
