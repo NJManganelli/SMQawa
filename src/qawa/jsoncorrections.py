@@ -270,7 +270,7 @@ class CorrectionlibHandler:
     def _loadCentralExceptions(self):
         # Because there's always a special little exception to add misery to our lives
         if "jer_smear" not in self._paths:
-            self._paths["jer_smear"] = self._poghead / "JME" / "JER-Smearing" / "2025-11-03" / "jer_smear.json.gz"
+            self._paths["jer_smear"] = self._poghead / "JME" / "JER-Smearing" / "2026-09-18" / "jer_smear.json.gz"
 
     def _loadUserPaths(self, analysis: str):
         # Where to load HLT, DDDY, etc corrections...
