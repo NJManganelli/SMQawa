@@ -19,7 +19,7 @@ import bench_processor
 DESCRIPTION = """End-to-end workflow driver and benchmark for wzinclusive_processor productions.
 
 Subcommands:
-  run      one workflow (reference, c1 or c4) of one configuration: setup, jobs on --slots single-core
+  run      one workflow (reference, standard or histserv) of one configuration: setup, jobs on --slots single-core
            job processes, then the merge (hist-merger.py --legacy) or the histserv collect, with process
            sampling; with --scenario, one of the histserv dedup, completeness, poisoning and truncation
            scenarios, whose expected outcomes and exit codes are checked
@@ -202,7 +202,7 @@ class JobCounter:
             os._exit(KILL_EXIT_CODE)
 
 
-def install_c4_hooks(ho, histserv, counter, registry, key, args):
+def install_histserv_hooks(ho, histserv, counter, registry, key, args):
     import grpc
 
     class InjectedRpcError(grpc.RpcError):
@@ -277,8 +277,8 @@ def install_timers(wzmod, workflow, ho=None):
         return result
     Weights.weight = timed_weight
 
-    if workflow == "c4" or hasattr(wzmod, "fill_histogram"):
-        owner, name = (ho, "send_histogram") if workflow == "c4" else (wzmod, "fill_histogram")
+    if workflow == "histserv" or hasattr(wzmod, "fill_histogram"):
+        owner, name = (ho, "send_histogram") if workflow == "histserv" else (wzmod, "fill_histogram")
         fill = getattr(owner, name)
 
         def timed_fill(*fill_args, **fill_kwargs):
@@ -308,7 +308,7 @@ def cmd_job(args):
               "qawa_file": qawa_file, "items": [(i.entrystart, i.entrystop) for i in items],
               "events": sum(i.entrystop - i.entrystart for i in items), "flags": sys.argv[2:]}
     ho = histserv = registry = key = counter = None
-    if args.workflow == "c4":
+    if args.workflow == "histserv":
         import histserv
         from qawa import histserv_output as ho
         registry = ho.read_registry(args.registry)
@@ -326,9 +326,9 @@ def cmd_job(args):
         key = ho.resolve_key(registry, args.das_name, pol=bool(cfg.get("pol")),
                              split_by_charge=bool(cfg.get("split_by_charge")), split_FV=False)
         counter = JobCounter(os.path.abspath(f"job_{args.job_num}.jsonl"), args.fail_after_passes, args.fail_after_sends)
-        install_c4_hooks(ho, histserv, counter, registry, key, args)
+        install_histserv_hooks(ho, histserv, counter, registry, key, args)
     elif any(v is not None for v in (args.fail_after_passes, args.fail_after_sends, args.fail_rpc_after_sends)):
-        print("failure injection needs --workflow c4")
+        print("failure injection needs --workflow histserv")
         return 2
     if args.eft_operators:
         bench_processor.install_synthetic_eft(wzmod, args.eft_operators, args.eft_nan_modulus)
@@ -340,7 +340,7 @@ def cmd_job(args):
         seconds = install_timers(wzmod, args.workflow, ho)
     kwargs = dict(era=ERA, version=VERSION, run_period=sample["run_period"], pol=bool(cfg.get("pol")),
                   split_by_charge=bool(cfg.get("split_by_charge")), split_FV=False, ewk_process_name=None)
-    if args.workflow == "c4":
+    if args.workflow == "histserv":
         kwargs.update(histserv_registry=registry, histserv_sample=key)
     proc = wzmod.wzinclusive_processor(**kwargs)
     record["construct"] = time.perf_counter() - t_start
@@ -348,7 +348,7 @@ def cmd_job(args):
                               format="root", savemetrics=True)
     sumw = 0.0
     t0 = time.perf_counter()
-    if args.workflow == "c4":
+    if args.workflow == "histserv":
         try:
             ho.check_poison(registry, key)
             file_of = {sample["file"]: sample["file"]}
@@ -394,7 +394,7 @@ def cmd_job(args):
         out, metrics = runner(items, processor_instance=proc)
         record["runner"] = time.perf_counter() - t1
     t2 = time.perf_counter()
-    if args.workflow == "c4":
+    if args.workflow == "histserv":
         ho.write_done_file(args.job_num, registry, key, items)
         record.update(counts=counter.totals, calls=counter.calls, returned=sorted(out),
                       returned_empty=all(not v for v in out.values()))
@@ -592,7 +592,7 @@ class Workflow:
                                   "events": sum(i.entrystop - i.entrystart for i in job_items)})
             with open(os.path.join(self.out, "manifests", f"{name}.txt"), "w") as f:
                 f.write(sample["file"] + "\n")
-        if self.args.workflow == "c4":
+        if self.args.workflow == "histserv":
             self.start_server()
 
     def warm_inputs(self):
@@ -843,7 +843,7 @@ def clean_production(wf, name):
 
 
 def scenario_clean(wf):
-    if wf.args.workflow != "c4":
+    if wf.args.workflow != "histserv":
         results = wf.run_jobs([wf.job_run(job, f"job{job['num']}") for job in wf.jobs])
         for run, result in results.items():
             wf.check(f"{run} exits 0", result["rc"] == 0, result["rc"])
@@ -962,11 +962,11 @@ def scenario_never_started(wf):
     rc, text, finals = wf.collect("main", os.path.join(wf.out, "final"), ["--allow-incomplete"])
     wf.check("collect --allow-incomplete exits 3 with .PARTIAL files",
              rc == 3 and finals and all(".PARTIAL" in f for f in finals), f"{rc} {finals}")
-    c1 = wf.run_jobs([wf.job_run(job0, "c1_job0", workflow="c1")])["c1_job0"]
-    wf.check("the standard Hist fill run over job 0's chunk exits 0", c1["rc"] == 0, c1["rc"])
-    c1_pickle = os.path.join(c1["workdir"], f"histogram_{job0['num']}.pkl.gz")
+    standard_run = wf.run_jobs([wf.job_run(job0, "standard_job0", workflow="standard")])["standard_job0"]
+    wf.check("the standard Hist fill run over job 0's chunk exits 0", standard_run["rc"] == 0, standard_run["rc"])
+    standard_pickle = os.path.join(standard_run["workdir"], f"histogram_{job0['num']}.pkl.gz")
     hist_equal_2t(wf, ".PARTIAL hists equal the standard Hist fill run over job 0's chunk (order-tolerant)",
-                  [c1_pickle], finals)
+                  [standard_pickle], finals)
     check_genweight(wf, finals, [job0["workitems"]])
     return finals
 
@@ -1079,9 +1079,9 @@ def scenario_truncated(wf):
     wf.check(f"the production record says kept 1 / total {total}", f"kept 1 / total {total}" in production
              or ("\"kept\": 1" in production and f"\"total\": {total}" in production), production[:500])
     job0 = wf.jobs[0]
-    c1 = wf.run_jobs([wf.job_run(job0, "c1_job0", workflow="c1")])["c1_job0"]
+    standard_run = wf.run_jobs([wf.job_run(job0, "standard_job0", workflow="standard")])["standard_job0"]
     hist_equal_2t(wf, "hists equal a standard Hist fill run over that chunk (order-tolerant)",
-                  [os.path.join(c1["workdir"], f"histogram_{job0['num']}.pkl.gz")], finals)
+                  [os.path.join(standard_run["workdir"], f"histogram_{job0['num']}.pkl.gz")], finals)
     check_genweight(wf, finals, [job0["workitems"]])
     for name, max_chunks in (("max2", 2), ("nomax", None)):
         result = wf.run_jobs([wf.job_run(job0, f"main_job0_{name}", registry=registry, max_chunks=max_chunks)])
@@ -1094,8 +1094,8 @@ def scenario_truncated(wf):
 
 
 def cmd_run(args):
-    if args.scenario != "clean" and args.workflow != "c4":
-        raise SystemExit("scenarios need --workflow c4")
+    if args.scenario != "clean" and args.workflow != "histserv":
+        raise SystemExit("scenarios need --workflow histserv")
     if args.scenario == "truncated":
         args.max_chunks = 1
     if os.path.exists(args.out) and os.listdir(args.out):
@@ -1286,11 +1286,11 @@ def cmd_report(args):
               "|---|---|---|---|---|---|---|"]
     for name, run, _, _, rows, _ in runs:
         st = rows["stage_times"]
-        lines.append(f"| {name} | {run['merge_tool'] if run['workflow'] != 'c4' else 'collect'} | "
+        lines.append(f"| {name} | {run['merge_tool'] if run['workflow'] != 'histserv' else 'collect'} | "
                      + " | ".join(f"{st[s]:.1f}" if s in st else "-" for s in ("setup", "jobs", "merge", "collect",
                                                                               "teardown")) + " |")
     lines += ["", "## Job phase CPU-seconds", "",
-              "| run | process | fill (c4: fill+send) | weight prep | fill + weight prep | in-process merge | "
+              "| run | process | fill (histserv: fill+send) | weight prep | fill + weight prep | in-process merge | "
               "non-fill | Runner overhead | sumw | write |", "|---|---|---|---|---|---|---|---|---|---|"]
     for name, run, _, _, rows, _ in runs:
         s = rows["sums"]
@@ -1345,7 +1345,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("run", help="one workflow of one configuration, or one histserv scenario")
-    p.add_argument("--workflow", required=True, choices=("reference", "c1", "c4"))
+    p.add_argument("--workflow", required=True, choices=("reference", "standard", "histserv"))
     p.add_argument("--config", required=True, choices=sorted(CONFIGS))
     p.add_argument("--tree", required=True, help="tree under test; its src/ goes first on the jobs' PYTHONPATH")
     p.add_argument("--out", required=True, help="run directory (must be new or empty)")
@@ -1356,13 +1356,13 @@ def main(argv=None):
     p.add_argument("--eft-synthetic", action="store_true")
     p.add_argument("--eft-operators", type=int, default=0)
     p.add_argument("--scenario", default="clean", choices=SCENARIOS)
-    p.add_argument("--merge-tool", help="hist-merger.py for reference and c1 (default: --tree's, else this one's)")
+    p.add_argument("--merge-tool", help="hist-merger.py for reference and standard (default: --tree's, else this one's)")
     p.add_argument("--no-instrument", action="store_true", help="jobs install no wrapper at all")
     p.add_argument("--tag", default="bench", help="production tag")
     p.add_argument("--quiet-wait", type=float, default=0.0, help="seconds to wait for a quiet machine first (macOS)")
     p.add_argument("--warm-inputs", action="store_true", help="read the input files once before the jobs")
     p = sub.add_parser("job", help="(internal) one harness job")
-    p.add_argument("--workflow", required=True, choices=("reference", "c1", "c4"))
+    p.add_argument("--workflow", required=True, choices=("reference", "standard", "histserv"))
     p.add_argument("--config", required=True, choices=sorted(CONFIGS))
     p.add_argument("--sample", required=True, choices=sorted(SAMPLES))
     p.add_argument("--items", required=True, help="pickle of this job's WorkItems")

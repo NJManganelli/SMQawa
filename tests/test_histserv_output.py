@@ -857,7 +857,7 @@ def assert_close_hist(a, b):
 
 
 @needs(M1_FILE)
-def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
+def test_processor_histserv_equals_standard(server, tmp_path, monkeypatch):
     import uproot
     from coffea import processor
     from coffea.nanoevents import NanoAODSchema
@@ -878,9 +878,9 @@ def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
                                                                          entry_stop=item.entrystop), dtype=np.float64))
                            for item in items)
     ho.begin_job(reg, das, ho.expected_chunks(items, {M1_FILE: M1_FILE}), {M1_FILE: record})
-    c1 = runner(items, processor_instance=wzmod.wzinclusive_processor(era="2024", version="v15"))[dataset]
-    assert c1.pop(utils.KIND_KEY) == {"signal"}
-    c4_proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=das)
+    standard = runner(items, processor_instance=wzmod.wzinclusive_processor(era="2024", version="v15"))[dataset]
+    assert standard.pop(utils.KIND_KEY) == {"signal"}
+    histserv_proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=das)
     results = []
     real_send = ho.send_histogram
 
@@ -889,18 +889,18 @@ def test_processor_c4_equals_c1(server, tmp_path, monkeypatch):
         results.append(result)
         return result
     monkeypatch.setattr(ho, "send_histogram", counting)
-    assert runner(items, processor_instance=c4_proc) == {dataset: {}}
+    assert runner(items, processor_instance=histserv_proc) == {dataset: {}}
     first = list(results)
     assert ho.collect(reg, {das: [M1_FILE]}, str(tmp_path / "A"), per_entry=True) == 0
     name = pk.sample_file_stem(das) + "_histograms.pkl.gz"
     content = load(tmp_path / "A" / name)[dataset]
-    assert set(content["hist"]) == set(c1)
-    for key, h in c1.items():
+    assert set(content["hist"]) == set(standard)
+    for key, h in standard.items():
         assert content["hist"][key]._variance_known is False and h._variance_known is False
         assert_close_hist(content["hist"][key], h)
     assert np.isclose(content["sumw"], harness_sumw, rtol=1e-9, atol=0)
     results.clear()
-    assert runner(items, processor_instance=c4_proc) == {dataset: {}}
+    assert runner(items, processor_instance=histserv_proc) == {dataset: {}}
     assert ho.DUPLICATE in results and results == [ho.DUPLICATE if r == ho.SENT else r for r in first]
     assert ho.collect(reg, {das: [M1_FILE]}, str(tmp_path / "B"), per_entry=True) == 0
     with gzip.open(tmp_path / "A" / name) as first_file, gzip.open(tmp_path / "B" / name) as second_file:

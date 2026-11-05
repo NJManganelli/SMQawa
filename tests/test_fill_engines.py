@@ -66,40 +66,40 @@ def fill_with(engine, key, axes, values, labels, weight, selection, eft=False):
 
 
 @pytest.mark.parametrize("name", sorted(fill_engines.ENGINES))
-def test_engine_equals_c1(name):
+def test_engine_equals_standard(name):
     selection, weight_syst_stack, values, labels = standard_case()
     axis = helpers.axes_for("met_pt")
-    c1, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
+    standard, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                       selection)
     out, _ = fill_with(fill_engines.ENGINES[name], "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                        selection)
     assert "chEmpty" not in out.axes[0]
-    assert_close(c1, out)
+    assert_close(standard, out)
 
 
 @pytest.mark.parametrize("name", sorted(fill_engines.ENGINES))
-def test_engine_equals_c1_eft(name):
+def test_engine_equals_standard_eft(name):
     selection, weight_syst_stack, terms, eft_struct_consts, labels = helpers.eft_case()
     values = {"met_pt": helpers.make_values()["met_pt"]}
     axis = helpers.axes_for("met_pt")
     weight = utils.syst_weight_eft_struct_const(weight_syst_stack, eft_struct_consts)
-    c1, _ = fill_with(utils.fill_histogram, "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
+    standard, _ = fill_with(utils.fill_histogram, "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
     out, _ = fill_with(fill_engines.ENGINES[name], "met_pt_eft", (axis,), values, labels, weight, selection, eft=True)
-    assert np.isnan(c1.view(flow=True)["value"]).any()
-    assert_close(c1, out)
+    assert np.isnan(standard.view(flow=True)["value"]).any()
+    assert_close(standard, out)
 
 
 def test_transposed_write_back_is_detected():
     selection, weight_syst_stack, values, labels = standard_case()
     axis = helpers.axes_for("met_pt")
-    c1, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
+    standard, _ = fill_with(utils.fill_histogram, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                       selection)
     out, _ = fill_with(fill_engines.multicell, "met_pt", (axis,), values, labels, utils.syst_weight(weight_syst_stack),
                        selection)
     view = out.view(flow=True)
     view[:, :] = view[:, ::-1]
     with pytest.raises(AssertionError):
-        assert_close(c1, out)
+        assert_close(standard, out)
 
 
 def test_multicell_vs_chunkedhist():

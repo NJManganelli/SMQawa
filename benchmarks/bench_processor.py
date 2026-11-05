@@ -847,7 +847,7 @@ def print_result(res):
         print(f"variance differences: {ndiff} cells over {len(res.stats)} hists, max rel {max_rel:.3g}, "
               f"max ulp {max_ulp}")
     for rule, key, reason in res.failures:
-        print(f"FAIL rule {rule}: {key}: {reason}")
+        print(f"FAIL {rule}: {key}: {reason}")
     print("PASS" if res.passed else f"FAIL ({len(res.failures)} failures)")
 
 
@@ -1440,8 +1440,8 @@ SCALE_DESCRIPTIONS = {
 MEMORY_REFERENCE_MB = 256.0
 FILL_REFERENCE_RATIO = 1.25
 PROTOTYPE_FILL_SECONDS = {"A1": 15.9, "A2": 13.47, "A3": 1.56, "A4": 10.11, "A5": 2.13, "E1": 82.8}
-PHASE_A_REFERENCE_PEAK_MB = {"A1": 2813, "A2": 2707, "A3": 1185, "A4": 5301, "A5": 1517, "E1": 3869}
-PHASE_A_SPREAD_CONFIGS = ("A2", "A4", "E1")
+PROTOTYPE_REFERENCE_PEAK_MB = {"A1": 2813, "A2": 2707, "A3": 1185, "A4": 5301, "A5": 1517, "E1": 3869}
+PROTOTYPE_SPREAD_CONFIGS = ("A2", "A4", "E1")
 SAMPLING_BAND_MB = (192.0, 320.0)
 OTHER_PROCESS_RISE_MB = 1024.0
 OTHERS_INTERVAL = 5.0
@@ -1526,7 +1526,7 @@ def not_quiet_reasons(name, state, older):
         reasons.append(f"swapouts not yet observed over {QUIET_SWAPOUT_WINDOW:.0f} s")
     elif state["swapouts"] != older["swapouts"]:
         reasons.append(f"swapouts rose by {state['swapouts'] - older['swapouts']} pages")
-    need = PHASE_A_REFERENCE_PEAK_MB.get(name, 0.0) + QUIET_AVAILABLE_MARGIN_MB
+    need = PROTOTYPE_REFERENCE_PEAK_MB.get(name, 0.0) + QUIET_AVAILABLE_MARGIN_MB
     if state["available_mb"] < need:
         reasons.append(f"available memory {state['available_mb']:.0f} MB < {need:.0f} MB")
     return reasons
@@ -1878,7 +1878,7 @@ def cmd_report(args):
                      f"{delta:+.0f} MB (reference line +{MEMORY_REFERENCE_MB:.0f} MB). "
                      f"Recommendation: HTCondor request_memory >= {1.2 * max(standard_mems):.0f} MB "
                      f"(measured standard Hist fill peak {max(standard_mems):.0f} MB + 20 %).")
-        if (SAMPLING_BAND_MB[0] <= delta <= SAMPLING_BAND_MB[1] or name in PHASE_A_SPREAD_CONFIGS) \
+        if (SAMPLING_BAND_MB[0] <= delta <= SAMPLING_BAND_MB[1] or name in PROTOTYPE_SPREAD_CONFIGS) \
                 and (len(ref) < 3 or len(standard) < 3):
             lines.append("  sampling rule: two more samples of each variant")
         proto = PROTOTYPE_FILL_SECONDS.get(name)

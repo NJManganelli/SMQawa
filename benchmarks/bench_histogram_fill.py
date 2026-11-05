@@ -37,7 +37,7 @@ wzinclusive_processor.process_shift (src/qawa/process/wztau2lnu_inclusive.py, br
 wz_fill_optimization at f40514c), plus one channel that selects no event. Values include NaN and
 under/overflow entries; weights include NaN and +-inf.
 
-Strategies: c1, every fill_engines.ENGINES entry, chunked_persistent (one ChunkedHist per target,
+Strategies: standard, every fill_engines.ENGINES entry, chunked_persistent (one ChunkedHist per target,
 kept across chunks and passes, one to_hist() at the end) and multicell_growth (a MultiCell target
 with a growing channel axis, which shows the boost-histogram growth-resize bug).
 
@@ -207,7 +207,7 @@ def multicell_growth(histos, key, values, labels, weight, channel_selections):
     histos[key] = output
 
 
-STRATEGIES = dict({"c1": utils.fill_histogram}, **fill_engines.ENGINES, chunked_persistent=None,
+STRATEGIES = dict({"standard": utils.fill_histogram}, **fill_engines.ENGINES, chunked_persistent=None,
                   multicell_growth=multicell_growth)
 
 
@@ -314,7 +314,7 @@ def bench_shape(shape, args, axes):
             run = run_strategy(name, shape, axes, args.events, args.chunks)
             if best is None or run["fill"] < best["fill"]:
                 best = run
-        if name == "c1":
+        if name == "standard":
             reference = best
         row = {
             "fill_seconds": best["fill"],
