@@ -10,6 +10,7 @@ from coffea.lookup_tools import dense_lookup
 from coffea.lookup_tools import dense_lookup
 from coffea.lookup_tools.correctionlib_wrapper import correctionlib_wrapper
 from coffea.analysis_tools import Weights
+from coffea.util import coffea_console
 
 import awkward as ak
 import numpy as np
@@ -58,7 +59,12 @@ class BTVCorrector:
         if eff_path.exists():
             with gzip.open(eff_path, 'rb') as ifile:
                 self.eff_hist = pickle.loads(ifile.read())
-    
+            # Run 2 UL efficiencies only contain deepJet; skip them for other taggers (e.g. UParTAK4 in Run 2 NanoAODv15)
+            if self._tagger not in list(self.eff_hist.axes['tagger']):
+                coffea_console.print(f"[BTVCorrector] no {self._tagger} efficiencies in {eff_path}, skipping efficiency lookup", markup=False)
+                self.eff_hist = None
+
+        if self.eff_hist is not None:
             b_tag = self.eff_hist[{'tagger':self._tagger, 'WP': wp, 'passWP': 1  }].values()
             b_all = self.eff_hist[{'tagger':self._tagger, 'WP': wp, 'passWP': sum}].values()
     

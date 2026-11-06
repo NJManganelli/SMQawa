@@ -29,6 +29,7 @@ from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
 from qawa.btag import BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
+from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
@@ -258,7 +259,7 @@ def build_leptons(muons, electrons, nanoAODversion="v9", analysisID="inc-WZ-base
             assert leptonIDs["electronID"] == "wp90iso"
         elif nanoAODversion == "v15":
             assert leptonIDs["muonID"] == "Tight"
-            assert leptonIDs["muonISO"] == "TightPFIso"
+            assert leptonIDs["muonISO"] in ["TightRelIso", "TightPFIso"]
             assert leptonIDs["electronID"] == "wp90iso"
         else:
             raise NotImplementedError
@@ -534,7 +535,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         jec_tag = ''
         jer_tag = ''
         jetveto_tag = None
-        if len(run_period)==0:
+        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
+            # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
+            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
+            jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
+        elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
                     jec_tag = 'Summer19UL16APV_V7_MC'
@@ -549,9 +554,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = 'Summer19UL18_V5_MC'
                 jer_tag = 'Summer19UL18_JRV2_MC'
             elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V2'
-                # JER payload as shipped in the 2024 jet_jerc.json.gz (borrowed from 2023BPix RunD)
-                jer_tag = 'Summer23BPixPrompt23_RunD_JRV1' #FIXME, temporary until new 2024 JER tag available in jsons (borrowed from Summer23BPix RunD)
+                jec_tag = 'Summer24Prompt24_V5'
+                jer_tag = 'Summer24Prompt24_JRV2'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
@@ -572,19 +576,20 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
             elif self._era == '2024':
                 # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
-                jec_tag = 'Summer24Prompt24_V2'
+                jec_tag = 'Summer24Prompt24_V5'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
             elif self._era in ["2022", "2023", "2025"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        
+        self._use_clib_jme = self._era == "2024" or self._ver == "v15"
+
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
         self.jetPU_wp = 'M'
         self.electronID = "wp90iso"
         self.muonID = "Tight"
-        self.muonISO = "TightRelIso" if self._ver in [f"v{V}" for V in range(12)] else "TightPFIso"
+        self.muonISO = "TightRelIso" if self._era in ["2016", "2017", "2018"] else "TightPFIso"
         self.tauIDvsjet_wp = 'VTight' #This wp refers to the vtight tau we are selecting but it will be overwritten by VTigh and Loose wp for the Vtight and Loose tau SF in the tau_SF.py
         self.tauIDvse_wp = 'Tight'
         # Run 2 and 2024 (Run 3?)doesn't have VTight in SFs so fall back to Tight in the lookup alone, for if vse WP is nominally set to VTight above
@@ -600,11 +605,8 @@ class wzinclusive_processor(processor.ProcessorABC):
                 raise ValueError(reason)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
-        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._era == "2024" else None, version=self._ver) 
-        try:
-            self._jetid = self.clibhandler.getCorrectionSet("jetid")
-        except KeyError as ke:
-            self._jetid = None
+        self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver, isAPV=self._isAPV)
+        self._jetid = JetID(self._era, self._ver, self.clibhandler)
         self._purw = pileup_weights(era=self._era, clibhandler=self.clibhandler, clibkey=None) #auto key mode until we find a case that doesn't work
         self._leSF = LeptonScaleFactors(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
                                         electronID=self.electronID, muonID=self.muonID, muonISO=self.muonISO)
@@ -614,7 +616,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             #FIXME: might still need with AK4PUPPI
             self._jpSF = None
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
-                                       isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+                                       isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler, nanoAODversion=self._ver)
         
         _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
         self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
@@ -2169,25 +2171,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                 chunk_entries = len(event)
 
         if "jetId" not in event.Jet.fields:
-            if self._ver in [f"v{V}" for V in range(12)]:
-                jet_type = "AK4CHS"
-            else:
-                jet_type = "AK4PUPPI"
-            # Match 2017-2018 encoding, no Loose bit active, with following inputs
-            jet_args = (event.Jet.eta,                                      # ('eta', 'real', 'pseudorapidity of the jet')
-                        event.Jet.chHEF,                                    # ('chHEF', 'real', 'charged Hadron Energy Fraction')
-                        event.Jet.neHEF,                                    # ('neHEF', 'real', 'neutral Hadron Energy Fraction')
-                        event.Jet.chEmEF,                                   # ('chEmEF', 'real', 'charged Electromagnetic Energy Fraction')
-                        event.Jet.neEmEF,                                   # ('neEmEF', 'real', 'neutral Electromagnetic Energy Fraction')
-                        event.Jet.muEF,                                     # ('muEF', 'real', 'muon Energy Fraction')
-                        event.Jet.chMultiplicity,                           # ('chMultiplicity', 'int', 'charged Multiplicity')
-                        event.Jet.neMultiplicity,                           # ('neMultiplicity', 'int', 'neutral Multiplicity')
-                        event.Jet.chMultiplicity + event.Jet.neMultiplicity # ('multiplicity', 'int', 'charged Multiplicity + neutral Multiplicity')]
-                        )
-            event["Jet", "jetId"] = (
-                4 * self._jetid[f"{jet_type}_TightLeptonVeto"].evaluate(*jet_args) + 
-                2 * self._jetid[f"{jet_type}_Tight"].evaluate(*jet_args)
-                )
+            event["Jet", "jetId"] = self._jetid(event.Jet)
 
         # JES/JER corrections
         Rho = event.Rho.fixedGridRhoFastjetAll if "Rho" in event.fields else event.fixedGridRhoFastjetAll # if self._ver in [f"v{V}" for V in range(12)]

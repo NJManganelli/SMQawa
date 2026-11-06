@@ -7,13 +7,18 @@ from coffea.jetmet_tools import JetCorrectionUncertainty
 from coffea.jetmet_tools import JetResolutionScaleFactor
 from coffea.jetmet_tools import CorrectedJetsFactory
 from coffea.jetmet_tools import CorrectedMETFactory
-from coffea.jetmet_tools import CorrectionLibJEC, CorrectionLibJUNC, CorrectionLibJECStack
+from coffea.jetmet_tools import CorrectionLibJEC, CorrectionLibJUNC, CorrectionLibJECStack, CorrectionLibJERSF
 
 from coffea.lookup_tools import dense_lookup
 from coffea.util import coffea_console
 import awkward as ak
 import numpy as np
 import os
+import inspect
+
+if 'uncertainty' not in inspect.signature(CorrectionLibJERSF).parameters:
+    raise ImportError("qawa.jme needs coffea's CorrectionLibJERSF with the 'uncertainty' parameter: install coffea at "
+                      "commit f11301a or later from scikit-hep/coffea master, in editable mode (pip install -e)")
 
 
 jec_name_map = {
@@ -73,7 +78,13 @@ JETMET_RUN3_MITIGATIONS = {
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
-JER_RESOLUTION_RHO_MAX = {"Summer23BPixPrompt23_RunD_JRV1": 52.05}
+JER_RESOLUTION_RHO_MAX = {
+    "Summer24Prompt24_JRV2": 200.0,
+    "Summer20UL16APV_JRV5": 90.0,
+    "Summer20UL16_JRV5": 90.0,
+    "Summer19UL17_JRV4": 90.0,
+    "Summer19UL18_JRV3": 90.0,
+}
 
 def jetmet_mitigations(era):
     return JETMET_RUN3_MITIGATIONS.get(era, NO_MITIGATIONS)
@@ -162,12 +173,12 @@ def jersmear_factors(pt_jec, eta, rho, event_id, pt_gen, jer, jersf, jer_smear, 
     matched = (pt_gen > 0) & (np.abs((pt_jec - pt_gen) / pt_jec) < 3 * window)
     values['GenPt'] = ak.where(matched, pt_gen, -1.0)
     unsmeared = abs_eta_in_regions(eta, genmatched_only_eta) & ~matched
+    scale_factors = ak.unflatten(jersf.getScaleFactor(**{name: ak.flatten(values[name]) for name in jersf.signature}), ak.num(pt_jec))
     smear = {}
-    for variation in ('nom', 'up', 'down'):
-        values['systematic'] = variation
-        values['JERSF'] = evaluate(jersf, values)
+    for column, variation in enumerate(('nom', 'up', 'down')):
+        values['JERSF'] = scale_factors[:, :, column]
         factor = evaluate(jer_smear, values)
-        smear[variation] = ak.where(unsmeared | ~((factor > 0) & np.isfinite(factor)), 1.0, factor)
+        smear[variation] = ak.where(unsmeared, 1.0, factor)
     return values['JER'], smear
 
 def jersmear_jets(injets, jets, event_id, jer, jersf, jer_smear, jes_sources, genmatched_only_eta):
@@ -227,11 +238,12 @@ class JMEUncertainty:
             doJER: bool = True,
             clibhandler = None,
             version: str = "v9",
+            isAPV: bool = False,
     ):
         if clibhandler is not None:
             self.__init_clib__(jec_tag=jec_tag,
                                jer_tag=jer_tag,
-                               era=era,
+                               era=f"{era}APV" if isAPV else era,
                                is_mc=is_mc,
                                doJER=doJER,
                                clibhandler=clibhandler,
@@ -361,8 +373,9 @@ class JMEUncertainty:
         jec_L1 = CorrectionLibJEC(cset[f"{jec_tag}_{data_type}_L1FastJet_{jet_type}"])
         # Regrouped set of uncertainties
         if is_mc:
+            # field names follow the processor's year suffix (_2016), payload names the APV era (_2016APV)
             sources = {
-                name: cset[f"{jec_tag}_MC_Regrouped_{name}_{jet_type}"]
+                name.replace("2016APV", "2016"): cset[f"{jec_tag}_MC_Regrouped_{name}_{jet_type}"]
                 for name in [
                     "Total",
                     "Absolute",
@@ -389,9 +402,11 @@ class JMEUncertainty:
             smear_cset = clibhandler.getCorrectionSet("jer_smear")
             if smear_cset is None:
                 raise ValueError(f"jer_smear correction set could not be loaded from {str(clibhandler.getPath('jer_smear'))}")
+            jersf = cset[f"{jer_tag}_MC_ScaleFactor_{jet_type}"]
+            jersf_uncertainty = None if 'systematic' in [inp.name for inp in jersf.inputs] else cset[f"{jer_tag}_MC_SFUncertainty_{jet_type}"]
             self.jer_smear = (
                 cset[f"{jer_tag}_MC_PtResolution_{jet_type}"],
-                cset[f"{jer_tag}_MC_ScaleFactor_{jet_type}"],
+                CorrectionLibJERSF(jersf, uncertainty=jersf_uncertainty),
                 smear_cset["JERSmear"],
                 sources,
                 mitigations['jer_genmatched_only_eta'],

@@ -111,13 +111,14 @@ install_env() {
   source \$INSTALL_LOC.env/bin/activate
   unlink \$INSTALL_LOC.env/lib64  # HTCondor can't transfer symlink to directory and it appears optional
   cd \${INSTALL_LOC}
-  # if [ ! -d "coffea" ]; then
-  #   echo "Cloning coffea for editable install"
-  #   git clone -b smqawa-wz2ltaunu http://github.com/NJManganelli/coffea.git
-  # fi
-  # cd coffea
-  # \$INSTALL_LOC.env/bin/python -m pip install -e .
-  # cd ..
+  if [ ! -d "coffea" ]; then
+    echo "Cloning coffea for editable install"
+    git clone https://github.com/scikit-hep/coffea.git
+    git -C coffea checkout 4abe6016fac857469e80ae249307ebee4674efe0
+  fi
+  cd coffea
+  \$INSTALL_LOC.env/bin/python -m pip install --no-deps -e .
+  cd ..
   cd SMQawa
   \$INSTALL_LOC.env/bin/python -m pip install -e .
   cd ..
@@ -197,13 +198,14 @@ install_env() {
   source \$INSTALL_LOC.env/bin/activate
   unlink \$INSTALL_LOC.env/lib64  # HTCondor can't transfer symlink to directory and it appears optional
   cd \${INSTALL_LOC}
-  # if [ ! -d "coffea" ]; then
-  #   echo "Cloning coffea for editable install"
-  #   git clone -b smqawa-wz2ltaunu http://github.com/NJManganelli/coffea.git
-  # fi
-  # cd coffea
-  # \$INSTALL_LOC.env/bin/python -m pip install -e .
-  # cd ..
+  if [ ! -d "coffea" ]; then
+    echo "Cloning coffea for editable install"
+    git clone https://github.com/scikit-hep/coffea.git
+    git -C coffea checkout 4abe6016fac857469e80ae249307ebee4674efe0
+  fi
+  cd coffea
+  \$INSTALL_LOC.env/bin/python -m pip install --no-deps -e .
+  cd ..
   cd SMQawa
   \$INSTALL_LOC.env/bin/python -m pip install -e .
   cd ..
