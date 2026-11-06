@@ -268,6 +268,7 @@ class CorrectionlibHandler:
         self._paths["electron_smear_random"] = _QAWA_DATA / "egm" / "electron_smear_random.json"
         self._paths["muon_smear_random"] = _QAWA_DATA / "muo" / "muon_smear_random.json"
         if analysis == "inc-WZ":
+            run2_dddy = _QAWA_DATA / "dd" / "Run2" / ("WZ_inclusive_data_driven_Run2_v15.json" if self._ver == "v15" else "WZ_inclusive_data_driven_Run2.json")
             match self._era:
                 case "2024":
                     # PLACEHOLDER - once Run 3 dddy (2024 only to start with) is derived, replace with Run3/...Run3.json
@@ -281,13 +282,13 @@ class CorrectionlibHandler:
                 # legacy lookup. Uncomment a case to route that era through the
                 # correctionlib path in wztau2lnu_inclusive._add_trigger_sf.
                 case "2016":
-                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
+                    self._paths["dddy"] = run2_dddy
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2016.json")
                 case "2017":
-                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
+                    self._paths["dddy"] = run2_dddy
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2017.json")
                 case "2018":
-                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run2" / "WZ_inclusive_data_driven_Run2.json"
+                    self._paths["dddy"] = run2_dddy
                 #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2018.json")
                 case _:
                     pass
