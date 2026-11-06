@@ -170,13 +170,9 @@ def trigger_rules(event, rules:dict, era:str='2018', isMC: bool = False):
     if isMC:
         ds_name = 'MC'
     else:
-        _ds = event.metadata['dataset']
-        ds_name = ''
-        for s in ds_names_[era]:
-            if s in _ds:
-                ds_name = s
-                break
-        
+        stream = re.split('[_/]', event.metadata['dataset'])[0].rstrip('0123456789')
+        ds_name = stream if stream in ds_names_[era] else ''
+
     key = f'Run{era}.{ds_name}'
     if key not in rules:
         raise KeyError(
