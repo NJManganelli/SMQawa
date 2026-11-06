@@ -46,6 +46,13 @@ TXT_MC_TAG = "Summer24Prompt24_V3_MC"
 TXT_JER_TAG = "Summer24Prompt24_JRV1_MC"
 JET_TYPE = "AK4PFPuppi"
 VARIATIONS = ("nom", "up", "down")
+JER_TAG_ERAS = {
+    "Summer24Prompt24_JRV2": ("2024", False),
+    "Summer20UL16APV_JRV5": ("2016", True),
+    "Summer20UL16_JRV5": ("2016", False),
+    "Summer19UL17_JRV4": ("2017", False),
+    "Summer19UL18_JRV3": ("2018", False),
+}
 
 HE_IND = ((2.5, 3.0),)
 FLOOR_ETA_IND = ((2.0, 2.5),)
@@ -110,16 +117,19 @@ def smear_corr():
     return correctionlib.CorrectionSet.from_file(str(handler().getPath("jer_smear")))["JERSmear"]
 
 
-@functools.lru_cache(maxsize=None)
-def rho_max_ind():
-    with gzip.open(str(handler().getPath("jet_jerc")), "rt") as f:
+def payload_rho_edges(jerc_path, jer_tag):
+    with gzip.open(str(jerc_path), "rt") as f:
         payload = json.load(f)
-    data = [c for c in payload["corrections"] if c["name"] == f"{JER_TAG}_MC_PtResolution_{JET_TYPE}"][0]["data"]
+    data = [c for c in payload["corrections"] if c["name"] == f"{jer_tag}_MC_PtResolution_{JET_TYPE}"][0]["data"]
     assert data["input"] == "JetEta", f"unexpected PtResolution layout: {data['input']}"
     assert all(n["input"] == "Rho" for n in data["content"]), "PtResolution eta bins are not Rho binnings"
-    edges = {n["edges"][-1] for n in data["content"]}
-    assert edges == {JER_RESOLUTION_RHO_MAX[JER_TAG]}, f"upper Rho edges {edges}"
-    return np.nextafter(JER_RESOLUTION_RHO_MAX[JER_TAG], -np.inf)
+    return {n["edges"][-1] for n in data["content"]}
+
+
+@functools.lru_cache(maxsize=None)
+def rho_max_ind():
+    (edge,) = payload_rho_edges(handler().getPath("jet_jerc"), JER_TAG)
+    return np.nextafter(edge, -np.inf)
 
 
 @functools.lru_cache(maxsize=None)
@@ -485,6 +495,15 @@ def test_nib_table_matches_payload():
     pos = [desc.find(n[0]) for n in NIBS]
     assert all(p >= 0 for p in pos), f"nib names missing from description: {desc}"
     assert pos == sorted(pos), f"nib names out of order in description: {desc}"
+
+
+@pytest.mark.parametrize("jer_tag", sorted(JER_RESOLUTION_RHO_MAX))
+def test_rho_clamp_matches_payload(jer_tag):
+    era, is_apv = JER_TAG_ERAS[jer_tag]
+    jerc_path = CorrectionlibHandler(era=era, isAPV=is_apv, analysis="inc-WZ", nanoAODversion="v15").getPath("jet_jerc", fallbackNone=True)
+    if jerc_path is None or not Path(jerc_path).exists():
+        pytest.skip(f"jet_jerc payload for {jer_tag} unavailable")
+    assert payload_rho_edges(jerc_path, jer_tag) == {JER_RESOLUTION_RHO_MAX[jer_tag]}
 
 
 def test_mc_jec_matches_txt():
