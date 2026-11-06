@@ -12,6 +12,7 @@ import qawa
 import qawa.egammaSS
 import qawa.process.wztau2lnu_inclusive as wzproc
 from qawa.jsoncorrections import CorrectionlibHandler
+from conftest import CVMFS_HEAD, STORE, input_path, require_input
 
 expected_root = os.environ.get("QAWA_EXPECTED_ROOT")
 if expected_root and not os.path.realpath(qawa.__file__).startswith(os.path.realpath(expected_root)):
@@ -20,11 +21,8 @@ if expected_root and not os.path.realpath(qawa.__file__).startswith(os.path.real
 warnings.filterwarnings("ignore")
 NanoAODSchema.warn_missing_crossrefs = False
 
-MC = "/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/DYto2E-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v3/110000/test.root"
-DATA = "/Users/nmangane/vz-main/SMQawaTestFiles/store/data/Run2024G/EGamma0/NANOAOD/MINIv6NANOv15-v2/120000/test.root"
-
-needs_mc = pytest.mark.skipif(not os.path.exists(MC), reason=f"missing {MC}")
-needs_data = pytest.mark.skipif(not os.path.exists(DATA), reason=f"missing {DATA}")
+MC, needs_mc = input_path(STORE, "mc/RunIII2024Summer24NanoAODv15/DYto2E-2Jets_Bin-1J-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v3/110000/test.root")
+DATA, needs_data = input_path(STORE, "data/Run2024G/EGamma0/NANOAOD/MINIv6NANOv15-v2/120000/test.root")
 
 V15_ERAS = [("2016", True), ("2016", False), ("2017", False), ("2018", False), ("2024", False), ("2025", False)]
 MC_FIELDS = ["pt", "energyErr", "pt_smear_up", "pt_smear_down", "pt_scale_up", "pt_scale_down",
@@ -81,6 +79,7 @@ def hash_z(handler, ref):
 
 @pytest.fixture(scope="module")
 def handler():
+    require_input(CVMFS_HEAD)
     return CorrectionlibHandler(era="2024", subera=None, analysis="inc-WZ", nanoAODversion="v15", cvmfs_head="/cvmfs/")
 
 
@@ -95,6 +94,7 @@ def data_events():
 
 
 def test_payload():
+    require_input(CVMFS_HEAD)
     met = 0
     for era, is_apv in V15_ERAS:
         h = CorrectionlibHandler(era=era, subera=None, isAPV=is_apv, analysis="inc-WZ", nanoAODversion="v15", cvmfs_head="/cvmfs/")
@@ -347,12 +347,13 @@ def test_empty(handler, mc_events):
 
 
 def run_processor(events, run_period):
+    require_input(CVMFS_HEAD)
     p = wzproc.wzinclusive_processor(era="2024", run_period=run_period, version="v15")
     seen = {}
 
     def record(event, shift_name=""):
         seen[shift_name] = event
-        return {}
+        return {event.metadata["dataset"]: {}}
 
     p.process_shift = record
     p.process(events)

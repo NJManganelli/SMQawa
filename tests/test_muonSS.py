@@ -15,6 +15,7 @@ from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
 import qawa
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.muonSS import muon_pt_scare
+from conftest import CVMFS_HEAD, STORE, input_path, require_input
 
 expected_root = os.environ.get("QAWA_EXPECTED_ROOT")
 if expected_root and not os.path.realpath(qawa.__file__).startswith(os.path.realpath(expected_root)):
@@ -23,11 +24,8 @@ if expected_root and not os.path.realpath(qawa.__file__).startswith(os.path.real
 warnings.filterwarnings("ignore")
 NanoAODSchema.warn_missing_crossrefs = False
 
-MUMC = "/Volumes/WDMac/SMQawaTestFiles/store/mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root"
-MUDATA = "/Volumes/WDMac/SMQawaTestFiles/store/data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root"
-
-needs_mc = pytest.mark.skipif(not os.path.exists(MUMC), reason=f"missing {MUMC}")
-needs_data = pytest.mark.skipif(not os.path.exists(MUDATA), reason=f"missing {MUDATA}")
+MUMC, needs_mc = input_path(STORE, "mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
+MUDATA, needs_data = input_path(STORE, "data/Run2024C/Muon0/NANOAOD/MINIv6NANOv15-v1/2530000/test.root")
 
 HANDLER_ERAS = [("2016", True, "v15"), ("2016", False, "v15"), ("2017", False, "v15"), ("2018", False, "v15"),
                 ("2024", False, "v15"), ("2025", False, "v15"), ("2018", False, "v9")]
@@ -88,6 +86,7 @@ def muon_arrays(muon):
 
 @pytest.fixture(scope="module")
 def handler():
+    require_input(CVMFS_HEAD)
     return CorrectionlibHandler(era="2024", subera=None, analysis="inc-WZ", nanoAODversion="v15", cvmfs_head="/cvmfs/")
 
 
@@ -102,6 +101,7 @@ def mudata_events():
 
 
 def test_mu_payload():
+    require_input(CVMFS_HEAD)
     with_scalesmearing = 0
     for era, is_apv, version in HANDLER_ERAS:
         h = CorrectionlibHandler(era=era, subera=None, isAPV=is_apv, analysis="inc-WZ", nanoAODversion=version, cvmfs_head="/cvmfs/")

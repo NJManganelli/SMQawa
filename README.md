@@ -32,6 +32,17 @@ cd SMQawa
 python brewer-remote-inclusive.py --isMC=1 --era=2018 --infile=/store/mc/RunIISummer20UL16NanoAODAPVv9/DYJetsToLL_0J_TuneCP5_13TeV-amcatnloFXFX-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_preVFP_v11-v1/130000/9FBF4AF1-D77E-4648-916B-097401C9544B.root --executor=IterativeExecutor --copyInput
 ```
 
+
+## Running tests
+```bash
+cd SMQawa
+python -m pytest tests
+```
+Tests whose input files are missing are skipped. Input locations are set by environment variables:
+`QAWA_TEST_STORE` is the root of a `store/...` tree of test NanoAOD files (default `../SMQawaTestFiles/store`, next to the SMQawa checkout),
+`QAWA_TEST_DATA` is the directory holding loose test files such as `DoubleMuon_UL2018_NanoAODv9.root` (default: the SMQawa checkout),
+and `QAWA_CVMFS_HEAD` is a local cvmfs mirror used by `CorrectionlibHandler` when `/cvmfs` is not available (tests default to `/cvmfs`).
+
 ## Merging histograms
 ```bash
 python hist-merger.py --dir <dir with jobs_<tag>_<era>_*> -t <tag> --era <era> --outdir <out>
@@ -57,3 +68,4 @@ failure during the final renames can leave a mix of old and new files, and the m
 datasets never replaces an existing file. On a terminal the merger shows its progress per directory, file and chunk
 and the memory of all its processes; `--noProgress` turns this off, and it is off in batch logs. Every run ends with
 a line giving the elapsed time and the peak memory (RSS) of the main process and of the largest worker.
+
