@@ -19,24 +19,28 @@ _runIII_v15_pogs_tags_pogtags_csets = (
     ("DC", "Collisions24", "2026-08-04", "Cert_Collisions2024_378981_386951_Golden.json"),
     ("DC", "Collisions25", "2026-07-30", "Cert_Collisions2025_391658_398903_Golden.json"),
     ("LUM", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-04-15", "puWeights_BCDEFGHI.json.gz"),
+    ("LUM", "Run3-25Prompt-Summer24-NanoAODv15", "2026-06-05", "puWeights_2025pp_Golden_Summer24_25ns_69200ub.json.gz"),
 
     ("BTV", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-10-20", "btagging.json.gz"),
     ("BTV", "Run3-25Prompt-Summer24-NanoAODv15", "2026-10-14", "btagging.json.gz"),
 
-    # MISSING: met_xyCorrections, 2025 jetid, ...
+    # MISSING: met_xyCorrections, ...
     ("JME", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-07-16", "fatJet_jerc.json.gz"),
     ("JME", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-07-16", "jet_jerc.json.gz"),
     ("JME", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-07-16", "jetid.json.gz"),
     ("JME", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-07-16", "jetvetomaps.json.gz"),
-    ("JME", "Run3-25Prompt-Winter25-NanoAODv15", "2026-06-05", "fatJet_jerc.json.gz"),
-    ("JME", "Run3-25Prompt-Winter25-NanoAODv15", "2026-06-05", "jet_jerc.json.gz"),
-    ("JME", "Run3-25Prompt-Winter25-NanoAODv15", "2026-06-05", "jetvetomaps.json.gz"),
+    ("JME", "Run3-25Prompt-Summer24-NanoAODv15", "2026-07-16", "fatJet_jerc.json.gz"),
+    ("JME", "Run3-25Prompt-Summer24-NanoAODv15", "2026-07-16", "jet_jerc.json.gz"),
+    ("JME", "Run3-25Prompt-Summer24-NanoAODv15", "2026-07-16", "jetid.json.gz"),
+    ("JME", "Run3-25Prompt-Summer24-NanoAODv15", "2026-07-16", "jetvetomaps.json.gz"),
 
 
     ("EGM", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2025-12-15", "electron.json.gz"),
     ("EGM", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2025-12-15", "photon.json.gz"),
     ("EGM", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2025-12-15", "electronSS_EtDependent.json.gz"),
     ("EGM", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2025-12-15", "photonSS_EtDependent.json.gz"),    
+    ("EGM", "Run3-25Prompt-Summer24-NanoAODv15", "2026-06-26", "electron.json.gz"),
+    ("EGM", "Run3-25Prompt-Summer24-NanoAODv15", "2026-06-26", "photon.json.gz"),
     ("EGM", "Run3-25Prompt-Summer24-NanoAODv15", "2026-06-26", "electronSS_EtDependent.json.gz"),
     ("EGM", "Run3-25Prompt-Summer24-NanoAODv15", "2026-06-26", "photonSS_EtDependent.json.gz"),
 
@@ -45,10 +49,12 @@ _runIII_v15_pogs_tags_pogtags_csets = (
     ("MUO", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-06-18", "muon_JPsi.json.gz"),
     ("MUO", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-06-18", "muon_Z.json.gz"),
     ("MUO", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-06-18", "muon_scalesmearing.json.gz"),
-    # ("MUO", "Run3-25Prompt-Summer24-NanoAODv15", "2026-04-13", "muon_HighPt.json.gz"),
-    # ("MUO", "Run3-25Prompt-Summer24-NanoAODv15", "2026-04-13", "muon_Z.json.gz"), # Causes a crash in correctionlib 2.7.0, not likely fixed in 2.8.0 but perhaps...
+    ("MUO", "Run3-25Prompt-Summer24-NanoAODv15", "2026-10-27", "muon_JPsi.json.gz"),
+    ("MUO", "Run3-25Prompt-Summer24-NanoAODv15", "2026-10-27", "muon_Z.json.gz"),
+    ("MUO", "Run3-25Prompt-Summer24-NanoAODv15", "2026-10-27", "muon_scalesmearing.json.gz"),
 
     ("TAU", "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15", "2026-01-14", "tau.json.gz"),
+    ("TAU", "Run3-25Prompt-Summer24-NanoAODv15", "2026-08-05", "tau.json.gz"),
 )
 _runII_v15_pogs_tags_pogtags_csets = (
     ("LUM", "Run2-2016postVFP-UL-NanoAODv9", "2021-09-10", "puWeights.json.gz"),
@@ -272,6 +278,10 @@ class CorrectionlibHandler:
             match self._era:
                 case "2024":
                     # PLACEHOLDER - once Run 3 dddy (2024 only to start with) is derived, replace with Run3/...Run3.json
+                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run3" / "WZ_inclusive_data_driven_Run3.json"
+                    self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
+                case "2025":
+                    # PLACEHOLDER - the 2024 data-driven estimate and trigger SFs stand in for 2025
                     self._paths["dddy"] = _QAWA_DATA / "dd" / "Run3" / "WZ_inclusive_data_driven_Run3.json"
                     self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
                 # Correctionlib conversions of the legacy ROOT trigger SFs
