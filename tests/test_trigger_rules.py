@@ -41,6 +41,11 @@ DATASETS = {
         'EGamma': ['EGamma0_Run2024G-MINIv6NANOv15-v2', 'EGamma1_Run2024D-MINIv6NANOv15-v1', 'EGamma1'],
         'MuonEG': ['MuonEG_Run2024C-MINIv6NANOv15-v1', 'MuonEG_Run2024I-MINIv6NANOv15-v1', 'MuonEG'],
     },
+    '2025': {
+        'Muon': ['Muon0_Run2025C', 'Muon1_Run2025G-PromptReco-v1', 'Muon0'],
+        'EGamma': ['EGamma0_Run2025D-PromptReco-v1', 'EGamma1_Run2025F', 'EGamma1'],
+        'MuonEG': ['MuonEG_Run2025C-PromptReco-v1', 'MuonEG_Run2025G', 'MuonEG'],
+    },
 }
 
 

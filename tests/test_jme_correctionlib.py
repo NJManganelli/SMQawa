@@ -48,6 +48,7 @@ JET_TYPE = "AK4PFPuppi"
 VARIATIONS = ("nom", "up", "down")
 JER_TAG_ERAS = {
     "Summer24Prompt24_JRV2": ("2024", False),
+    "Summer24Prompt25_JRV2": ("2025", False),
     "Summer20UL16APV_JRV5": ("2016", True),
     "Summer20UL16_JRV5": ("2016", False),
     "Summer19UL17_JRV4": ("2017", False),
