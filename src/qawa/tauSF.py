@@ -236,7 +236,7 @@ class tauIDScaleFactors:
         self.vsjet_wp = original_WP
 
         vtight_vsjet_nom = ak.fill_none(vtight_vsjet_nom, 1.0)
-        tight_vsjet_nom = ak.fill_none(vtight_vsjet_nom, 1.0)
+        tight_vsjet_nom = ak.fill_none(tight_vsjet_nom, 1.0)
         loose_vsjet_nom = ak.fill_none(loose_vsjet_nom, 1.0)
 
         sf_vsjet_nom = ak.where(mask_vtight, vtight_vsjet_nom, ak.where(mask_tight, tight_vsjet_nom, loose_vsjet_nom))
@@ -252,8 +252,8 @@ class tauIDScaleFactors:
         vtight_vsjet_up  = ak.fill_none(vtight_vsjet_up , 1.0)
         vtight_vsjet_dn  = ak.fill_none(vtight_vsjet_dn , 1.0)
 
-        tight_vsjet_up  = ak.fill_none(vtight_vsjet_up , 1.0)
-        tight_vsjet_dn  = ak.fill_none(vtight_vsjet_dn , 1.0)
+        tight_vsjet_up  = ak.fill_none(tight_vsjet_up , 1.0)
+        tight_vsjet_dn  = ak.fill_none(tight_vsjet_dn , 1.0)
 
         loose_vsjet_up  = ak.fill_none(loose_vsjet_up , 1.0)
         loose_vsjet_dn  = ak.fill_none(loose_vsjet_dn , 1.0)
