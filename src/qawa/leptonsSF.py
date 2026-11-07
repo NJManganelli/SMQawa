@@ -41,7 +41,7 @@ class LeptonScaleFactors:
         self.cset_e_key = None
         self.sig0_year = None
         match self._erasubera:
-            case "2024":
+            case "2024" | "2025":
                 # MUON
                 if not hasattr(self, "muonIDxISOAvailable"):
                     self.mask_m_pt = 10.0
@@ -69,10 +69,11 @@ class LeptonScaleFactors:
                     self.electronIDAvailable = ["Veto", "Loose", "Medium", "Tight", "wp80iso", "wp90iso", "wp80noiso", "wp90noiso", "PromptMVA-Medium",  "PromptMVA-Tight"]
                     assert self.electronID in self.electronIDAvailable, f"Available electron IDs: {self.electronIDAvailable}"
                 self.cset_e_key = "Electron-ID-SF"
-                self.sig0_year = "2024Prompt"
+                self.sig0_year = f"{self._erasubera}Prompt"
                 self.reco_e_high = "RecoAbove75"
                 self.reco_e_mid = "Reco20to75"
-                self.reco_e_low = "RecoBelow20"
+                # 2025 has no reco SF below 20 GeV: those electrons keep a reco SF of 1
+                self.reco_e_low = "RecoBelow20" if self._erasubera == "2024" else None
             case "2016_APV" | "2016" | "2017" | "2018":
                 # MUON
                 if not hasattr(self, "muonIDxISOAvailable"):
@@ -210,7 +211,7 @@ class LeptonScaleFactors:
                                                                                                         self.reco_e_low,
                                                                                                         sig3_electrons_sceta,
                                                                                                         ak.mask(sig4_electrons_pt, maskBelow20, valid_when=True)
-                                                                                                        ),
+                                                                                                        ) if self.reco_e_low is not None else ak.ones_like(sig4_electrons_pt),
                                                           # fallback: 1.0
                                                           ak.ones_like(sig4_electrons_pt)
                                                           )

@@ -80,6 +80,7 @@ NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_
 
 JER_RESOLUTION_RHO_MAX = {
     "Summer24Prompt24_JRV2": 200.0,
+    "Summer24Prompt25_JRV2": 200.0,
     "Summer20UL16APV_JRV5": 90.0,
     "Summer20UL16_JRV5": 90.0,
     "Summer19UL17_JRV4": 90.0,

@@ -93,7 +93,7 @@ POL_TAU_NAMES = {
 }
 
 _POL_ERA_KEY = {"2016": "Run2", "2016APV": "Run2", "2017": "Run2", "2018": "Run2",
-                "2024": "2024"}
+                "2024": "2024", "2025": "2024"}
 
 POL_GEN_FRACTIONS_BY_ERA = {
     "Run2": {
@@ -558,7 +558,11 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = 'Summer24Prompt24_V5'
                 jer_tag = 'Summer24Prompt24_JRV2'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era in ["2022", "2023", "2025"]:
+            elif self._era == '2025':
+                jec_tag = 'Summer24Prompt25_V3'
+                jer_tag = 'Summer24Prompt25_JRV2'
+                jetveto_tag = 'Summer24Prompt25_RunCDEFG_V1'
+            elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
@@ -579,11 +583,15 @@ class wzinclusive_processor(processor.ProcessorABC):
                 # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
                 jec_tag = 'Summer24Prompt24_V5'
                 jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era in ["2022", "2023", "2025"]:
+            elif self._era == '2025':
+                # Data JECs are run-dependent inside the correctionlib payload (2025 C-G)
+                jec_tag = 'Summer24Prompt25_V3'
+                jetveto_tag = 'Summer24Prompt25_RunCDEFG_V1'
+            elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        self._use_clib_jme = self._era == "2024" or self._ver == "v15"
+        self._use_clib_jme = self._era in ["2024", "2025"] or self._ver == "v15"
 
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
@@ -619,7 +627,9 @@ class wzinclusive_processor(processor.ProcessorABC):
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler, nanoAODversion=self._ver)
         
-        _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        # PLACEHOLDER - the 2024 estimate used for 2025 carries only stat_2024
+        _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
+                          override_stat_check=self._era == "2025")
         self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
         self._dd_targets = {
             dd_targetdddy_tag(_name): DataDrivenEventReweight(estimator=_name, **_dd_kwargs)
@@ -631,7 +641,7 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         ### polarization part ####
         # era-aware generator fractions: Run-2 eras -> measured UL set,
-        # 2024 -> GEN_FRACTIONS_BY_ERA["2024"] (placeholder until fitted).
+        # 2024 and 2025 (Summer24 MC) -> GEN_FRACTIONS_BY_ERA["2024"] (placeholder until fitted).
         self.gen_fractions = get_pol_gen_fractions(self._era)
         self.pol_slope = get_pol_slope(self._era)
         self.pol_intercept = get_pol_intercept(self._era)

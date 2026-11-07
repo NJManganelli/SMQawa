@@ -75,10 +75,16 @@ class tauIDScaleFactors:
         tau_dm  = np.array(taus.decayMode)
         tau_genmatch = np.array(taus.genPartFlav)
 
-        inputs_vsjet = {"pt": tau_pt, "dm": tau_dm, "genmatch": tau_genmatch, "syst": syst, "wp": self.vsjet_wp, "wp_VSe": self.vse_wp, "flag": "dm"} #flag "pt" alone also possible, dm = pt(param) + dm (binned)
+        inputs_vsjet = {"pt": tau_pt, "dm": tau_dm, "genmatch": tau_genmatch, "syst": syst, "wp": self.vsjet_wp, "wp_VSe": self.vse_wp, "wp_VSmu": self.vsmu_wp, "flag": "dm"} #flag "pt" alone also possible, dm = pt(param) + dm (binned)
         inputs_vse =   {"eta": tau_eta, "dm": tau_dm, "genmatch": tau_genmatch, "wp": self.vse_wp, "syst": syst}
         inputs_vsmu =  {"eta": tau_eta, "genmatch": tau_genmatch, "wp": self.vsmu_wp, "wp_VSjet": self.vsjet_wp, "wp_VSe": self.vse_wp, "syst": syst}
-        if inputs_vsmu["wp_VSjet"] in ['VTight', 'VVTight']:
+        if self._era == "2025":
+            # 2025 VSmu SFs are binned in VSjet Medium, Tight and VTight only
+            if inputs_vsmu["wp_VSjet"] in ['VVVLoose', 'VVLoose', 'VLoose', 'Loose']:
+                inputs_vsmu["wp_VSjet"] = 'Medium'
+            elif inputs_vsmu["wp_VSjet"] == 'VVTight':
+                inputs_vsmu["wp_VSjet"] = 'VTight'
+        elif inputs_vsmu["wp_VSjet"] in ['VTight', 'VVTight']:
             inputs_vsmu["wp_VSjet"] = 'Tight'
 
         # {self.tagger}VSjet
