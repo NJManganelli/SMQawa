@@ -8,6 +8,7 @@ import re
 import awkward as ak
 from pathlib import Path
 from coffea.util import coffea_console
+from rich.markup import escape
 import numpy as np
 import hist
 import rich
@@ -117,7 +118,10 @@ class DataDrivenEventReweight:
         # Sanity check: the file must carry the statistical component for the era being processed,
         # either as its matching per-era stat nuisance or (legacy) as the combined DDDY. Otherwise
         # the wrong correction file is in use for this era (e.g. a Run2-only average for 2024).
-        if not self.stat_systematics and not self.has_legacy_dddy and not self.override_stat_check:
+        if not self.stat_systematics and not self.has_legacy_dddy and self.override_stat_check:
+            coffea_console.print(f"[yellow]Data-driven estimate {escape(estimator)} has no statistical nuisance for "
+                                 f"{escape(self.erasubera)}; it is applied without one[/yellow]")
+        elif not self.stat_systematics and not self.has_legacy_dddy:
             raise RuntimeError(
                 f"data-driven estimate '{estimator}' from {str(_data_path)} carries no statistical "
                 f"nuisance for era/subera '{self.erasubera}': expected 'stat_{self.erasubera.replace('_', '')}' "
