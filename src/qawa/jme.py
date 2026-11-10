@@ -75,6 +75,7 @@ JETMET_RUN3_MITIGATIONS = {
         'residual_pt_floor': (((2.0, 2.5),), 30.0),
     },
 }
+JETMET_RUN3_MITIGATIONS['2025'] = JETMET_RUN3_MITIGATIONS['2024']
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
