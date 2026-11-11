@@ -75,11 +75,13 @@ JETMET_RUN3_MITIGATIONS = {
         'residual_pt_floor': (((2.0, 2.5),), 30.0),
     },
 }
+JETMET_RUN3_MITIGATIONS['2025'] = JETMET_RUN3_MITIGATIONS['2024']
 
 NO_MITIGATIONS = {'jer_genmatched_only_eta': (), 'jet_pt_min': (), 'residual_pt_floor': None}
 
 JER_RESOLUTION_RHO_MAX = {
     "Summer24Prompt24_JRV2": 200.0,
+    "Summer24Prompt25_JRV2": 200.0,
     "Summer20UL16APV_JRV5": 90.0,
     "Summer20UL16_JRV5": 90.0,
     "Summer19UL17_JRV4": 90.0,

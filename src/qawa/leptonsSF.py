@@ -1,5 +1,6 @@
 import os.path
 from coffea.lookup_tools import extractor, dense_lookup
+from coffea.util import coffea_console
 import awkward as ak
 import numpy as np
 import uproot 
@@ -41,7 +42,7 @@ class LeptonScaleFactors:
         self.cset_e_key = None
         self.sig0_year = None
         match self._erasubera:
-            case "2024":
+            case "2024" | "2025":
                 # MUON
                 if not hasattr(self, "muonIDxISOAvailable"):
                     self.mask_m_pt = 10.0
@@ -69,7 +70,7 @@ class LeptonScaleFactors:
                     self.electronIDAvailable = ["Veto", "Loose", "Medium", "Tight", "wp80iso", "wp90iso", "wp80noiso", "wp90noiso", "PromptMVA-Medium",  "PromptMVA-Tight"]
                     assert self.electronID in self.electronIDAvailable, f"Available electron IDs: {self.electronIDAvailable}"
                 self.cset_e_key = "Electron-ID-SF"
-                self.sig0_year = "2024Prompt"
+                self.sig0_year = f"{self._erasubera}Prompt"
                 self.reco_e_high = "RecoAbove75"
                 self.reco_e_mid = "Reco20to75"
                 self.reco_e_low = "RecoBelow20"
@@ -107,7 +108,15 @@ class LeptonScaleFactors:
                 self.reco_e_low = "RecoBelow20"
             case _:
                 raise NotImplementedError(f"Unmatched era + subera in LeptonSF implementation: {self._erasubera}")
-        
+        self.reco_e_low_pt = None
+        try:
+            self.clib_electrons[self.cset_e_key].evaluate(self.sig0_year, "sf", self.reco_e_low, 0.5, 15.0)
+        except IndexError:
+            self.reco_e_low_pt = float(np.nextafter(20.0, np.inf))
+            coffea_console.print(f"[yellow]No {self.reco_e_low} electron reco SF for {self.sig0_year}: electrons below 20 GeV "
+                                 f"take the {self.reco_e_mid} SF evaluated at pt = {self.reco_e_low_pt!r} GeV[/yellow]")
+            self.reco_e_low = self.reco_e_mid
+
     def __init_legacy__(self, era:str='2018', isAPV:bool=False, isEE:bool=False, isBPix:bool=False):
         raise NotImplementedError("Legacy path deprecated due to evolution in clib")
 
@@ -209,7 +218,9 @@ class LeptonScaleFactors:
                                                                                                         sig1_syst,
                                                                                                         self.reco_e_low,
                                                                                                         sig3_electrons_sceta,
-                                                                                                        ak.mask(sig4_electrons_pt, maskBelow20, valid_when=True)
+                                                                                                        ak.mask(sig4_electrons_pt if self.reco_e_low_pt is None
+                                                                                                                else ak.full_like(sig4_electrons_pt, self.reco_e_low_pt),
+                                                                                                                maskBelow20, valid_when=True)
                                                                                                         ),
                                                           # fallback: 1.0
                                                           ak.ones_like(sig4_electrons_pt)
