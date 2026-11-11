@@ -539,6 +539,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
             jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
             jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
+            jetveto_tag = f'Summer19UL{self._era[-2:]}_V1'
         elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
@@ -2227,7 +2228,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             muon = event.Muon
             muonEnUp = event.Muon
             muonEnDown = event.Muon
-            muon_pt, muon_pt_up, muon_pt_down = rochester_correction(is_data).apply_rochester_correction(muon)
+            muon_pt, muon_pt_up, muon_pt_down = rochester_correction(is_data, era=self._era + ("APV" if self._isAPV else "")).apply_rochester_correction(muon)
 
             muon['pt'] = muon_pt
             muonEnUp['pt'] = muon_pt_up
