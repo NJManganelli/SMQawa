@@ -537,7 +537,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         jetveto_tag = None
         if self._ver == "v15":
             # NanoAODv15 uses AK4 PUPPI jets: the central jet_jerc.json.gz has one JEC tag for MC and all data runs
-            v15_jme_tags = {
+            v15_jec_jer_jetveto_tags = {
                 "2016APV": ("Summer20UL16APVNanoV15_V1", "Summer20UL16APV_JRV5", "Summer19UL16_V1"),
                 "2016": ("Summer20UL16NanoV15_V1", "Summer20UL16_JRV5", "Summer19UL16_V1"),
                 "2017": ("Summer20UL17NanoV15_V1", "Summer19UL17_JRV4", "Summer19UL17_V1"),
@@ -546,9 +546,9 @@ class wzinclusive_processor(processor.ProcessorABC):
                 "2025": ("Summer24Prompt25_V3", "Summer24Prompt25_JRV2", "Summer24Prompt25_RunCDEFG_V1"),
             }
             era_key = f'{self._era}{"APV" if self._isAPV else ""}'
-            if era_key not in v15_jme_tags:
+            if era_key not in v15_jec_jer_jetveto_tags:
                 raise NotImplementedError(f"{era_key} is not yet implemented")
-            jec_tag, jer_tag, jetveto_tag = v15_jme_tags[era_key]
+            jec_tag, jer_tag, jetveto_tag = v15_jec_jer_jetveto_tags[era_key]
         elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
