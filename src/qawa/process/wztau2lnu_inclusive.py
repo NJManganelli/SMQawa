@@ -535,11 +535,20 @@ class wzinclusive_processor(processor.ProcessorABC):
         jec_tag = ''
         jer_tag = ''
         jetveto_tag = None
-        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
-            # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
-            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
-            jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
-            jetveto_tag = f'Summer19UL{self._era[-2:]}_V1'
+        if self._ver == "v15":
+            # NanoAODv15 uses AK4 PUPPI jets: the central jet_jerc.json.gz has one JEC tag for MC and all data runs
+            v15_jme_tags = {
+                "2016APV": ("Summer20UL16APVNanoV15_V1", "Summer20UL16APV_JRV5", "Summer19UL16_V1"),
+                "2016": ("Summer20UL16NanoV15_V1", "Summer20UL16_JRV5", "Summer19UL16_V1"),
+                "2017": ("Summer20UL17NanoV15_V1", "Summer19UL17_JRV4", "Summer19UL17_V1"),
+                "2018": ("Summer20UL18NanoV15_V1", "Summer19UL18_JRV3", "Summer19UL18_V1"),
+                "2024": ("Summer24Prompt24_V5", "Summer24Prompt24_JRV2", "Summer24Prompt24_RunBCDEFGHI_V1"),
+                "2025": ("Summer24Prompt25_V3", "Summer24Prompt25_JRV2", "Summer24Prompt25_RunCDEFG_V1"),
+            }
+            era_key = f'{self._era}{"APV" if self._isAPV else ""}'
+            if era_key not in v15_jme_tags:
+                raise NotImplementedError(f"{era_key} is not yet implemented")
+            jec_tag, jer_tag, jetveto_tag = v15_jme_tags[era_key]
         elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
@@ -554,14 +563,6 @@ class wzinclusive_processor(processor.ProcessorABC):
             elif self._era == '2018':
                 jec_tag = 'Summer19UL18_V5_MC'
                 jer_tag = 'Summer19UL18_JRV2_MC'
-            elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V5'
-                jer_tag = 'Summer24Prompt24_JRV2'
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era == '2025':
-                jec_tag = 'Summer24Prompt25_V3'
-                jer_tag = 'Summer24Prompt25_JRV2'
-                jetveto_tag = 'Summer24Prompt25_RunCDEFG_V1'
             elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
@@ -579,19 +580,11 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
             elif self._era == '2018':
                 jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
-            elif self._era == '2024':
-                # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
-                jec_tag = 'Summer24Prompt24_V5'
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era == '2025':
-                # Data JECs are run-dependent inside the correctionlib payload (2025 C-G)
-                jec_tag = 'Summer24Prompt25_V3'
-                jetveto_tag = 'Summer24Prompt25_RunCDEFG_V1'
             elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        self._use_clib_jme = self._era in ["2024", "2025"] or self._ver == "v15"
+        self._use_clib_jme = self._ver == "v15"
 
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
