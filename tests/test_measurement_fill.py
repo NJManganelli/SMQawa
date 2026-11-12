@@ -53,7 +53,7 @@ def recorders(monkeypatch):
     class RecordedSelection(wzmod.PackedSelection):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            recorded["selection"] = self
+            recorded.setdefault("selection", self)
     monkeypatch.setattr(wzmod, "Weights", RecordedWeights)
     monkeypatch.setattr(wzmod, "PackedSelection", RecordedSelection)
     return recorded
@@ -93,8 +93,13 @@ def test_mc_measurements(mc_processor, nominal_only):
     as_tt = mc_processor.process(events(M1_FILE, 3000, TT_DATASET, False))[TT_DATASET]
     trigger = as_tt["trigger_measurement"]
     assert filled(trigger) and list(trigger.axes["systematic"]) == ["nominal"]
+    btag = as_tt["btag_measurement"]
+    assert filled(btag) and list(btag.axes["systematic"]) == ["nominal"]
+    assert list(btag.axes["btag_wp"]) == [0, 1, 2, 3, 4, 5]
+    assert not np.any(btag.view(flow=True)["value"].take(-1, axis=btag.axes.name.index("btag_abseta")))
     itself = mc_processor.process(events(M1_FILE, 3000, "WZto3LNu", False))["WZto3LNu"]
     assert not filled(itself["trigger_measurement"])
+    assert filled(itself["btag_measurement"])
 
 
 @needs_m1

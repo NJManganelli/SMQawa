@@ -26,7 +26,7 @@ from qawa.egammaSS import EGM_scale_and_smear_v9, EGM_scale_and_smear
 from qawa.leptonsSF import LeptonScaleFactors
 from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
-from qawa.btag import BTVCorrector
+from qawa.btag import BTAG_MAX_ABSETA, FIXED_WPS, BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
 from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
@@ -64,6 +64,8 @@ from qawa.polarization import (
 
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
 TRIGGER_SF_PT_EDGES = (20, 25, 30, 35, 40, 50, 60, 70)
+BTAG_PT_EDGES = (20, 30, 50, 70, 100, 140, 200, 300, 600, 1000)
+BTAG_ABSETA_EDGES = (0, 0.6, 1.2, 1.8, 2.4)
 
 
 def dd_targetdddy_tag(compound_name):
@@ -419,7 +421,7 @@ def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAOD
     jet_mask = jet_mask & forward_jet_pt_mask(jets, era)
 
     assert hasattr(btag_corrector, "tagged_jets")
-    jet_btag = (btag_corrector.tagged_jets(jets, wp=["L", "M", "T"])[btag_wp]) & (np.abs(jets.eta)<2.4) #FIXME: update eta restriction if appropriate for RunIII
+    jet_btag = (btag_corrector.tagged_jets(jets, wp=["L", "M", "T"])[btag_wp]) & (np.abs(jets.eta)<BTAG_MAX_ABSETA) #FIXME: update eta restriction if appropriate for RunIII
 
     return jets[jet_mask], jets[jet_mask & jet_btag]
 
@@ -938,6 +940,13 @@ class wzinclusive_processor(processor.ProcessorABC):
                 hist.axis.Variable(TRIGGER_SF_PT_EDGES, name="trigger_trail_pt", label=r"$p_T^{l_2}$ (GeV)"),
                 hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_reference", label="reference trigger"),
                 hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_lepton", label="lepton trigger"),
+            ),
+            'btag_measurement': _wh(
+                hist.axis.Variable([0, 4, 5, 6], underflow=False, overflow=False, name="btag_flavour", label="hadron flavour"),
+                hist.axis.Variable(BTAG_PT_EDGES, name="btag_pt", label=r"$p_T^{jet}$ (GeV)"),
+                hist.axis.Variable(BTAG_ABSETA_EDGES, name="btag_abseta", label=r"$|\eta^{jet}|$"),
+                hist.axis.Integer(0, len(FIXED_WPS[self.btag_tagger]) + 1, underflow=False, overflow=False,
+                                  name="btag_wp", label="fixed working points passed"),
             ),
         }
         self.build_histos_pol = lambda: {
@@ -2109,6 +2118,21 @@ class wzinclusive_processor(processor.ProcessorABC):
                     trigger_weight = weights.partial_weight(exclude=['triggerSF']) if is_mc else np.ones(len(event))
                     fill(histos, 'trigger_measurement', trigger_values, nominal_labels,
                          syst_weight(trigger_weight[np.newaxis]), trigger_channels)
+                if is_mc and not is_flashsim:
+                    njets = ak.to_numpy(ak.num(good_jets))
+                    jet_selection = PackedSelection()
+                    jet_selection.add('btag-jets', np.repeat(selection.all(*common_sel, 'require-2lep'), njets)
+                                      & ak.to_numpy(ak.flatten(np.abs(good_jets.eta) < BTAG_MAX_ABSETA)))
+                    passed_wps = self._btag.tagged_jets(good_jets, wp=list(FIXED_WPS[self.btag_tagger]))
+                    btag_values = {
+                        'btag_flavour': ak.to_numpy(ak.flatten(good_jets.hadronFlavour)),
+                        'btag_pt': ak.to_numpy(ak.flatten(good_jets.pt)),
+                        'btag_abseta': ak.to_numpy(ak.flatten(np.abs(good_jets.eta))),
+                        'btag_wp': sum(ak.to_numpy(ak.flatten(passed)).astype(int) for passed in passed_wps.values()),
+                    }
+                    btag_weight = np.repeat(weights.partial_weight(exclude=['btag_sf']), njets)
+                    fill(histos, 'btag_measurement', btag_values, nominal_labels, syst_weight(btag_weight[np.newaxis]),
+                         ChannelSelections(jet_selection, {'btag-jets': ['btag-jets']}))
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         if self.histserv_registry is not None:

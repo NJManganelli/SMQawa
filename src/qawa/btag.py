@@ -16,6 +16,10 @@ import awkward as ak
 import numpy as np
 import uproot
 
+FIXED_WPS = {"deepJet": ("L", "M", "T"), "UParTAK4": ("L", "M", "T", "XT", "XXT")}
+BTAG_MAX_ABSETA = 2.4
+
+
 def btag_disc_wps(tagger:str='deepJet'):
     _disc_wps = {
         "deepJet": {
