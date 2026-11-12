@@ -312,12 +312,6 @@ def main():
                     run_period=options.runperiod if is_data else '',
                     version=auto_ver,
                 )
-            elif options.analysis in ["trig-eff"]:
-                coffea_console.print(" --- wztau2lnu_inclusive trigger efficiency processor ... ")
-                from qawa.process.trig_eff import trig_processor
-                proc_configured = trig_processor(
-                    isMC=options.isMC,
-                    era=options.era)
             elif options.analysis in ["inc-ZZ"]:
                 from qawa.process.zz2l2nu_inclusive import zzinc_processor
                 coffea_console.print(" --- zz2l2nu_inclusive main code processor ... ")
