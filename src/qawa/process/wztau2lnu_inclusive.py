@@ -1776,7 +1776,10 @@ class wzinclusive_processor(processor.ProcessorABC):
         _ones = np.ones(len(weights.weight()))
         if not is_data:
             weights.add('genweight', event.genWeight)
-            # self._btag.append_btag_sf(jets, weights)
+            if self._btag.efficiency_available:
+                self._btag.append_btag_sf(good_jets, weights, dataset, shift_name, variations)
+            elif self._process_shift_warnings:
+                coffea_console.print("[red]B-TAG SFs DISABLED: no efficiency payload[/red]")
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
                 self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)
@@ -2313,37 +2316,21 @@ class wzinclusive_processor(processor.ProcessorABC):
         event = ak.with_field(event, met, 'MET')
     
         # define all the shifts
+        def jes_shift(field, source, direction):
+            return ({"Jet": getattr(getattr(jets, field), direction.lower()), "MET": getattr(getattr(met, field), direction.lower())},
+                    f"JES_{source}{direction}")
         shifts = [
-            # Jets
-            ({"Jet": jets                             , "MET": met                               }, None                  ),
-            ({"Jet": jets.JES_Total.up                , "MET": met.JES_Total.up                  }, "JESUp"               ),
-            ({"Jet": jets.JES_Total.down              , "MET": met.JES_Total.down                }, "JESDown"             ),
-            ({"Jet": jets.JES_Absolute.up             , "MET": met.JES_Absolute.up               }, "JES_AbsoluteUp"      ),
-            ({"Jet": jets.JES_Absolute.down           , "MET": met.JES_Absolute.down             }, "JES_AbsoluteDown"    ),
-            ({"Jet": jets.JES_BBEC1.up                , "MET": met.JES_BBEC1.up                  }, "JES_BBEC1Up"         ),
-            ({"Jet": jets.JES_BBEC1.down              , "MET": met.JES_BBEC1.down                }, "JES_BBEC1Down"       ),
-            ({"Jet": jets.JES_EC2.up                  , "MET": met.JES_EC2.up                    }, "JES_EC2Up"           ),
-            ({"Jet": jets.JES_EC2.down                , "MET": met.JES_EC2.down                  }, "JES_EC2Down"         ),
-            ({"Jet": jets.JES_FlavorQCD.up            , "MET": met.JES_FlavorQCD.up              }, "JES_FlavorQCDUp"     ),
-            ({"Jet": jets.JES_FlavorQCD.down          , "MET": met.JES_FlavorQCD.down            }, "JES_FlavorQCDDown"   ),
-            ({"Jet": jets.JES_HF.up                   , "MET": met.JES_HF.up                     }, "JES_HFUp"            ),
-            ({"Jet": jets.JES_HF.down                 , "MET": met.JES_HF.down                   }, "JES_HFDown"          ),
-            ({"Jet": jets.JES_RelativeBal.up          , "MET": met.JES_RelativeBal.up            }, "JES_RelativeBalUp"   ),
-            ({"Jet": jets.JES_RelativeBal.down        , "MET": met.JES_RelativeBal.down          }, "JES_RelativeBalDown" ),
-            ({"Jet": jets                             , "MET": met.MET_UnclusteredEnergy.up      }, "UESUp"               ),
-            ({"Jet": jets                             , "MET": met.MET_UnclusteredEnergy.down    }, "UESDown"             ), 
-              ##year dependent systematics
-            ({"Jet": getattr(jets,f'JES_BBEC1_{self._era}').up     , "MET": getattr(met,f'JES_BBEC1_{self._era}').up      }, f"JES_BBEC1{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_BBEC1_{self._era}').down   , "MET": getattr(met,f'JES_BBEC1_{self._era}').down    }, f"JES_BBEC1{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_Absolute_{self._era}').up  , "MET": getattr(met,f'JES_Absolute_{self._era}').up   }, f"JES_Absolute{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_Absolute_{self._era}').down, "MET": getattr(met,f'JES_Absolute_{self._era}').down }, f"JES_Absolute{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_EC2_{self._era}').up       , "MET": getattr(met,f'JES_EC2_{self._era}').up        }, f"JES_EC2{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_EC2_{self._era}').down     , "MET": getattr(met,f'JES_EC2_{self._era}').down      }, f"JES_EC2{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_HF_{self._era}').up        , "MET": getattr(met,f'JES_HF_{self._era}').up         }, f"JES_HF{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_HF_{self._era}').down      , "MET": getattr(met,f'JES_HF_{self._era}').down       }, f"JES_HF{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_RelativeSample_{self._era}').up  , "MET": getattr(met,f'JES_RelativeSample_{self._era}').up   }, f"JES_RelativeSample{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_RelativeSample_{self._era}').down, "MET": getattr(met,f'JES_RelativeSample_{self._era}').down }, f"JES_RelativeSample{self._era}Down"),
+            ({"Jet": jets, "MET": met}, None),
+            ({"Jet": jets.JES_Total.up, "MET": met.JES_Total.up}, "JESUp"),
+            ({"Jet": jets.JES_Total.down, "MET": met.JES_Total.down}, "JESDown"),
         ]
+        shifts += [jes_shift(f"JES_{source}", source, direction) for source in JES_SOURCES for direction in ("Up", "Down")]
+        shifts += [
+            ({"Jet": jets, "MET": met.MET_UnclusteredEnergy.up}, "UESUp"),
+            ({"Jet": jets, "MET": met.MET_UnclusteredEnergy.down}, "UESDown"),
+        ]
+        shifts += [jes_shift(f"JES_{source}_{self._era}", f"{source}{self._era}", direction)
+                   for source in JES_ERA_SOURCES for direction in ("Up", "Down")]
         if "JER" in jets.fields and "JER" in met.fields:
             shifts += [
                 ({"Jet": jets.JER.up                      , "MET": met.JER.up                        }, "JERUp"               ),

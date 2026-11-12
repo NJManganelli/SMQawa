@@ -5,7 +5,7 @@ import pytest
 from coffea.analysis_tools import Weights
 from coffea.util import coffea_console
 
-from conftest import CVMFS_HEAD, input_path
+from conftest import CVMFS_HEAD, STORE, input_path
 from qawa.btag import BTVCorrector, btv_shift_systematic, method1a_weight
 from qawa.jsoncorrections import CorrectionlibHandler
 from qawa.measurements import BTAG_EFF_FLAVOURS, BTAG_EFF_SYSTEMATICS, btag_eff_payload, write_payload
@@ -221,3 +221,90 @@ def test_acceptance(tmp_path):
     btv = corrector("2018", tmp_path)
     weights = weights_for(btv, jets([(60., 2.45, 5, 0.999), (60., -2.45, 0, 0.0)]))
     assert np.allclose(weights.weight(), 1.0)
+
+
+M1_FILE, needs_m1 = input_path(STORE, "mc/RunIII2024Summer24NanoAODv15/WZto3LNu_TuneCP5_13p6TeV_powheg-pythia8/"
+                                       "NANOAODSIM/150X_mcRun3_2024_realistic_v2-v2/100000/test.root")
+
+
+def m1_events(n=2000):
+    from coffea.nanoevents import NanoEventsFactory, NanoAODSchema
+    return NanoEventsFactory.from_root(
+        {M1_FILE: "Events"}, schemaclass=NanoAODSchema, mode="virtual", entry_start=0, entry_stop=n,
+        metadata={"dataset": "WZto3LNu", "is_data": False, "is_signal": False, "is_flashsim": False},
+    ).events()
+
+
+@pytest.fixture
+def recorded_pass(monkeypatch):
+    """Runs only the chosen pass and records its Weights and the good jets built in it."""
+    recorded = {}
+
+    class RecordedWeights(wzmod.Weights):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            recorded["weights"] = self
+
+    def recorded_build_jets(*args, **kwargs):
+        good, bjets = build_jets(*args, **kwargs)
+        recorded["good_jets"] = good[ak.argsort(good.pt, axis=1, ascending=False)]
+        return good, bjets
+    build_jets = wzmod.build_jets
+    monkeypatch.setattr(wzmod, "Weights", RecordedWeights)
+    monkeypatch.setattr(wzmod, "build_jets", recorded_build_jets)
+    process_shift = wzmod.wzinclusive_processor.process_shift
+
+    def run(proc, wanted):
+        def only(self, event, shift_name=''):
+            return process_shift(self, event, shift_name) if shift_name == wanted else {}
+        monkeypatch.setattr(wzmod.wzinclusive_processor, "process_shift", only)
+        recorded["out"] = proc.process(m1_events())["WZto3LNu"]
+        return recorded
+    return run
+
+
+def processor_with_payload(monkeypatch, tmp_path):
+    payload = eff_payload(tmp_path / "btagEff_2024_v15.json")
+    monkeypatch.setattr("qawa.jsoncorrections.btag_eff_path", lambda era_label, version: payload)
+    return wzmod.wzinclusive_processor(era="2024", version="v15")
+
+
+def btag_labels(out):
+    return {label for h in out.values() if isinstance(h, wzmod.hist.Hist) and "systematic" in h.axes.name
+            for label in h.axes["systematic"] if label.startswith("btag_sf")}
+
+
+@needs_m1
+def test_processor_nominal_pass(monkeypatch, tmp_path, recorded_pass):
+    proc = processor_with_payload(monkeypatch, tmp_path)
+    recorded = recorded_pass(proc, None)
+    names = PAIRED_NAMES | {"bc_statistic_2024", "light_correlated", "light_uncorrelated_2024", "effstat_2024"}
+    assert btag_labels(recorded["out"]) == {f"btag_sf_{n}{d}" for n in names for d in ("Up", "Down")}
+    weights = recorded["weights"]
+    alone = Weights(len(weights.weight()), storeIndividual=True)
+    proc._btag.append_btag_sf(recorded["good_jets"], alone, "WZto3LNu", variations=False)
+    assert np.allclose(weights.weight(), weights.partial_weight(exclude=["btag_sf"]) * alone.weight(), rtol=1e-12)
+    assert not np.allclose(alone.weight(), 1.0)
+
+
+@needs_m1
+def test_processor_jes_pass(monkeypatch, tmp_path, recorded_pass):
+    proc = processor_with_payload(monkeypatch, tmp_path)
+    recorded = recorded_pass(proc, "JES_Absolute2024Up")
+    assert not btag_labels(recorded["out"])
+    factor = recorded["weights"].partial_weight(include=["btag_sf"])
+    paired, central = (Weights(len(factor), storeIndividual=True) for _ in range(2))
+    proc._btag.append_btag_sf(recorded["good_jets"], paired, "WZto3LNu", shift_name="JES_Absolute2024Up", variations=False)
+    proc._btag.append_btag_sf(recorded["good_jets"], central, "WZto3LNu", variations=False)
+    assert np.allclose(factor, paired.weight(), rtol=1e-12)
+    assert not np.allclose(factor, central.weight(), rtol=1e-12)
+
+
+@needs_m1
+def test_processor_without_payload(recorded_pass):
+    proc = wzmod.wzinclusive_processor(era="2024", version="v15")
+    with coffea_console.capture() as captured:
+        recorded = recorded_pass(proc, None)
+    assert "B-TAG SFs DISABLED" in captured.get()
+    assert "btag_sf" not in recorded["weights"].weightStatistics
+    assert not btag_labels(recorded["out"])
