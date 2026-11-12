@@ -66,6 +66,14 @@ DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
 TRIGGER_SF_PT_EDGES = (20, 25, 30, 35, 40, 50, 60, 70)
 BTAG_PT_EDGES = (20, 30, 50, 70, 100, 140, 200, 300, 600, 1000)
 BTAG_ABSETA_EDGES = (0, 0.6, 1.2, 1.8, 2.4)
+JES_SOURCES = ("Absolute", "BBEC1", "EC2", "FlavorQCD", "HF", "RelativeBal")
+JES_ERA_SOURCES = ("BBEC1", "Absolute", "EC2", "HF", "RelativeSample")
+
+
+def jes_shift_names(era):
+    """Names of the JES-source and JER passes, in the order of the process() shift list."""
+    sources = list(JES_SOURCES) + [f"{source}{era}" for source in JES_ERA_SOURCES]
+    return tuple(f"JES_{source}{direction}" for source in sources for direction in ("Up", "Down")) + ("JERUp", "JERDown")
 
 
 def dd_targetdddy_tag(compound_name):
@@ -616,7 +624,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             reason = histserv_output.nondeterministic_reason(self, histserv_registry["samples"][histserv_sample]["kind"])
             if reason:
                 raise ValueError(reason)
-        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
+                                  jes_shifts=jes_shift_names(self._era))
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver, isAPV=self._isAPV)
         self._jetid = JetID(self._era, self._ver, self.clibhandler)
@@ -2130,7 +2139,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                         'btag_abseta': ak.to_numpy(ak.flatten(np.abs(good_jets.eta))),
                         'btag_wp': sum(ak.to_numpy(ak.flatten(passed)).astype(int) for passed in passed_wps.values()),
                     }
-                    btag_weight = np.repeat(weights.partial_weight(exclude=['btag_sf']), njets)
+                    btag_weight = np.repeat(weights.partial_weight(exclude=list(self._btag.weight_names)), njets)
                     fill(histos, 'btag_measurement', btag_values, nominal_labels, syst_weight(btag_weight[np.newaxis]),
                          ChannelSelections(jet_selection, {'btag-jets': ['btag-jets']}))
 

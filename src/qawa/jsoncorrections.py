@@ -1,12 +1,13 @@
 import os
 import datetime
+import gzip
+import json
 from pathlib import Path
 import rich
 from rich.table import Table
 from rich.markup import escape
 from coffea.util import coffea_console
 import correctionlib
-from correctionlib import schemav2
 
 # Directory of the installed `qawa` package (.../src/qawa). Anchoring on
 # __file__ makes data lookups independent of the current working directory,
@@ -178,11 +179,11 @@ def btag_eff_path(era_label: str, version: str) -> Path:
 
 
 def category_keys(path, correction: str) -> list:
-    """Keys of the outermost category node of `correction` in the correctionlib json at `path`."""
-    with open(path) as fin:
-        cset = schemav2.CorrectionSet.model_validate_json(fin.read())
-    data = next(c for c in cset.corrections if c.name == correction).data
-    return [item.key for item in data.content]
+    """Keys of the outermost category node of `correction` in the correctionlib json (or json.gz) at `path`."""
+    with (gzip.open if str(path).endswith(".gz") else open)(path, "rt") as fin:
+        cset = json.load(fin)
+    data = next(c for c in cset["corrections"] if c["name"] == correction)["data"]
+    return [item["key"] for item in data["content"]]
 
 
 class CorrectionlibHandler:
