@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import yaml
 
-from qawa.common import trigger_rules
+from qawa.common import is_reference_stream, lepton_triggers, reference_triggers, trigger_rules
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), os.pardir, 'src', 'qawa', 'data')
 
@@ -98,3 +98,69 @@ def test_muoneg_2024_gets_muoneg_rules():
 def test_unknown_stream_raises():
     with pytest.raises(KeyError):
         trigger_rules(FakeEvent('JetMET0_Run2024C-MINIv6NANOv15-v1', {'HLT_x': [False]}), load_rules('2024'), '2024')
+
+
+REFERENCE_PATHS = {
+    '2016': ['PFMET100_PFMHT100_IDTight', 'PFMET110_PFMHT110_IDTight', 'PFMET120_PFMHT120_IDTight',
+             'PFMETNoMu100_PFMHTNoMu100_IDTight', 'PFMETNoMu110_PFMHTNoMu110_IDTight',
+             'PFMETNoMu120_PFMHTNoMu120_IDTight', 'PFMET170_HBHECleaned'],
+    '2017': [f'PFMET{t}_PFMHT{t}_IDTight' for t in (110, 120, 130, 140)]
+            + ['PFMET120_PFMHT120_IDTight_PFHT60']
+            + [f'PFMETNoMu{t}_PFMHTNoMu{t}_IDTight' for t in (110, 120, 130, 140)]
+            + ['PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60']
+            + [f'PFMETTypeOne{t}_PFMHT{t}_IDTight' for t in (110, 120, 130, 140)]
+            + ['PFMETTypeOne120_PFMHT120_IDTight_PFHT60',
+               'PFMET200_HBHE_BeamHaloCleaned', 'PFMETTypeOne200_HBHE_BeamHaloCleaned'],
+    '2024': [f'PFMET{t}_PFMHT{t}_IDTight' for t in (120, 130, 140)]
+            + ['PFMET120_PFMHT120_IDTight_PFHT60']
+            + [f'PFMETNoMu{t}_PFMHTNoMu{t}_IDTight' for t in (120, 130, 140)]
+            + ['PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60', 'PFMETTypeOne140_PFMHT140_IDTight',
+               'PFMET200_BeamHaloCleaned', 'PFMETTypeOne200_BeamHaloCleaned'],
+}
+REFERENCE_PATHS['2018'] = REFERENCE_PATHS['2017']
+REFERENCE_PATHS['2025'] = REFERENCE_PATHS['2024']
+REFERENCE_STREAMS = {'2016': ['MET'], '2017': ['MET'], '2018': ['MET'], '2024': ['JetMET'], '2025': ['JetMET']}
+
+
+@pytest.mark.parametrize('era', DATASETS)
+def test_reference_key_per_era(era):
+    reference = load_rules(era)[f'Run{era}.Reference']
+    assert set(reference) == {'streams', 'pass'}
+    assert reference['streams'] == REFERENCE_STREAMS[era]
+    assert reference['pass'] == REFERENCE_PATHS[era]
+
+
+@pytest.mark.parametrize('era,dataset,expected', [
+    ('2024', 'JetMET0_Run2024C-MINIv6NANOv15-v1', True),
+    ('2024', 'JetMET1_Run2024I-MINIv6NANOv15-v1', True),
+    ('2025', 'JetMET0_Run2025C-PromptReco-v1', True),
+    ('2025', 'JetMET1_Run2025G', True),
+    ('2016', 'MET_Run2016F-UL2016_MiniAODv2_NanoAODv9-v1', True),
+    ('2017', 'MET_Run2017B-UL2017_MiniAODv2_NanoAODv9-v1', True),
+    ('2018', 'MET_Run2018D-UL2018_MiniAODv2_NanoAODv9-v2', True),
+    ('2024', 'Muon0_Run2024C-MINIv6NANOv15-v1', False),
+    ('2024', 'EGamma1_Run2024D-MINIv6NANOv15-v1', False),
+    ('2024', 'MuonEG_Run2024C-MINIv6NANOv15-v1', False),
+    ('2018', 'SingleMuon_Run2018D-UL2018_MiniAODv2_NanoAODv9-v2', False),
+    ('2016', 'DoubleEG_Run2016B-ver2_HIPM_UL2016_MiniAODv2_NanoAODv9-v1', False),
+])
+def test_is_reference_stream(era, dataset, expected):
+    assert is_reference_stream(dataset, load_rules(era), era) is expected
+
+
+def test_reference_and_lepton_or():
+    rules = {'Run2024.Reference': {'streams': ['JetMET'], 'pass': ['MET_a', 'MET_b', 'MET_missing']},
+             'Run2024.MC': {'pass': ['Lep_a', 'Lep_b'], 'veto': []}}
+    hlt = {'MET_a': [True, False, False, False], 'MET_b': [False, True, False, False],
+           'Lep_a': [False, False, True, False], 'Lep_b': [True, False, False, False]}
+    event = FakeEvent('JetMET0_Run2024C-MINIv6NANOv15-v1', hlt)
+    assert reference_triggers(event, rules, '2024').tolist() == [True, True, False, False]
+    assert lepton_triggers(event, rules, '2024').tolist() == [True, False, True, False]
+
+
+@pytest.mark.parametrize('era', DATASETS)
+def test_flashsim_paths_skip_stream_names(era):
+    from qawa.flashsim_shim import _trigger_paths
+    paths = set(_trigger_paths(era))
+    assert not paths & set(REFERENCE_STREAMS[era])
+    assert set(REFERENCE_PATHS[era]) <= paths

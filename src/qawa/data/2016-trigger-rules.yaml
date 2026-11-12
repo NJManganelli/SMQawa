@@ -5,6 +5,7 @@ Run2016.DoubleMuon:
         - Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ
         - Mu17_TrkIsoVVL_TkMu8_TrkIsoVVL_DZ
     veto: []
+
 Run2016.DoubleEG:
     pass:
         - Ele23_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
@@ -87,3 +88,14 @@ Run2016.MC:
         - Ele27_WPTight_Gsf
         - Ele35_WPLoose_Gsf
     veto: []
+
+Run2016.Reference:
+    streams: [MET]
+    pass:
+        - PFMET100_PFMHT100_IDTight
+        - PFMET110_PFMHT110_IDTight
+        - PFMET120_PFMHT120_IDTight
+        - PFMETNoMu100_PFMHTNoMu100_IDTight
+        - PFMETNoMu110_PFMHTNoMu110_IDTight
+        - PFMETNoMu120_PFMHTNoMu120_IDTight
+        - PFMET170_HBHECleaned

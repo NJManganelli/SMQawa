@@ -87,3 +87,18 @@ Run2025.MC:
         - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL_DZ
         - Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL
     veto: []
+
+Run2025.Reference:
+    streams: [JetMET]
+    pass:
+        - PFMET120_PFMHT120_IDTight
+        - PFMET130_PFMHT130_IDTight
+        - PFMET140_PFMHT140_IDTight
+        - PFMET120_PFMHT120_IDTight_PFHT60
+        - PFMETNoMu120_PFMHTNoMu120_IDTight
+        - PFMETNoMu130_PFMHTNoMu130_IDTight
+        - PFMETNoMu140_PFMHTNoMu140_IDTight
+        - PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60
+        - PFMETTypeOne140_PFMHT140_IDTight
+        - PFMET200_BeamHaloCleaned
+        - PFMETTypeOne200_BeamHaloCleaned

@@ -108,20 +108,7 @@ def _trigger_paths(era):
             return sorted({m.strip() for m in re.findall(r"^\s*-\s+(\S+)\s*$", fh.read(), re.M)})
     with open(path) as fh:
         rules = yaml.load(fh, Loader=yaml.FullLoader)
-    out = set()
-
-    def walk(node):
-        if isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-        elif isinstance(node, str):
-            out.add(node)
-
-    walk(rules)
-    return sorted(out)
+    return sorted({path for rule in rules.values() for key in ("pass", "veto") for path in rule.get(key, [])})
 
 
 def _delta_r2(eta1, phi1, eta2, phi2):
