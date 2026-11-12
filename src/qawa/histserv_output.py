@@ -20,9 +20,9 @@ import qawa.production_keys as production_keys
 import qawa.utils as utils
 
 KINDS = ("data", "mc", "signal", "eft")
-OPTION_NAMES = ("era", "version", "pol", "split_by_charge", "split_FV")
+OPTION_NAMES = ("era", "version", "pol", "split_by_charge", "split_FV", "trigger_sf_alpha")
 TIMEOUT = 600
-REGISTRY_FORMAT = 2
+REGISTRY_FORMAT = 3
 COLLECT_FORMAT = 3
 DONE_FILE_FORMAT = 1
 SENT = "sent"
@@ -1051,6 +1051,7 @@ def main(argv=None):
     p.add_argument("--pol", action="store_true")
     p.add_argument("--split-by-charge", action="store_true")
     p.add_argument("--split-FV", action="store_true")
+    p.add_argument("--trigger-sf-alpha", action="store_true", help="trigger SF up/down include |1-alpha|")
     p.add_argument("--max-chunks", type=int, default=None, help="truncated test production of N chunks per dataset")
     p.add_argument("--sample", action="append", default=[], required=True, help="DAS=KIND, repeatable")
     p.add_argument("--output", required=True, help="registry JSON to write (mode 0600)")
@@ -1071,7 +1072,8 @@ def main(argv=None):
             if not args.address:
                 raise ValueError("register needs --address or HISTSERV_ADDRESS")
             options = {"era": args.era, "version": args.version, "pol": args.pol,
-                       "split_by_charge": args.split_by_charge, "split_FV": args.split_FV}
+                       "split_by_charge": args.split_by_charge, "split_FV": args.split_FV,
+                       "trigger_sf_alpha": args.trigger_sf_alpha}
             registry = register(args.address, args.tag, options, parse_pairs(args.sample, "--sample"),
                                 secrets.token_hex(16), max_chunks=args.max_chunks)
             write_registry(args.output, registry)

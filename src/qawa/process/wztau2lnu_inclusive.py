@@ -8,7 +8,6 @@ import os
 import re
 import onnxruntime as rt
 import numpy.lib.recfunctions as rf
-import uproot
 import pickle
 import numpy as np
 import pandas as pd
@@ -33,7 +32,7 @@ from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
-from qawa.jsoncorrections import CorrectionlibHandler
+from qawa.jsoncorrections import CorrectionlibHandler, category_keys
 from qawa.met_shim import prepare_met_for_factory
 # imported unconditionally (not inside the is_flashsim branch): a spawned
 # FuturesExecutor worker imports this module to unpickle the processor, and
@@ -478,6 +477,14 @@ STANDARD_FILL_VARIABLES = (
 )
 
 
+def lepton_pair_flavours(lead_lep, subl_lep):
+    mask_mm = ak.fill_none((np.abs(lead_lep.pdgId)==13) & (np.abs(subl_lep.pdgId)==13), False)
+    mask_ee = ak.fill_none((np.abs(lead_lep.pdgId)==11) & (np.abs(subl_lep.pdgId)==11), False)
+    mask_me = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 13)
+    mask_em = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 11)
+    return {"mm": mask_mm, "me": mask_me, "em": mask_em, "ee": mask_ee}
+
+
 class wzinclusive_processor(processor.ProcessorABC):
     # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing
     # NEED
@@ -486,13 +493,13 @@ class wzinclusive_processor(processor.ProcessorABC):
     #    Update inc-ZZ to utilize the same interfaces
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
-    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", histserv_registry=None, histserv_sample=None):
+    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", trigger_sf_alpha: bool = False, histserv_registry=None, histserv_sample=None):
         if (histserv_registry is None) != (histserv_sample is None):
             raise ValueError("histserv_registry and histserv_sample must be given together")
         if histserv_registry is not None:
             if histserv_sample not in histserv_registry["samples"]:
                 raise ValueError(f"histserv_sample {histserv_sample!r} is not registered; registered: {sorted(histserv_registry['samples'])}")
-            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV}
+            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV, "trigger_sf_alpha": trigger_sf_alpha}
             if histserv_registry["options"] != options:
                 raise ValueError(f"registry options {histserv_registry['options']} differ from the processor options {options}")
             variations = histserv_registry["samples"][histserv_sample]["variations"]
@@ -688,14 +695,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         with open(f'{_data_path}/eft-names.dat') as eft_file:
             self._eftnames = [n.strip() for n in eft_file.readlines()]
 
-        if self.clibhandler is not None and "trigger_sf" in self.clibhandler.keys():
-            # We have trigger_sf in correctionlib, skip loading from root files
-            pass
-        else:
-            with uproot.open(f'{_data_path}/trigger_sf/histo_triggerEff_sel0_{self._era}.root') as _fn:
-                _hvalue = np.dstack([_fn[_hn].values() for _hn in _fn.keys()] + [np.ones((7,7))])
-                _herror = np.dstack([np.sqrt(_fn[_hn].variances()) for _hn in _fn.keys()] + [np.zeros((7,7))])
-                self.trig_sf_map = np.stack([_hvalue, _herror], axis=-1)
+        if "trigger_sf" not in self.clibhandler.keys():
+            raise ValueError(f"No trigger_sf correction registered for era {era} ({version})")
+        self._trigger_sf_alpha = trigger_sf_alpha
+        if trigger_sf_alpha and "alpha_up" not in category_keys(self.clibhandler.getPath("trigger_sf"), "SF_mm"):
+            raise ValueError(f"trigger_sf_alpha needs alpha_up/alpha_down, absent from {self.clibhandler.getPath('trigger_sf')}")
 
         self.ewk_process_name = ewk_process_name
         self.beam_energy = self.com * 1000 / 2
@@ -1064,91 +1068,20 @@ class wzinclusive_processor(processor.ProcessorABC):
                 histos[f'{v}_{wpref}_{pol}'] = copy.deepcopy(base)
         return histos
     
-    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None, variations=True):
-        mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
-        mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)
-        mask_BE = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta >= 1.5), False)
-        mask_EE = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta >= 1.5), False)
-
-        mask_mm = ak.fill_none((np.abs(lead_lep.pdgId)==13) & (np.abs(subl_lep.pdgId)==13), False)
-        mask_ee = ak.fill_none((np.abs(lead_lep.pdgId)==11) & (np.abs(subl_lep.pdgId)==11), False)
-
-        mask_me = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 13)
-        mask_em = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 11)
-
-        # Correctionlib path
-        if clibhandler is not None and "trigger_sf" in clibhandler.keys():
-            trigger_sf = clibhandler.getCorrectionSet("trigger_sf")
-            # Nominally we'd need to mask each input where invalid, but here we can mix "wrong" SFs in and take care of it in the where statement at the end
-            sf_mm_nom = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_me_nom = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_em_nom = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_ee_nom = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_nom = ak.where(mask_mm, sf_mm_nom, ak.where(mask_me, sf_me_nom, ak.where(mask_em, sf_em_nom, ak.where(mask_ee, sf_ee_nom, ak.ones_like(sf_ee_nom) ) ) ) )
-            if not variations:
-                weights.add('triggerSF', sf_nom)
-                return
-            sf_mm_up = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_me_up = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_em_up = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_ee_up = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_up = ak.where(mask_mm, sf_mm_up, ak.where(mask_me, sf_me_up, ak.where(mask_em, sf_em_up, ak.where(mask_ee, sf_ee_up, ak.ones_like(sf_ee_up) ) ) ) )
-            sf_mm_down = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_me_down = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_em_down = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_ee_down = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_down = ak.where(mask_mm, sf_mm_down, ak.where(mask_me, sf_me_down, ak.where(mask_em, sf_em_down, ak.where(mask_ee, sf_ee_down, ak.ones_like(sf_ee_down) ) ) ) )
-            weights.add(
-                'triggerSF',
-                sf_nom,
-                sf_up,
-                sf_down,
-            )
-
-        # Legacy code path
-        else:
-            lept_pt_bins = [20, 25, 30, 35, 40, 50, 60, 100000]
-            lep_1_bin = np.digitize(lead_lep.pt.to_numpy(), lept_pt_bins) - 1
-            lep_2_bin = np.digitize(subl_lep.pt.to_numpy(), lept_pt_bins) - 1
-            trigg_bin = np.select([
-                (mask_ee & mask_BB).to_numpy(),
-                (mask_ee & mask_BE).to_numpy(),
-                (mask_ee & mask_EB).to_numpy(),
-                (mask_ee & mask_EE).to_numpy(),
-
-                (mask_em & mask_BB).to_numpy(),
-                (mask_em & mask_BE).to_numpy(),
-                (mask_em & mask_EB).to_numpy(),
-                (mask_em & mask_EE).to_numpy(),
-
-                (mask_me & mask_BB).to_numpy(),
-                (mask_me & mask_BE).to_numpy(),
-                (mask_me & mask_EB).to_numpy(),
-                (mask_me & mask_EE).to_numpy(),
-
-                (mask_mm & mask_BB).to_numpy(),
-                (mask_mm & mask_BE).to_numpy(),
-                (mask_mm & mask_EB).to_numpy(),
-                (mask_mm & mask_EE).to_numpy()
-            ], np.arange(0,16), 16)
-
-            # this is to avoid cases were two
-            # leptons are not in the event
-            lep_1_bin[lep_1_bin>6] = -1
-            lep_2_bin[lep_2_bin>6] = -1
-            center_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,0]
-            if not variations:
-                weights.add('triggerSF', center_value)
-                return
-            errors_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,1]
-
-            weights.add(
-                'triggerSF', 
-                center_value, 
-                center_value + errors_value,
-                center_value - errors_value
-            )
-
+    def _add_trigger_sf(self, weights, lead_lep, subl_lep, variations=True):
+        trigger_sf = self.clibhandler.getCorrectionSet("trigger_sf")
+        flavours = lepton_pair_flavours(lead_lep, subl_lep)
+        keys = ["nominal"]
+        if variations:
+            keys += ["alpha_up", "alpha_down"] if self._trigger_sf_alpha else ["up", "down"]
+        sfs = []
+        for key in keys:
+            values = {flavour: trigger_sf[f"SF_{flavour}"].evaluate(lead_lep.pt, subl_lep.pt, key) for flavour in flavours}
+            sf = ak.ones_like(values["ee"])
+            for flavour in reversed(flavours):
+                sf = ak.where(flavours[flavour], values[flavour], sf)
+            sfs.append(sf)
+        weights.add('triggerSF', *sfs)
 
     def process_shift(self, event, shift_name:str=''):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
@@ -1824,7 +1757,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                                                 weights, variations=variations
                                                 )
             # self._tauID.append_tauID_sf(had_taus, weights)
-            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler, variations=variations)
+            self._add_trigger_sf(weights, lead_lep, subl_lep, variations=variations)
             self._leSF.append_lepton_sf(lead_lep, subl_lep, weights, variations=variations)
             if self.ewk_process_name:
                 self.ewk_corr.get_weight(

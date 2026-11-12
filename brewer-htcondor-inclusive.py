@@ -63,7 +63,7 @@ ls -lthr
 
 echo "----- processing the files : "
 
-$INSTALL_LOC_EXTERNAL/.env/bin/python3 brewer-remote-inclusive.py --jobNum=$1 --isMC={ismc} --era={era} --analysis={analysis} --zzdd={zzdd} --infile=$2 --executor={executor} --copyInput {split_by_charge}{histserv}
+$INSTALL_LOC_EXTERNAL/.env/bin/python3 brewer-remote-inclusive.py --jobNum=$1 --isMC={ismc} --era={era} --analysis={analysis} --zzdd={zzdd} --infile=$2 --executor={executor} --copyInput {split_by_charge}{trigger_sf_alpha}{histserv}
 
 echo "----- directory after running :"
 ls -lthr
@@ -115,7 +115,8 @@ def sample_name_of(sample):
 
 def check_registry(registry, samples, options):
     from qawa import production_keys
-    wanted = {"era": options.era, "split_by_charge": options.split_by_charge, "pol": False, "split_FV": False}
+    wanted = {"era": options.era, "split_by_charge": options.split_by_charge, "pol": False, "split_FV": False,
+              "trigger_sf_alpha": options.trigger_sf_alpha}
     wrong = {name: registry["options"][name] for name, value in wanted.items() if registry["options"][name] != value}
     if wrong:
         raise SystemExit(f"registry options {wrong} do not match this submission {wanted}")
@@ -164,6 +165,7 @@ def main():
     parser.add_argument("--zzdd"           , type=str, default="onlySR"         , help="For vbs-ZZ and/or inc-ZZ analyses DataDriven",
                         choices=["onlySR", "DYSR", "MC"])
     parser.add_argument("--split_by_charge", action="store_true", help="split templates by tau charge")
+    parser.add_argument("--trigger-sf-alpha", action="store_true", help="inc-WZ: trigger SF up/down include |1-alpha|")
     parser.add_argument("-q"   , "--queue" , type=str, default="longlunch"      , help="")
     parser.add_argument("-e"   , "--era"   , type=str, default="2018"           , help="")
     parser.add_argument("-f"   , "--force" , action="store_true"                , help="recreate files and jobs")
@@ -311,6 +313,7 @@ def main():
                 era=options.era,
                 zzdd=options.zzdd,
                 split_by_charge = "--split_by_charge" if options.split_by_charge else "",
+                trigger_sf_alpha = " --trigger-sf-alpha" if options.trigger_sf_alpha else "",
                 qawa_version=qawa_version,
                 coffea_image=coffea_image,
                 full_image=full_image,

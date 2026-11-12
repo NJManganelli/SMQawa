@@ -37,7 +37,8 @@ DAS_S = "/S/RunX-v1/NANOAODSIM"
 DAS_X = "/X/RunX-v1/NANOAODSIM"
 DAS_C = "/Muon0/Run2024C-v1/NANOAOD"
 DAS_D = "/Muon0/Run2024D-v1/NANOAOD"
-OPTIONS = {"era": "2024", "version": "v15", "pol": False, "split_by_charge": False, "split_FV": False}
+OPTIONS = {"era": "2024", "version": "v15", "pol": False, "split_by_charge": False, "split_FV": False,
+           "trigger_sf_alpha": False}
 CHANNELS = {"chA": ["triggers", "met_pt"], "chB": ["triggers", "~low"], "chEmpty": ["triggers", "empty"]}
 LABELS = [("nominal",), ("up",), ("down",)]
 CVMFS, needs_cvmfs = input_path(CVMFS_HEAD, "cms-griddata.cern.ch")
@@ -773,6 +774,19 @@ def test_constructor_consistency_errors():
             wzmod.wzinclusive_processor(era="2024", version="v15", **kwargs)
     proc = wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=reg, histserv_sample=DAS_S)
     assert proc.histserv_registry is reg and proc.histserv_sample == DAS_S
+
+
+@needs_cvmfs
+def test_registry_requires_trigger_sf_alpha(tmp_path, monkeypatch):
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(dict(hand_registry("mc"), format=2)))
+    with pytest.raises(ValueError, match="registry format 2"):
+        ho.read_registry(path)
+    path.write_text(json.dumps(dict(hand_registry("mc", dict(OPTIONS, trigger_sf_alpha=True)), format=ho.REGISTRY_FORMAT)))
+    registry = ho.read_registry(path)
+    monkeypatch.setattr(wzmod, "category_keys", lambda path, correction: ["nominal", "up", "down", "alpha_up"])
+    proc = wzmod.wzinclusive_processor(**registry["options"], histserv_registry=registry, histserv_sample=DAS_S)
+    assert proc._trigger_sf_alpha is True
 
 
 @needs_cvmfs

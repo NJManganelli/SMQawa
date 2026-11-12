@@ -6,6 +6,7 @@ from rich.table import Table
 from rich.markup import escape
 from coffea.util import coffea_console
 import correctionlib
+from correctionlib import schemav2
 
 # Directory of the installed `qawa` package (.../src/qawa). Anchoring on
 # __file__ makes data lookups independent of the current working directory,
@@ -164,6 +165,26 @@ _runII_v9_pogs_tags_pogtags_csets = (
     ("TAU", "Run2-2018-UL-NanoAODv9", "2026-03-25", "tau.json.gz"),
 )
 
+def era_label(era: str, isAPV: bool = False) -> str:
+    return f"{era}APV" if isAPV else era
+
+
+def trigger_sf_path(era_label: str, version: str) -> Path:
+    return _QAWA_DATA / "trigger_sf" / f"triggerSF_{era_label}_{version}.json"
+
+
+def btag_eff_path(era_label: str, version: str) -> Path:
+    return _QAWA_DATA / "btv" / f"btagEff_{era_label}_{version}.json"
+
+
+def category_keys(path, correction: str) -> list:
+    """Keys of the outermost category node of `correction` in the correctionlib json at `path`."""
+    with open(path) as fin:
+        cset = schemav2.CorrectionSet.model_validate_json(fin.read())
+    data = next(c for c in cset.corrections if c.name == correction).data
+    return [item.key for item in data.content]
+
+
 class CorrectionlibHandler:
     def __init__(self, era: str, analysis: str, subera: str | None = None, isAPV:bool = False, isEE:bool = False, isBPix:bool = False, nanoAODversion: str = "v15", cvmfs_head: str = "/cvmfs/"):
         self._era = era
@@ -275,33 +296,24 @@ class CorrectionlibHandler:
         self._paths["muon_smear_random"] = _QAWA_DATA / "muo" / "muon_smear_random.json"
         if analysis == "inc-WZ":
             run2_dddy = _QAWA_DATA / "dd" / "Run2" / ("WZ_inclusive_data_driven_Run2_v15.json" if self._ver == "v15" else "WZ_inclusive_data_driven_Run2.json")
+            label = era_label(self._era, self._subera == "preVFP")
             match self._era:
-                case "2024":
+                case "2024" | "2025":
                     # PLACEHOLDER - once Run 3 dddy (2024 only to start with) is derived, replace with Run3/...Run3.json
                     self._paths["dddy"] = _QAWA_DATA / "dd" / "Run3" / "WZ_inclusive_data_driven_Run3.json"
-                    self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
-                case "2025":
-                    # PLACEHOLDER - the 2024 data-driven estimate and trigger SFs stand in for 2025
-                    self._paths["dddy"] = _QAWA_DATA / "dd" / "Run3" / "WZ_inclusive_data_driven_Run3.json"
-                    self._paths["trigger_sf"] = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
-                # Correctionlib conversions of the legacy ROOT trigger SFs
-                # (histo_triggerEff_sel0_<era>.root), produced by
-                # convert_trigger_sf.py. These collapse the eta dependence of the
-                # source histograms via per-bin inverse-variance combination, so
-                # they are NOT yet a drop-in replacement for the eta-dependent
-                # legacy lookup. Uncomment a case to route that era through the
-                # correctionlib path in wztau2lnu_inclusive._add_trigger_sf.
-                case "2016":
+                    fallback_trigger_sf = _QAWA_DATA / "trigger_sf" / "triggerSF_2024.json"
+                case "2016" | "2017" | "2018":
                     self._paths["dddy"] = run2_dddy
-                #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2016.json")
-                case "2017":
-                    self._paths["dddy"] = run2_dddy
-                #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2017.json")
-                case "2018":
-                    self._paths["dddy"] = run2_dddy
-                #     self._paths["trigger_sf"] = Path("src/qawa/data/trigger_sf/triggerSF_2018.json")
+                    fallback_trigger_sf = _QAWA_DATA / "trigger_sf" / f"triggerSF_{self._era}.json"
                 case _:
-                    pass
+                    fallback_trigger_sf = None
+            derived_trigger_sf = trigger_sf_path(label, self._ver)
+            if derived_trigger_sf.exists():
+                self._paths["trigger_sf"] = derived_trigger_sf
+            elif fallback_trigger_sf is not None:
+                self._paths["trigger_sf"] = fallback_trigger_sf
+            if btag_eff_path(label, self._ver).exists():
+                self._paths["btag_eff"] = btag_eff_path(label, self._ver)
         elif analysis == "inc-ZZ":
             pass
         else:
