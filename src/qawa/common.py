@@ -171,7 +171,7 @@ def hlt_any(event, paths):
     passed = np.zeros(len(event), dtype='bool')
     for path in paths:
         if path in event.HLT.fields:
-            passed = passed | event.HLT[path]
+            passed = passed | ak.to_numpy(event.HLT[path])
         else:
             coffea_console.print(f'HLT_{path} not present in the data, skipped', markup=False)
     return passed

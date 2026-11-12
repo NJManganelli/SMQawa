@@ -32,6 +32,7 @@ from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
+from qawa.common import is_reference_stream, is_trigger_mc_dataset, lepton_triggers, reference_triggers
 from qawa.jsoncorrections import CorrectionlibHandler, category_keys
 from qawa.met_shim import prepare_met_for_factory
 # imported unconditionally (not inside the is_flashsim branch): a spawned
@@ -62,6 +63,7 @@ from qawa.polarization import (
 # _RECO_METHODS = ("smp20", "transvmlv")
 
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
+TRIGGER_SF_PT_EDGES = (20, 25, 30, 35, 40, 50, 60, 70)
 
 
 def dd_targetdddy_tag(compound_name):
@@ -931,6 +933,12 @@ class wzinclusive_processor(processor.ProcessorABC):
             'tau_loose_dR_looselep': _wh(
                 hist.axis.Regular(50, 0, np.pi, name="tau_loose_dR_looselep", label=r"$\Delta R(\tau (loose),looselep)$"),
             ),
+            'trigger_measurement': _wh(
+                hist.axis.Variable(TRIGGER_SF_PT_EDGES, name="trigger_lead_pt", label=r"$p_T^{l_1}$ (GeV)"),
+                hist.axis.Variable(TRIGGER_SF_PT_EDGES, name="trigger_trail_pt", label=r"$p_T^{l_2}$ (GeV)"),
+                hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_reference", label="reference trigger"),
+                hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_lepton", label="lepton trigger"),
+            ),
         }
         self.build_histos_pol = lambda: {
             'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt': _wh(
@@ -1128,7 +1136,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         else:
             selection.add('lumimask', np.ones(len(event), dtype='bool'))
         is_mc = not is_data
-        selection.add('triggers', trigger_rules(event, self._triggers, self._era, is_mc))
+        is_flashsim = event.metadata.get("is_flashsim", False)
+        # MET-stream data fills only the trigger measurement: its events are also in the lepton streams
+        reference_stream = is_data and is_reference_stream(dataset, self._triggers, self._era)
+        if not reference_stream:
+            selection.add('triggers', trigger_rules(event, self._triggers, self._era, is_mc))
         if self._jetveto is not None:
             selection.add('jetveto', ~ak.any(
                 self._jetveto.evaluate('jetvetomap', event.OrigJet.eta, event.OrigJet.phi), axis=1
@@ -1433,6 +1445,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         # subl_lep = ak.firsts(ak.where(dilep.l1.pt <= dilep.l2.pt, dilep.l1, dilep.l2),axis=1)
         lead_lep = ak.firsts(dilep.l1)
         subl_lep = ak.firsts(dilep.l2)
+        for flavour, mask in lepton_pair_flavours(lead_lep, subl_lep).items():
+            selection.add(f'trigger-{flavour}', ak.fill_none(mask, False))
 
 
         dilep_p4 = (lead_lep + subl_lep)
@@ -1826,9 +1840,10 @@ class wzinclusive_processor(processor.ProcessorABC):
                 for dddy_mcsyst in dddy_var.mc_systematics:
                     weights.add(f"datadriven_{dddy_mcsyst}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
-        common_sel = ['triggers', 'lumimask', 'goodPV', 'metfilter']
+        cleaning = ['lumimask', 'goodPV', 'metfilter']
         if "jetveto" in selection.names:
-            common_sel += ["jetveto"]
+            cleaning += ["jetveto"]
+        common_sel = ['triggers'] + cleaning
         channels = {
             "inc-SR0": common_sel + [
                 'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'high_met_pt',
@@ -1945,6 +1960,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             "inc-B01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt', 'tau_loosetovtight_high_wz_mt'],
             "Pol_reg": [],
             }
+        if reference_stream:
+            channels = {}
             
             
 
@@ -2078,6 +2095,20 @@ class wzinclusive_processor(processor.ProcessorABC):
                 fill_map('tau_vtight_upsilon', 'tau_vtight_pt', 'tau_vtight_upsilon_vs_pt')
                 fill_map('tau_tight_upsilon', 'tau_tight_pt', 'tau_tight_upsilon_vs_pt')
                 fill_map('tau_loose_upsilon', 'tau_loose_pt', 'tau_loose_upsilon_vs_pt')
+                if reference_stream or (is_mc and not is_flashsim and is_trigger_mc_dataset(dataset)):
+                    trigger_channels = ChannelSelections(selection, {
+                        f'trigger-{flavour}': cleaning + ['require-2lep', f'trigger-{flavour}']
+                        for flavour in ('mm', 'me', 'em', 'ee')
+                    })
+                    trigger_values = {
+                        'trigger_lead_pt': ak.to_numpy(ak.fill_none(lead_lep.pt, np.nan)),
+                        'trigger_trail_pt': ak.to_numpy(ak.fill_none(subl_lep.pt, np.nan)),
+                        'trigger_reference': reference_triggers(event, self._triggers, self._era).astype(int),
+                        'trigger_lepton': lepton_triggers(event, self._triggers, self._era).astype(int),
+                    }
+                    trigger_weight = weights.partial_weight(exclude=['triggerSF']) if is_mc else np.ones(len(event))
+                    fill(histos, 'trigger_measurement', trigger_values, nominal_labels,
+                         syst_weight(trigger_weight[np.newaxis]), trigger_channels)
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         if self.histserv_registry is not None:
