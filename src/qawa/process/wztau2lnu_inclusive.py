@@ -710,7 +710,7 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         if "trigger_sf" not in self.clibhandler.keys():
             raise ValueError(f"No trigger_sf correction registered for era {era} ({version})")
-        self._trigger_sf_alpha = trigger_sf_alpha
+        self.trigger_sf_alpha = trigger_sf_alpha
         if trigger_sf_alpha and "alpha_up" not in category_keys(self.clibhandler.getPath("trigger_sf"), "SF_mm"):
             raise ValueError(f"trigger_sf_alpha needs alpha_up/alpha_down, absent from {self.clibhandler.getPath('trigger_sf')}")
 
@@ -1099,7 +1099,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         flavours = lepton_pair_flavours(lead_lep, subl_lep)
         keys = ["nominal"]
         if variations:
-            keys += ["alpha_up", "alpha_down"] if self._trigger_sf_alpha else ["up", "down"]
+            keys += ["alpha_up", "alpha_down"] if self.trigger_sf_alpha else ["up", "down"]
         sfs = []
         for key in keys:
             values = {flavour: trigger_sf[f"SF_{flavour}"].evaluate(lead_lep.pt, subl_lep.pt, key) for flavour in flavours}

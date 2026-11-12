@@ -237,7 +237,7 @@ def m1_events(n=2000):
 
 @pytest.fixture
 def recorded_pass(monkeypatch):
-    """Runs only the chosen pass and records its Weights and the good jets built in it."""
+    """Runs only the chosen pass and records its Weights, event selection and the good jets built in it."""
     recorded = {}
 
     class RecordedWeights(wzmod.Weights):
@@ -245,12 +245,18 @@ def recorded_pass(monkeypatch):
             super().__init__(*args, **kwargs)
             recorded["weights"] = self
 
+    class RecordedSelection(wzmod.PackedSelection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            recorded.setdefault("selection", self)
+
     def recorded_build_jets(*args, **kwargs):
         good, bjets = build_jets(*args, **kwargs)
         recorded["good_jets"] = good[ak.argsort(good.pt, axis=1, ascending=False)]
         return good, bjets
     build_jets = wzmod.build_jets
     monkeypatch.setattr(wzmod, "Weights", RecordedWeights)
+    monkeypatch.setattr(wzmod, "PackedSelection", RecordedSelection)
     monkeypatch.setattr(wzmod, "build_jets", recorded_build_jets)
     process_shift = wzmod.wzinclusive_processor.process_shift
 
@@ -285,6 +291,15 @@ def test_processor_nominal_pass(monkeypatch, tmp_path, recorded_pass):
     proc._btag.append_btag_sf(recorded["good_jets"], alone, "WZto3LNu", variations=False)
     assert np.allclose(weights.weight(), weights.partial_weight(exclude=["btag_sf"]) * alone.weight(), rtol=1e-12)
     assert not np.allclose(alone.weight(), 1.0)
+    selection = recorded["selection"]
+    cleaning = ["lumimask", "goodPV", "metfilter"] + (["jetveto"] if "jetveto" in selection.names else [])
+    selected = selection.all("triggers", *cleaning, "require-2lep")
+    good_jets = recorded["good_jets"]
+    accepted = ak.to_numpy(ak.num(good_jets[np.abs(good_jets.eta) < wzmod.BTAG_MAX_ABSETA]))[selected]
+    total = recorded["out"]["btag_measurement"].values(flow=True).sum()
+    assert accepted.sum() > 0
+    assert np.isclose(total, (accepted * weights.partial_weight(exclude=["btag_sf"])[selected]).sum(), rtol=1e-9)
+    assert not np.isclose(total, (accepted * weights.weight()[selected]).sum(), rtol=1e-6)
 
 
 @needs_m1
@@ -308,3 +323,18 @@ def test_processor_without_payload(recorded_pass):
     assert "B-TAG SFs DISABLED" in captured.get()
     assert "btag_sf" not in recorded["weights"].weightStatistics
     assert not btag_labels(recorded["out"])
+
+
+@needs_m1
+@pytest.mark.parametrize("era", ["2024", "2025"])
+def test_jes_shift_names_match_process(era, monkeypatch):
+    built = []
+    process_shift = wzmod.wzinclusive_processor.process_shift
+
+    def record(self, event, shift_name=''):
+        built.append(shift_name)
+        return process_shift(self, event, shift_name) if shift_name is None else {}
+    monkeypatch.setattr(wzmod.wzinclusive_processor, "process_shift", record)
+    wzmod.wzinclusive_processor(era=era, version="v15").process(m1_events(200))
+    assert [name for name in built if name and (name.startswith("JES_") or name.startswith("JER"))] == \
+        list(wzmod.jes_shift_names(era))

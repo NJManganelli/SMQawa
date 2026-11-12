@@ -213,12 +213,17 @@ def derive_trigger_sf(data_hists, mc_hists):
             a = sf * np.abs(1 - alpha)
             values = {"nominal": sf, "up": sf + d_up, "down": sf - d_dn,
                       "alpha_up": sf + np.hypot(d_up, a), "alpha_down": sf - np.hypot(d_dn, a)}
-        empty = ~kinematically_empty & ((n[..., 1, :].sum(-1) <= 0) | ~filled_m | (eps_d == 0) | (eps_m == 0))
+        empty = ~kinematically_empty & ((n[..., 1, :].sum(-1) <= 0) | ~filled_m | (eps_d == 0) | (eps_m == 0)
+                                        | (total <= 0))
         valid = ~kinematically_empty & ~empty
+        floored = valid & ((values["down"] < 0) | (values["alpha_down"] < 0))
+        values["down"] = np.maximum(values["down"], 0.)
+        values["alpha_down"] = np.maximum(values["alpha_down"], 0.)
         empty_values = {"nominal": 1., "up": 2., "down": 0., "alpha_up": 2., "alpha_down": 0.}
         grids[flavour] = {key: np.where(valid, values[key], np.where(empty, empty_values[key], 1.))
                           for key in TRIGGER_SF_SYSTEMATICS}
         coffea_console.print(f"SF_{flavour}: {int(clipped.sum())} MC cells with a clipped efficiency; "
+                             f"{int(floored.sum())} cells with a Down variation floored at 0; "
                              f"empty (lead, trail) bins: {[tuple(map(int, ij)) for ij in np.argwhere(empty)]}", markup=False)
         for i, j in np.argwhere(valid):
             coffea_console.print(f"SF_{flavour} lead [{lead_edges[i]:g},{lead_edges[i + 1]:g}) trail "

@@ -42,7 +42,7 @@ class ClibShim:
 
 
 def processor_shim(path, alpha=False):
-    return SimpleNamespace(clibhandler=ClibShim(path), _trigger_sf_alpha=alpha)
+    return SimpleNamespace(clibhandler=ClibShim(path), trigger_sf_alpha=alpha)
 
 
 def leptons(lead_pdg, subl_pdg, lead_pt, subl_pt, lead_eta=0.5, subl_eta=0.5):
@@ -100,7 +100,7 @@ def test_json_matches_root_combination(era):
 @needs_cvmfs
 def test_flavour_masks_use_pdgid_only():
     handler = CorrectionlibHandler(era="2018", analysis="inc-WZ", nanoAODversion="v15", cvmfs_head=CVMFS_HEAD)
-    shim = SimpleNamespace(clibhandler=handler, _trigger_sf_alpha=False)
+    shim = SimpleNamespace(clibhandler=handler, trigger_sf_alpha=False)
     for lead_pdg, subl_pdg in [(13, 13), (13, 11), (11, 13), (11, 11)]:
         negative = trigger_weights(shim, *leptons(lead_pdg, subl_pdg, [45.0], [32.5], -2.0, -2.0))
         positive = trigger_weights(shim, *leptons(lead_pdg, subl_pdg, [45.0], [32.5], 2.0, 2.0))

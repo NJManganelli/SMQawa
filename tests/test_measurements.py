@@ -107,6 +107,23 @@ def test_trigger_sf_arithmetic(booked, tmp_path):
     assert all(np.all(np.isfinite(c.data.content[k].value.content)) for c in cset.corrections for k in range(5))
 
 
+def test_trigger_sf_bounds(booked):
+    data, mc = booked()["trigger_measurement"], booked()["trigger_measurement"]
+    for trail in (22.5, 37.5):
+        fill_trigger(data, "trigger-mm", 55., trail, 1, 0, 1 if trail < 30 else 5)
+        fill_trigger(data, "trigger-mm", 55., trail, 1, 1, 1 if trail < 30 else 5)
+        fill_trigger(mc, "trigger-mm", 55., trail, 1, 0, 1 if trail < 30 else 5, 2.0)
+        fill_trigger(mc, "trigger-mm", 55., trail, 1, 1, 1 if trail < 30 else 5, 2.0)
+    fill_trigger(mc, "trigger-mm", 55., 37.5, 0, 0, 10, -2.0)
+    mm = measurements.derive_trigger_sf([data], [mc])[0]["mm"]
+    expected = expected_bin(1, 1, {(0, 0): 0., (0, 1): 0., (1, 0): 2., (1, 1): 2.})[0]
+    assert expected["down"] < 0 and expected["alpha_down"] < 0
+    assert mm["down"][5, 0] == 0. and mm["alpha_down"][5, 0] == 0.
+    assert np.isclose(mm["up"][5, 0], expected["up"], rtol=1e-10)
+    assert [mm[key][5, 3] for key in measurements.TRIGGER_SF_SYSTEMATICS] == [1., 2., 0., 2., 0.]
+    assert all(np.all(np.isfinite(grid)) and np.all(grid >= 0) for grid in mm.values())
+
+
 def records_with(h, dataset, kind):
     return {dataset: {"hist": {"trigger_measurement": h}, "sumw": 1.0, "kind": kind}}
 

@@ -94,19 +94,18 @@ class BTVCorrector:
         self.clib = clibhandler.getCorrectionSet("btagging")
         if bc_correction not in BC_CORRECTIONS or f"{tagger}_{bc_correction}" not in list(self.clib):
             raise ValueError(f"b/c correction {tagger}_{bc_correction} is not in {clibhandler.getPath('btagging')}")
-        self._bc_name = f"{tagger}_{bc_correction}"
-        self._light_name = f"{tagger}_light"
+        self.bc_name = f"{tagger}_{bc_correction}"
+        self.light_name = f"{tagger}_light"
         self.efficiency_available = tagger == "UParTAK4" and "btag_eff" in clibhandler.keys()
         self.guard_counts = {}
-        self._inclusive_reported = set()
+        self.inclusive_reported = set()
         if tagger != "UParTAK4":
             return
-        bc_systematics = category_keys(clibhandler.getPath("btagging"), self._bc_name)
-        self._bc_systematics = set(bc_systematics)
-        unmatched = [s for s in jes_shifts if btv_shift_systematic(s) not in self._bc_systematics]
+        bc_systematics = category_keys(clibhandler.getPath("btagging"), self.bc_name)
+        unmatched = [s for s in jes_shifts if btv_shift_systematic(s) not in set(bc_systematics)]
         self.paired = bool(jes_shifts) and not unmatched
         if not self.paired:
-            coffea_console.print(f"[BTVCorrector] {self._bc_name} has no systematics for the shifts "
+            coffea_console.print(f"[BTVCorrector] {self.bc_name} has no systematics for the shifts "
                                  f"{unmatched or 'none given'}: b-tag SFs are not paired with JES/JER passes, "
                                  "using correlated/uncorrelated in the nominal pass", markup=False)
         era_name = self._erasuberanousc
@@ -121,11 +120,10 @@ class BTVCorrector:
                                 f"light_uncorrelated_{era_name}": ("light", "uncorrelated"),
                                 f"effstat_{era_name}": ("eff", None)})
         if self.efficiency_available:
-            self._eff = clibhandler.getCorrectionSet("btag_eff")["btag_eff"]
-            self._eff_processes = set(category_keys(clibhandler.getPath("btag_eff"), "btag_eff"))
+            self.efficiency_correction = clibhandler.getCorrectionSet("btag_eff")["btag_eff"]
+            self.efficiency_processes = set(category_keys(clibhandler.getPath("btag_eff"), "btag_eff"))
 
     def tagged_jets(self, jets: ak.Array, wp=None):
-        # permits possible multi-WP expansion in the future
         if wp is None:
             wps = [self._wp]
         elif isinstance(wp, str):
@@ -141,22 +139,22 @@ class BTVCorrector:
                                               np.asarray(jets.pt))
 
     def efficiency(self, jets, process, wp, systematic):
-        if process not in self._eff_processes:
+        if process not in self.efficiency_processes:
             process_key = "inclusive"
-            if process not in self._inclusive_reported:
-                self._inclusive_reported.add(process)
+            if process not in self.inclusive_reported:
+                self.inclusive_reported.add(process)
                 coffea_console.print(f"[BTVCorrector] no b-tag efficiency for {process}, using inclusive", markup=False)
         else:
             process_key = process
-        return self._eff.evaluate(process_key, systematic, wp, np.asarray(jets.hadronFlavour), np.asarray(jets.pt),
+        return self.efficiency_correction.evaluate(process_key, systematic, wp, np.asarray(jets.hadronFlavour), np.asarray(jets.pt),
                                   np.abs(np.asarray(jets.eta)))
 
     def jet_factors(self, jets, light, process, bc_systematic, light_systematic, eff_systematic):
         sf, eff = {}, {}
         for wp in self.wps:
             sf[wp] = np.ones(len(light))
-            sf[wp][light] = self.scale_factor(jets[light], self._light_name, light_systematic, wp)
-            sf[wp][~light] = self.scale_factor(jets[~light], self._bc_name, bc_systematic, wp)
+            sf[wp][light] = self.scale_factor(jets[light], self.light_name, light_systematic, wp)
+            sf[wp][~light] = self.scale_factor(jets[~light], self.bc_name, bc_systematic, wp)
             eff[wp] = self.efficiency(jets, process, wp, eff_systematic)
         passed = {wp: np.asarray(tagged) for wp, tagged in self.tagged_jets(jets, wp=list(self.wps)).items()}
         return method1a_weight(sf, eff, passed, self.wps)

@@ -786,7 +786,7 @@ def test_registry_requires_trigger_sf_alpha(tmp_path, monkeypatch):
     registry = ho.read_registry(path)
     monkeypatch.setattr(wzmod, "category_keys", lambda path, correction: ["nominal", "up", "down", "alpha_up"])
     proc = wzmod.wzinclusive_processor(**registry["options"], histserv_registry=registry, histserv_sample=DAS_S)
-    assert proc._trigger_sf_alpha is True
+    assert proc.trigger_sf_alpha is True
 
 
 @needs_cvmfs
