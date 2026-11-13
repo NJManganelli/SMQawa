@@ -539,6 +539,9 @@ class wzinclusive_processor(processor.ProcessorABC):
             # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
             jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
             jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
+            # one map for 2016 preVFP and postVFP; 'jetvetomap' type. For 2018 the 'jetvetomap' already contains the
+            # HEM 15/16 box (eta -3.0 to -1.3, phi -1.57 to -0.87; identical to 'jetvetomap_hem1516'), so the HEM region
+            # is vetoed for the full year, in data and MC alike
             jetveto_tag = f'Summer19UL{self._era[-2:]}_V1'
         elif len(run_period)==0:
             if self._era == '2016':
