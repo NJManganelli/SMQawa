@@ -1,20 +1,18 @@
-import correctionlib
-import pickle
-import hist
-import gzip
-import os
-from pathlib import Path
-from hist.intervals import clopper_pearson_interval
-
-from coffea.lookup_tools import dense_lookup
-from coffea.lookup_tools import dense_lookup
-from coffea.lookup_tools.correctionlib_wrapper import correctionlib_wrapper
-from coffea.analysis_tools import Weights
-from coffea.util import coffea_console
+import re
 
 import awkward as ak
 import numpy as np
-import uproot
+from coffea.analysis_tools import Weights
+from coffea.util import coffea_console
+
+from qawa.jsoncorrections import category_keys
+
+FIXED_WPS = {"deepJet": ("L", "M", "T"), "UParTAK4": ("L", "M", "T", "XT", "XXT")}
+BTAG_MAX_ABSETA = 2.4
+BC_CORRECTIONS = ("comb", "mujets")
+SUMMARY_SYSTEMATICS = {"central", "up", "down", "up_correlated", "down_correlated", "up_uncorrelated", "down_uncorrelated"}
+JES_SHIFT_PATTERN = re.compile(r"^JES_([A-Za-z]+\d?)(\d{4})?(Up|Down)$")
+
 
 def btag_disc_wps(tagger:str='deepJet'):
     _disc_wps = {
@@ -33,11 +31,47 @@ def btag_disc_wps(tagger:str='deepJet'):
         },
     }
     return _disc_wps[tagger]
-    
+
+
+def btv_shift_systematic(shift_name):
+    """BTV systematic paired with a processor JES-source or JER shift, None for any other shift."""
+    if shift_name in ("JERUp", "JERDown"):
+        return f"{shift_name[3:].lower()}_jer"
+    match = JES_SHIFT_PATTERN.match(shift_name or "")
+    if match is None:
+        return None
+    source, year, direction = match.groups()
+    return f"{direction.lower()}_jes_{source.lower()}" + (f"_{year}" if year else "")
+
+
+def method1a_weight(sf, eff, passed, wps):
+    """Per-jet BTV fixed-WP method 1a factors for the WPs `wps` (loose to tight).
+
+    sf, eff and passed map each WP to flat per-jet arrays. Returns (factor, guarded): a jet whose
+    factor has a non-positive numerator or denominator is guarded and gets factor 1.
+    """
+    sf_eff = np.stack([np.ones_like(eff[wps[0]])] + [sf[wp] * eff[wp] for wp in wps])
+    eps = np.stack([np.ones_like(eff[wps[0]])] + [eff[wp] for wp in wps])
+    npassed = np.sum([np.asarray(passed[wp], dtype=int) for wp in wps], axis=0)
+    tight = npassed == len(wps)
+    lower = np.minimum(npassed, len(wps) - 1)
+    jets = np.arange(len(npassed))
+    numerator = sf_eff[lower, jets] - np.where(tight, 0., sf_eff[lower + 1, jets])
+    denominator = eps[lower, jets] - np.where(tight, 0., eps[lower + 1, jets])
+    guarded = ~tight & ((numerator <= 0) | (denominator <= 0))
+    factor = np.where(tight, sf[wps[-1]], np.where(guarded, 1., numerator / np.where(guarded, 1., denominator)))
+    return factor, guarded
+
+
 class BTVCorrector:
-    def __init__(self, era:str='2018', wp:str='L', tagger:str='deepJet', isAPV=False, isEE=False, isBPix=False, clibhandler=None):
-        assert tagger in ["deepJet", "UParTAK4"]
-        assert wp in ["L", "M", "T", "XT", "XXT"]
+    weight_names = ("btag_sf",)
+
+    def __init__(self, era:str='2018', wp:str='L', tagger:str='deepJet', isAPV=False, isEE=False, isBPix=False,
+                 clibhandler=None, wps=None, bc_correction="comb", *, jes_shifts, apply_sf=True):
+        if clibhandler is None:
+            raise ValueError("BTVCorrector needs a CorrectionlibHandler")
+        assert tagger in FIXED_WPS
+        assert wp in FIXED_WPS[tagger]
         self._era = era
         self._wp  = wp
         self.isAPV = isAPV
@@ -45,8 +79,6 @@ class BTVCorrector:
         self.isBPix = isBPix
         self._tagger = tagger
         self._disc = btag_disc_wps(tagger=tagger)["discriminant"]
-        self.eff_hist = None
-        _data_path = Path(os.path.dirname(__file__)) / 'data'
         self._erasubera = era
         if isAPV:
             self._erasubera += "_APV"
@@ -55,72 +87,44 @@ class BTVCorrector:
         elif isBPix:
             self._erasubera += "_BPix"
         self._erasuberanousc = self._erasubera.replace("_", "")
-        eff_path = Path(f"{_data_path}/btv/{self._erasubera}_UL/eff-btag-{self._erasubera}.pkl.gz") # Run 2 compatible version
-        if eff_path.exists():
-            with gzip.open(eff_path, 'rb') as ifile:
-                self.eff_hist = pickle.loads(ifile.read())
-            # Run 2 UL efficiencies only contain deepJet; skip them for other taggers (e.g. UParTAK4 in Run 2 NanoAODv15)
-            if self._tagger not in list(self.eff_hist.axes['tagger']):
-                coffea_console.print(f"[BTVCorrector] no {self._tagger} efficiencies in {eff_path}, skipping efficiency lookup", markup=False)
-                self.eff_hist = None
-
-        if self.eff_hist is not None:
-            b_tag = self.eff_hist[{'tagger':self._tagger, 'WP': wp, 'passWP': 1  }].values()
-            b_all = self.eff_hist[{'tagger':self._tagger, 'WP': wp, 'passWP': sum}].values()
-    
-            nom = b_tag / np.maximum(b_all, 1.)
-            dw, up = clopper_pearson_interval(b_tag, b_all)
-    
-            self.eff        = dense_lookup.dense_lookup(nom,[ax.edges for ax in self.eff_hist.axes[3:]])
-            self.eff_statUp = dense_lookup.dense_lookup(up ,[ax.edges for ax in self.eff_hist.axes[3:]])
-            self.eff_statDw = dense_lookup.dense_lookup(dw ,[ax.edges for ax in self.eff_hist.axes[3:]])
-
-        # FIXME This will need better correctionlib handling in the future, akin to __init_legacy__ vs __init_clib__ in other functions perhaps
-        if clibhandler is not None:
-            self.clib = clibhandler.getCorrectionSet("btagging")
+        self.wps = (wp,) if wps is None else tuple(wps)
+        order = [FIXED_WPS[tagger].index(w) for w in self.wps if w in FIXED_WPS[tagger]]
+        if len(order) != len(self.wps) or order != sorted(set(order)):
+            raise ValueError(f"wps {self.wps} must be distinct {tagger} fixed WPs from loose to tight {FIXED_WPS[tagger]}")
+        self.clib = clibhandler.getCorrectionSet("btagging")
+        if bc_correction not in BC_CORRECTIONS or f"{tagger}_{bc_correction}" not in list(self.clib):
+            raise ValueError(f"b/c correction {tagger}_{bc_correction} is not in {clibhandler.getPath('btagging')}")
+        self.bc_name = f"{tagger}_{bc_correction}"
+        self.light_name = f"{tagger}_light"
+        self.efficiency_available = tagger == "UParTAK4" and "btag_eff" in clibhandler.keys()
+        self.guard_counts = {}
+        self.inclusive_reported = set()
+        self.apply_sf = apply_sf
+        if tagger != "UParTAK4" or not apply_sf:
+            return
+        bc_systematics = category_keys(clibhandler.getPath("btagging"), self.bc_name)
+        unmatched = [s for s in jes_shifts if btv_shift_systematic(s) not in set(bc_systematics)]
+        self.paired = bool(jes_shifts) and not unmatched
+        if not self.paired:
+            coffea_console.print(f"[BTVCorrector] {self.bc_name} has no systematics for the shifts "
+                                 f"{unmatched or 'none given'}: b-tag SFs are not paired with JES/JER passes, "
+                                 "using correlated/uncorrelated in the nominal pass", markup=False)
+        era_name = self._erasuberanousc
+        if self.paired:
+            sources = dict.fromkeys(s.split("_", 1)[1] for s in bc_systematics
+                                    if s not in SUMMARY_SYSTEMATICS and "jes" not in s and "jer" not in s)
+            self.variations = {(f"bc_{src}_{era_name}" if src == "statistic" else f"bc_{src}"): ("bc", src)
+                               for src in sources}
         else:
-            self.clib = correctionlib.CorrectionSet.from_file(
-                f"{_data_path}/btv/{self._erasubera}_UL/"
-                f"btagging.json.gz"
-            )
-
-        
-    def lightSF(self, jet, syst="central"):
-        # syst: central, down, down_correlated, down_uncorrelated, up, up_correlated
-        # until correctionlib handles jagged data natively we have to flatten and unflatten
-        njets = ak.num(jet)
-        jet  = ak.flatten(jet)
-        sf = self.clib[f"{self._tagger}_incl"].evaluate(
-            syst, self._wp,
-            np.array(jet.hadronFlavour), 
-            np.array(abs(jet.eta)), 
-            np.array(jet.pt)
-        )
-        return ak.unflatten(sf, njets)
-    
-    def btagSF(self, jet, syst="central"):
-        # syst: central, down, down_correlated, down_uncorrelated, up, up_correlated
-        # until correctionlib handles jagged data natively we have to flatten and unflatten
-        # the jets have to be split between light and c/b quarks
-        njets = ak.num(jet)
-        jet  = ak.flatten(jet)
-        sf = self.clib[f"{self._tagger}_comb"].evaluate(
-            syst, self._wp,
-            np.array(jet.hadronFlavour),
-            np.array(abs(jet.eta)),
-            np.array(jet.pt)
-        )
-        return ak.unflatten(sf, njets)
-
-    def combine(self, eff, sf, b_tagged):
-        # tagged SF = SF*eff / eff = SF
-        tagged_sf = ak.prod(sf[b_tagged], axis=-1)
-        # untagged SF = (1 - SF*eff) / (1 - eff)
-        untagged_sf = ak.prod(((1 - sf*eff) / (1 - eff))[~b_tagged], axis=-1)
-        return ak.fill_none(tagged_sf * untagged_sf, 1.)
+            self.variations = {"bc_correlated": ("bc", "correlated"), f"bc_uncorrelated_{era_name}": ("bc", "uncorrelated")}
+        self.variations.update({"light_correlated": ("light", "correlated"),
+                                f"light_uncorrelated_{era_name}": ("light", "uncorrelated"),
+                                f"effstat_{era_name}": ("eff", None)})
+        if self.efficiency_available:
+            self.efficiency_correction = clibhandler.getCorrectionSet("btag_eff")["btag_eff"]
+            self.efficiency_processes = set(category_keys(clibhandler.getPath("btag_eff"), "btag_eff"))
 
     def tagged_jets(self, jets: ak.Array, wp=None):
-        # permits possible multi-WP expansion in the future
         if wp is None:
             wps = [self._wp]
         elif isinstance(wp, str):
@@ -131,75 +135,78 @@ class BTVCorrector:
             raise ValueError(f"Unhandled tagged_jets logic: self._wp={self._wp} ; wp={wp} ; wps={wps}")
         return {wp: (getattr(jets, self._disc)  > self.clib[f"{self._tagger}_wp_values"].evaluate(wp)) for wp in wps}
 
-    def append_btag_sf(self, jets: ak.Array, weights: Weights):
-        if not hasattr(self, "eff"):
-            raise ValueError("The efficiency lookups were not loaded for the BTVCorrector, possibly due to lack of correctionlib implementation or failure to find the path")
-        # Eventually we may be able to migrate to a smarter compound lookup: https://cms-talk.web.cern.ch/t/suggestion-on-the-scope-of-provided-correctionlib-files/141772/4
-        eta_max = 2.4 if "2016" in self._era else 2.5
-        li_jets = jets[(jets.hadronFlavour==0) & (np.abs(jets.eta) <= eta_max)]
-        bc_jets = jets[(jets.hadronFlavour!=0) & (np.abs(jets.eta) <= eta_max)]
-        
-        b_tagged_li = (getattr(li_jets, self._disc)  > self.clib[f"{self._tagger}_wp_values"].evaluate(self._wp))
-        b_tagged_bc = (getattr(bc_jets, self._disc)  > self.clib[f"{self._tagger}_wp_values"].evaluate(self._wp))
+    def scale_factor(self, jets, correction, systematic, wp):
+        return self.clib[correction].evaluate(systematic, wp, np.asarray(jets.hadronFlavour), np.abs(np.asarray(jets.eta)),
+                                              np.asarray(jets.pt))
 
-        eff_li_nom = self.eff(li_jets.hadronFlavour, li_jets.pt, np.abs(li_jets.eta))
-        eff_bc_nom = self.eff(bc_jets.hadronFlavour, bc_jets.pt, np.abs(bc_jets.eta))
-        eff_li_up  = self.eff_statUp(li_jets.hadronFlavour, li_jets.pt, np.abs(li_jets.eta))
-        eff_bc_up  = self.eff_statUp(bc_jets.hadronFlavour, bc_jets.pt, np.abs(bc_jets.eta))
-        eff_li_dw  = self.eff_statDw(li_jets.hadronFlavour, li_jets.pt, np.abs(li_jets.eta))
-        eff_bc_dw  = self.eff_statDw(bc_jets.hadronFlavour, bc_jets.pt, np.abs(bc_jets.eta))
+    def efficiency(self, jets, process, wp, systematic):
+        if process not in self.efficiency_processes:
+            process_key = "inclusive"
+            if process not in self.inclusive_reported:
+                self.inclusive_reported.add(process)
+                coffea_console.print(f"[BTVCorrector] no b-tag efficiency for {process}, using inclusive", markup=False)
+        else:
+            process_key = process
+        return self.efficiency_correction.evaluate(process_key, systematic, wp, np.asarray(jets.hadronFlavour), np.asarray(jets.pt),
+                                                   np.abs(np.asarray(jets.eta)))
 
-        sf_nom_li = self.combine(eff_li_nom, self.lightSF(li_jets, 'central'), b_tagged_li)
-        sf_nom_bc = self.combine(eff_bc_nom, self.btagSF(bc_jets, 'central'), b_tagged_bc)
-        sf_nom = sf_nom_li * sf_nom_bc
+    def jet_factors(self, jets, light, process, bc_systematic, light_systematic, eff_systematic):
+        sf, eff = {}, {}
+        for wp in self.wps:
+            sf[wp] = np.ones(len(light))
+            sf[wp][light] = self.scale_factor(jets[light], self.light_name, light_systematic, wp)
+            sf[wp][~light] = self.scale_factor(jets[~light], self.bc_name, bc_systematic, wp)
+            eff[wp] = self.efficiency(jets, process, wp, eff_systematic)
+        passed = {wp: np.asarray(tagged) for wp, tagged in self.tagged_jets(jets, wp=list(self.wps)).items()}
+        return method1a_weight(sf, eff, passed, self.wps)
 
-        # nominal scale factors
-        weights.add('btag_sf_light', sf_nom_li)
-        weights.add('btag_sf_bc'   , sf_nom_bc)
-        weights.add('btag_sf_nom'  , sf_nom)
+    def append_btag_sf(self, jets: ak.Array, weights: Weights, process, shift_name=None, variations=True):
+        if self._tagger != "UParTAK4":
+            raise NotImplementedError("b-tag SF weights are implemented for UParTAK4 (NanoAODv15) only")
+        if not self.apply_sf:
+            raise ValueError("this BTVCorrector was built with apply_sf=False")
+        accepted = jets[np.abs(jets.eta) < BTAG_MAX_ABSETA]
+        counts = ak.num(accepted)
+        flat = ak.flatten(accepted)
+        flat = ak.zip({field: np.asarray(flat[field]) for field in ("pt", "eta", "hadronFlavour", self._disc)})
+        light = np.asarray(flat.hadronFlavour) == 0
+        bc_nominal = "central"
+        if self.paired and btv_shift_systematic(shift_name) is not None:
+            bc_nominal = btv_shift_systematic(shift_name)
 
-        # statistical uncertainties
-        weights.add(
-            f'btag_sf_stat',
-            np.ones(len(sf_nom)),
-            weightUp  = self.combine(
-                eff_li_up, self.lightSF(li_jets, 'central'), b_tagged_li
-            ) * self.combine(
-                eff_bc_up, self.btagSF(bc_jets, 'central'), b_tagged_bc
-            ) / (sf_nom_li*sf_nom_bc),
-            weightDown= self.combine(
-                eff_li_dw, self.lightSF(li_jets, 'central'), b_tagged_li
-            ) * self.combine(
-                eff_bc_dw, self.btagSF(bc_jets, 'central'), b_tagged_bc
-            ) / (sf_nom_li*sf_nom_bc)
-        )
+        def event_weight(factor):
+            return ak.to_numpy(ak.prod(ak.unflatten(factor, counts), axis=1))
 
-        # uncorrelated uncertainties
-        weights.add(
-            f'btag_sf_light_{self._erasuberanousc}',
-            np.ones(len(sf_nom)),
-            weightUp  = self.combine(eff_li_nom, self.lightSF(li_jets, 'up'), b_tagged_li),
-            weightDown= self.combine(eff_li_nom, self.lightSF(li_jets, 'down'), b_tagged_li)
-        )
-        weights.add(
-            f'btag_sf_bc_{self._erasuberanousc}',
-            np.ones(len(sf_nom)),
-            weightUp  = self.combine(eff_bc_nom, self.btagSF(bc_jets, 'up'), b_tagged_bc),
-            weightDown= self.combine(eff_bc_nom, self.btagSF(bc_jets, 'down'), b_tagged_bc)
-        )
+        nominal, guarded = self.jet_factors(flat, light, process, bc_nominal, "central", "nominal")
+        self.report_guarded(shift_name, int(guarded.sum()))
+        if not variations:
+            weights.add("btag_sf", event_weight(nominal))
+            return
+        names, ups, downs = [], [], []
+        for name, (group, source) in self.variations.items():
+            shifted = []
+            for direction in ("up", "down"):
+                bc_syst, light_syst, eff_syst = bc_nominal, "central", "nominal"
+                if group == "bc":
+                    bc_syst = f"{direction}_{source}"
+                elif group == "light":
+                    light_syst = f"{direction}_{source}"
+                else:
+                    eff_syst = direction
+                factor, guarded_var = self.jet_factors(flat, light, process, bc_syst, light_syst, eff_syst)
+                self.report_guarded(shift_name, int(guarded_var.sum()))
+                shifted.append(event_weight(np.where(guarded_var | guarded, nominal, factor)))
+            names.append(name)
+            ups.append(shifted[0])
+            downs.append(shifted[1])
+        weights.add_multivariation("btag_sf", event_weight(nominal), names, ups, downs)
 
-        # correlated uncertainties
-        weights.add(
-            'btag_sf_light_correlated',
-            np.ones(len(sf_nom)),
-            weightUp  = self.combine(eff_li_nom, self.lightSF(li_jets, 'up_correlated'), b_tagged_li),
-            weightDown= self.combine(eff_li_nom, self.lightSF(li_jets, 'down_correlated'), b_tagged_li)
-        )
-        weights.add(
-            'btag_sf_bc_correlated',
-            np.ones(len(sf_nom)),
-            weightUp  = self.combine(eff_bc_nom, self.btagSF(bc_jets, 'up_correlated'), b_tagged_bc),
-            weightDown= self.combine(eff_bc_nom, self.btagSF(bc_jets, 'down_correlated'), b_tagged_bc)
-        )
-
-        return sf_nom
+    def report_guarded(self, pass_name, count):
+        if count == 0:
+            return
+        first = pass_name not in self.guard_counts
+        self.guard_counts[pass_name] = self.guard_counts.get(pass_name, 0) + count
+        if first:
+            coffea_console.print(f"[BTVCorrector] {count} jets with a non-positive method-1a numerator or denominator "
+                                 f"in pass {pass_name}: factor 1 in the nominal, nominal factor in variations",
+                                 markup=False)

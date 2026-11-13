@@ -72,7 +72,7 @@ def test_unimplemented_run3_eras_raise(era):
 def test_trigger_rules_keys():
     with open(os.path.join(DATA_PATH, "2025-trigger-rules.yaml")) as f:
         rules = yaml.load(f, Loader=yaml.FullLoader)
-    assert set(rules) == {"Run2025.Muon", "Run2025.EGamma", "Run2025.MuonEG", "Run2025.MC"}
+    assert set(rules) == {"Run2025.Muon", "Run2025.EGamma", "Run2025.MuonEG", "Run2025.MC", "Run2025.Reference"}
     with open(os.path.join(DATA_PATH, "2024-trigger-rules.yaml")) as f:
         rules_2024 = yaml.load(f, Loader=yaml.FullLoader)
     assert {k.replace("2025", "2024"): v for k, v in rules.items()} == rules_2024

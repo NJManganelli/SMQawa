@@ -1,6 +1,7 @@
 from coffea.lookup_tools import dense_lookup
 from coffea.analysis_tools import Weights
 from coffea import processor
+from coffea.util import coffea_console
 from scipy import interpolate
 from coffea.nanoevents.methods import candidate
 from coffea.jetmet_tools.CorrectedMETFactory import corrected_polar_met
@@ -154,6 +155,36 @@ def met_phi_xy_correction(met, run, npv, is_mc:bool=False, era:str='2016', jet_t
     met['phi'] = phi_
     return met
 
+def dataset_stream(dataset):
+    return re.split('[_/]', dataset)[0].rstrip('0123456789')
+
+
+def is_reference_stream(dataset, rules, era):
+    return dataset_stream(dataset) in rules[f'Run{era}.Reference']['streams']
+
+
+def is_trigger_mc_dataset(dataset):
+    return dataset.lower().startswith('ttto2l2nu')
+
+
+def hlt_any(event, paths):
+    passed = np.zeros(len(event), dtype='bool')
+    for path in paths:
+        if path in event.HLT.fields:
+            passed = passed | ak.to_numpy(event.HLT[path])
+        else:
+            coffea_console.print(f'HLT_{path} not present in the data, skipped', markup=False)
+    return passed
+
+
+def reference_triggers(event, rules, era):
+    return hlt_any(event, rules[f'Run{era}.Reference']['pass'])
+
+
+def lepton_triggers(event, rules, era):
+    return hlt_any(event, rules[f'Run{era}.MC']['pass'])
+
+
 def trigger_rules(event, rules:dict, era:str='2018', isMC: bool = False):
     ds_names_ = {
         '2016' : ['DoubleMuon', 'SingleMuon', 'DoubleEG', 'SingleElectron', 'MuonEG'],
@@ -170,7 +201,7 @@ def trigger_rules(event, rules:dict, era:str='2018', isMC: bool = False):
     if isMC:
         ds_name = 'MC'
     else:
-        stream = re.split('[_/]', event.metadata['dataset'])[0].rstrip('0123456789')
+        stream = dataset_stream(event.metadata['dataset'])
         ds_name = stream if stream in ds_names_[era] else ''
 
     key = f'Run{era}.{ds_name}'

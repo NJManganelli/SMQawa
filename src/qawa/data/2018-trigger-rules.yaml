@@ -110,3 +110,24 @@ Run2018.MC:
         - Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ
         - Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL
     veto: []
+
+Run2018.Reference:
+    streams: [MET]
+    pass:
+        - PFMET110_PFMHT110_IDTight
+        - PFMET120_PFMHT120_IDTight
+        - PFMET130_PFMHT130_IDTight
+        - PFMET140_PFMHT140_IDTight
+        - PFMET120_PFMHT120_IDTight_PFHT60
+        - PFMETNoMu110_PFMHTNoMu110_IDTight
+        - PFMETNoMu120_PFMHTNoMu120_IDTight
+        - PFMETNoMu130_PFMHTNoMu130_IDTight
+        - PFMETNoMu140_PFMHTNoMu140_IDTight
+        - PFMETNoMu120_PFMHTNoMu120_IDTight_PFHT60
+        - PFMETTypeOne110_PFMHT110_IDTight
+        - PFMETTypeOne120_PFMHT120_IDTight
+        - PFMETTypeOne130_PFMHT130_IDTight
+        - PFMETTypeOne140_PFMHT140_IDTight
+        - PFMETTypeOne120_PFMHT120_IDTight_PFHT60
+        - PFMET200_HBHE_BeamHaloCleaned
+        - PFMETTypeOne200_HBHE_BeamHaloCleaned

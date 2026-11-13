@@ -88,7 +88,7 @@ ALLOWED = {
 
 # build_histos booked 75 keys at 76984ce; this PR removes 5 never-filled bookings. The pol builder booked 35
 # (107 with the signal clones).
-BOOKED_COUNTS = {"standard": 70, "pol": 35, "pol_signal": 107}
+BOOKED_COUNTS = {"standard": 72, "pol": 35, "pol_signal": 107}
 
 
 def read_map():

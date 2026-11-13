@@ -168,9 +168,7 @@ def appenders(proc, events, era, version):
         "pileup": (len(events), lambda w, v: proc._purw.append_pileup_weight(w, events.Pileup.nTrueInt, variations=v)),
     }
     lead, subl = leading_pair(events)
-    if "trigger_sf" in proc.clibhandler.keys():
-        calls["trigger"] = (len(lead), lambda w, v: proc._add_trigger_sf(w, lead, subl, clibhandler=proc.clibhandler,
-                                                                        variations=v))
+    calls["trigger"] = (len(lead), lambda w, v: proc._add_trigger_sf(w, lead, subl, variations=v))
     sfs = lepton_sfs(proc, events, True)
     lead_sf, subl_sf = lepton_pair(sfs)
     calls["lepton"] = (len(events), lambda w, v: proc._leSF.append_lepton_sf(lead_sf, subl_sf, w, variations=v))
@@ -188,9 +186,8 @@ def test_appenders_nominal_only(path, era, version):
     events = load_events(path)
     proc = wzmod.wzinclusive_processor(era=era, version=version)
     calls = appenders(proc, events, era, version)
-    if era == "2024":
-        assert "trigger" in calls
-    else:
+    assert "trigger" in calls
+    if era != "2024":
         assert {"tauID", "jetPU"} <= set(calls)
     for name, (size, append) in calls.items():
         full = Weights(size, storeIndividual=True)

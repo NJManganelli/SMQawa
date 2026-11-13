@@ -25,7 +25,7 @@ from qawa.roccor import rochester_correction
 from qawa.leptonsSF import LeptonScaleFactors
 from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors
-from qawa.btag import BTVCorrector, btag_id
+from qawa.btag import btag_disc_wps
 from qawa.jme import JMEUncertainty, update_collection
 from qawa.gen_match import delta_r2, find_best_match
 from qawa.ddr_SR import dataDrivenDYRatio
@@ -111,10 +111,7 @@ def build_jets(jets, tight_leptons, taus_loose, btag_wp, era, isAPV):
         )
 
     jet_btag = (
-                jets.btagDeepFlavB > btag_id(
-                    btag_wp,
-                    era + 'APV' if isAPV else era
-                )
+                jets.btagDeepFlavB > btag_disc_wps("deepJet")["workingpoints"][era + 'APV' if isAPV else era][btag_wp]
         ) & (np.abs(jets.eta) < (2.4 if era == "2016" else 2.5) )
 
     return jets[jet_mask], jets[jet_mask & jet_btag]
@@ -162,8 +159,10 @@ def apply_hem_uncertainty(jets, met, overlap_leptons=None):
 
 class zzinc_processor(processor.ProcessorABC):
     # EWK corrections process has to be define before hand, it has to change when we move to dask
-    def __init__(self, era: str ='2018', isDY=False, dd='SR',dump_gnn_array=False, ewk_process_name=None, run_period: str = ''):
+    def __init__(self, era: str ='2018', isDY=False, dd='SR',dump_gnn_array=False, ewk_process_name=None, run_period: str = '', apply_btag_sf: bool = False):
 
+        if apply_btag_sf:
+            raise ValueError("apply_btag_sf: inc-ZZ has no correctionlib handler, so b-tag SF weights are unavailable")
         self._era = era
         self._isDY = isDY
         self._ddtype = dd
@@ -213,7 +212,6 @@ class zzinc_processor(processor.ProcessorABC):
         self.tauIDvse_wp = 'Tight'
         self.tauIDvsmu_wp = 'Tight'
         self.zmass = 91.1873 # GeV 
-        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, isAPV=self._isAPV)
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0))
         self._purw = pileup_weights(era=self._era)
         self._leSF = LeptonScaleFactors(era=self._era, isAPV=self._isAPV)
@@ -748,7 +746,6 @@ class zzinc_processor(processor.ProcessorABC):
         # Now adding weights
         if not is_data:
             weights.add('genweight', events.genWeight)
-            self._btag.append_btag_sf(good_jets, weights) #Always tag all jets selected, both b-tagged and not-b-tagged
             self._jpSF.append_jetPU_sf(good_jets, weights) #Always apply SFs for all good jets
 
             self._purw.append_pileup_weight(weights, events.Pileup.nTrueInt)

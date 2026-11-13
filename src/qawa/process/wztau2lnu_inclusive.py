@@ -8,7 +8,6 @@ import os
 import re
 import onnxruntime as rt
 import numpy.lib.recfunctions as rf
-import uproot
 import pickle
 import numpy as np
 import pandas as pd
@@ -27,13 +26,14 @@ from qawa.egammaSS import EGM_scale_and_smear_v9, EGM_scale_and_smear
 from qawa.leptonsSF import LeptonScaleFactors
 from qawa.jetPU import jetPUScaleFactors
 from qawa.tauSF import tauIDScaleFactors, tau_energy_scale
-from qawa.btag import BTVCorrector
+from qawa.btag import BTAG_MAX_ABSETA, FIXED_WPS, BTVCorrector
 from qawa.jme import JMEUncertainty, update_collection, forward_jet_pt_mask
 from qawa.jetid import JetID
 from qawa.gen_match import find_best_match
 from qawa.datadriven import DataDrivenEventReweight
 from qawa.common import pileup_weights, ewk_corrector, met_phi_xy_correction, theory_ps_weight, theory_pdf_weight, trigger_rules, transverse_energy, propagate_shift_to_met
-from qawa.jsoncorrections import CorrectionlibHandler
+from qawa.common import is_reference_stream, is_trigger_mc_dataset, lepton_triggers, reference_triggers
+from qawa.jsoncorrections import CorrectionlibHandler, category_keys
 from qawa.met_shim import prepare_met_for_factory
 # imported unconditionally (not inside the is_flashsim branch): a spawned
 # FuturesExecutor worker imports this module to unpickle the processor, and
@@ -63,6 +63,17 @@ from qawa.polarization import (
 # _RECO_METHODS = ("smp20", "transvmlv")
 
 DD_SR_ESTIMATOR = "LNTTau_VTTau_DDDY_Estimate"
+TRIGGER_SF_PT_EDGES = (20, 25, 30, 35, 40, 50, 60, 70)
+BTAG_PT_EDGES = (20, 30, 50, 70, 100, 140, 200, 300, 600, 1000)
+BTAG_ABSETA_EDGES = (0, 0.6, 1.2, 1.8, 2.4)
+JES_SOURCES = ("Absolute", "BBEC1", "EC2", "FlavorQCD", "HF", "RelativeBal")
+JES_ERA_SOURCES = ("BBEC1", "Absolute", "EC2", "HF", "RelativeSample")
+
+
+def jes_shift_names(era):
+    """Names of the JES-source and JER passes, in the order of the process() shift list."""
+    sources = list(JES_SOURCES) + [f"{source}{era}" for source in JES_ERA_SOURCES]
+    return tuple(f"JES_{source}{direction}" for source in sources for direction in ("Up", "Down")) + ("JERUp", "JERDown")
 
 
 def dd_targetdddy_tag(compound_name):
@@ -418,7 +429,7 @@ def build_jets(jets, tight_leptons, taus_loose, btag_wp, btag_corrector, nanoAOD
     jet_mask = jet_mask & forward_jet_pt_mask(jets, era)
 
     assert hasattr(btag_corrector, "tagged_jets")
-    jet_btag = (btag_corrector.tagged_jets(jets, wp=["L", "M", "T"])[btag_wp]) & (np.abs(jets.eta)<2.4) #FIXME: update eta restriction if appropriate for RunIII
+    jet_btag = (btag_corrector.tagged_jets(jets, wp=["L", "M", "T"])[btag_wp]) & (np.abs(jets.eta)<BTAG_MAX_ABSETA) #FIXME: update eta restriction if appropriate for RunIII
 
     return jets[jet_mask], jets[jet_mask & jet_btag]
 
@@ -478,6 +489,14 @@ STANDARD_FILL_VARIABLES = (
 )
 
 
+def lepton_pair_flavours(lead_lep, subl_lep):
+    mask_mm = ak.fill_none((np.abs(lead_lep.pdgId)==13) & (np.abs(subl_lep.pdgId)==13), False)
+    mask_ee = ak.fill_none((np.abs(lead_lep.pdgId)==11) & (np.abs(subl_lep.pdgId)==11), False)
+    mask_me = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 13)
+    mask_em = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 11)
+    return {"mm": mask_mm, "me": mask_me, "em": mask_em, "ee": mask_ee}
+
+
 class wzinclusive_processor(processor.ProcessorABC):
     # TODOS:  modify purw and JMEUncertainty appropriately, also the tauID, update coffea/correctionlib versions and utilize the new clib JECs... also consider the JER, deterministic smearing
     # NEED
@@ -486,13 +505,13 @@ class wzinclusive_processor(processor.ProcessorABC):
     #    Update inc-ZZ to utilize the same interfaces
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
-    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", histserv_registry=None, histserv_sample=None):
+    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", trigger_sf_alpha: bool = False, apply_btag_sf: bool = False, histserv_registry=None, histserv_sample=None):
         if (histserv_registry is None) != (histserv_sample is None):
             raise ValueError("histserv_registry and histserv_sample must be given together")
         if histserv_registry is not None:
             if histserv_sample not in histserv_registry["samples"]:
                 raise ValueError(f"histserv_sample {histserv_sample!r} is not registered; registered: {sorted(histserv_registry['samples'])}")
-            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV}
+            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV, "trigger_sf_alpha": trigger_sf_alpha, "apply_btag_sf": apply_btag_sf}
             if histserv_registry["options"] != options:
                 raise ValueError(f"registry options {histserv_registry['options']} differ from the processor options {options}")
             variations = histserv_registry["samples"][histserv_sample]["variations"]
@@ -605,7 +624,12 @@ class wzinclusive_processor(processor.ProcessorABC):
             reason = histserv_output.nondeterministic_reason(self, histserv_registry["samples"][histserv_sample]["kind"])
             if reason:
                 raise ValueError(reason)
-        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
+                                  jes_shifts=jes_shift_names(self._era), apply_sf=apply_btag_sf)
+        self.apply_btag_sf = apply_btag_sf
+        if apply_btag_sf and not self._btag.efficiency_available:
+            raise ValueError(f"apply_btag_sf needs a {self.btag_tagger} b-tag efficiency payload (btag_eff) for era {era} ({version}); "
+                             "b-tag SF weights are implemented for UParTAK4 with a registered btag_eff payload only")
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver, isAPV=self._isAPV)
         self._jetid = JetID(self._era, self._ver, self.clibhandler)
@@ -688,14 +712,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         with open(f'{_data_path}/eft-names.dat') as eft_file:
             self._eftnames = [n.strip() for n in eft_file.readlines()]
 
-        if self.clibhandler is not None and "trigger_sf" in self.clibhandler.keys():
-            # We have trigger_sf in correctionlib, skip loading from root files
-            pass
-        else:
-            with uproot.open(f'{_data_path}/trigger_sf/histo_triggerEff_sel0_{self._era}.root') as _fn:
-                _hvalue = np.dstack([_fn[_hn].values() for _hn in _fn.keys()] + [np.ones((7,7))])
-                _herror = np.dstack([np.sqrt(_fn[_hn].variances()) for _hn in _fn.keys()] + [np.zeros((7,7))])
-                self.trig_sf_map = np.stack([_hvalue, _herror], axis=-1)
+        if "trigger_sf" not in self.clibhandler.keys():
+            raise ValueError(f"No trigger_sf correction registered for era {era} ({version})")
+        self.trigger_sf_alpha = trigger_sf_alpha
+        if trigger_sf_alpha and "alpha_up" not in category_keys(self.clibhandler.getPath("trigger_sf"), "SF_mm"):
+            raise ValueError(f"trigger_sf_alpha needs alpha_up/alpha_down, absent from {self.clibhandler.getPath('trigger_sf')}")
 
         self.ewk_process_name = ewk_process_name
         self.beam_energy = self.com * 1000 / 2
@@ -927,6 +948,19 @@ class wzinclusive_processor(processor.ProcessorABC):
             'tau_loose_dR_looselep': _wh(
                 hist.axis.Regular(50, 0, np.pi, name="tau_loose_dR_looselep", label=r"$\Delta R(\tau (loose),looselep)$"),
             ),
+            'trigger_measurement': _wh(
+                hist.axis.Variable(TRIGGER_SF_PT_EDGES, name="trigger_lead_pt", label=r"$p_T^{l_1}$ (GeV)"),
+                hist.axis.Variable(TRIGGER_SF_PT_EDGES, name="trigger_trail_pt", label=r"$p_T^{l_2}$ (GeV)"),
+                hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_reference", label="reference trigger"),
+                hist.axis.Integer(0, 2, underflow=False, overflow=False, name="trigger_lepton", label="lepton trigger"),
+            ),
+            'btag_measurement': _wh(
+                hist.axis.Variable([0, 4, 5, 6], underflow=False, overflow=False, name="btag_flavour", label="hadron flavour"),
+                hist.axis.Variable(BTAG_PT_EDGES, name="btag_pt", label=r"$p_T^{jet}$ (GeV)"),
+                hist.axis.Variable(BTAG_ABSETA_EDGES, name="btag_abseta", label=r"$|\eta^{jet}|$"),
+                hist.axis.Integer(0, len(FIXED_WPS[self.btag_tagger]) + 1, underflow=False, overflow=False,
+                                  name="btag_wp", label="fixed working points passed"),
+            ),
         }
         self.build_histos_pol = lambda: {
             'tau_loosetovtight_pt_ratio_vs_tau_vtight_pt': _wh(
@@ -1064,91 +1098,20 @@ class wzinclusive_processor(processor.ProcessorABC):
                 histos[f'{v}_{wpref}_{pol}'] = copy.deepcopy(base)
         return histos
     
-    def _add_trigger_sf(self, weights, lead_lep, subl_lep, clibhandler=None, variations=True):
-        mask_BB = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta <= 1.5), False)
-        mask_EB = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta <= 1.5), False)
-        mask_BE = ak.fill_none((lead_lep.eta <= 1.5) & (subl_lep.eta >= 1.5), False)
-        mask_EE = ak.fill_none((lead_lep.eta >= 1.5) & (subl_lep.eta >= 1.5), False)
-
-        mask_mm = ak.fill_none((np.abs(lead_lep.pdgId)==13) & (np.abs(subl_lep.pdgId)==13), False)
-        mask_ee = ak.fill_none((np.abs(lead_lep.pdgId)==11) & (np.abs(subl_lep.pdgId)==11), False)
-
-        mask_me = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 13)
-        mask_em = (~mask_mm & ~mask_ee) & (np.abs(lead_lep.pdgId) == 11)
-
-        # Correctionlib path
-        if clibhandler is not None and "trigger_sf" in clibhandler.keys():
-            trigger_sf = clibhandler.getCorrectionSet("trigger_sf")
-            # Nominally we'd need to mask each input where invalid, but here we can mix "wrong" SFs in and take care of it in the where statement at the end
-            sf_mm_nom = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_me_nom = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_em_nom = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_ee_nom = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "nominal")
-            sf_nom = ak.where(mask_mm, sf_mm_nom, ak.where(mask_me, sf_me_nom, ak.where(mask_em, sf_em_nom, ak.where(mask_ee, sf_ee_nom, ak.ones_like(sf_ee_nom) ) ) ) )
-            if not variations:
-                weights.add('triggerSF', sf_nom)
-                return
-            sf_mm_up = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_me_up = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_em_up = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_ee_up = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "up")
-            sf_up = ak.where(mask_mm, sf_mm_up, ak.where(mask_me, sf_me_up, ak.where(mask_em, sf_em_up, ak.where(mask_ee, sf_ee_up, ak.ones_like(sf_ee_up) ) ) ) )
-            sf_mm_down = trigger_sf["SF_mm"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_me_down = trigger_sf["SF_me"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_em_down = trigger_sf["SF_em"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_ee_down = trigger_sf["SF_ee"].evaluate(lead_lep.pt, subl_lep.pt, "down")
-            sf_down = ak.where(mask_mm, sf_mm_down, ak.where(mask_me, sf_me_down, ak.where(mask_em, sf_em_down, ak.where(mask_ee, sf_ee_down, ak.ones_like(sf_ee_down) ) ) ) )
-            weights.add(
-                'triggerSF',
-                sf_nom,
-                sf_up,
-                sf_down,
-            )
-
-        # Legacy code path
-        else:
-            lept_pt_bins = [20, 25, 30, 35, 40, 50, 60, 100000]
-            lep_1_bin = np.digitize(lead_lep.pt.to_numpy(), lept_pt_bins) - 1
-            lep_2_bin = np.digitize(subl_lep.pt.to_numpy(), lept_pt_bins) - 1
-            trigg_bin = np.select([
-                (mask_ee & mask_BB).to_numpy(),
-                (mask_ee & mask_BE).to_numpy(),
-                (mask_ee & mask_EB).to_numpy(),
-                (mask_ee & mask_EE).to_numpy(),
-
-                (mask_em & mask_BB).to_numpy(),
-                (mask_em & mask_BE).to_numpy(),
-                (mask_em & mask_EB).to_numpy(),
-                (mask_em & mask_EE).to_numpy(),
-
-                (mask_me & mask_BB).to_numpy(),
-                (mask_me & mask_BE).to_numpy(),
-                (mask_me & mask_EB).to_numpy(),
-                (mask_me & mask_EE).to_numpy(),
-
-                (mask_mm & mask_BB).to_numpy(),
-                (mask_mm & mask_BE).to_numpy(),
-                (mask_mm & mask_EB).to_numpy(),
-                (mask_mm & mask_EE).to_numpy()
-            ], np.arange(0,16), 16)
-
-            # this is to avoid cases were two
-            # leptons are not in the event
-            lep_1_bin[lep_1_bin>6] = -1
-            lep_2_bin[lep_2_bin>6] = -1
-            center_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,0]
-            if not variations:
-                weights.add('triggerSF', center_value)
-                return
-            errors_value = self.trig_sf_map[lep_1_bin,lep_2_bin,trigg_bin,1]
-
-            weights.add(
-                'triggerSF', 
-                center_value, 
-                center_value + errors_value,
-                center_value - errors_value
-            )
-
+    def _add_trigger_sf(self, weights, lead_lep, subl_lep, variations=True):
+        trigger_sf = self.clibhandler.getCorrectionSet("trigger_sf")
+        flavours = lepton_pair_flavours(lead_lep, subl_lep)
+        keys = ["nominal"]
+        if variations:
+            keys += ["alpha_up", "alpha_down"] if self.trigger_sf_alpha else ["up", "down"]
+        sfs = []
+        for key in keys:
+            values = {flavour: trigger_sf[f"SF_{flavour}"].evaluate(lead_lep.pt, subl_lep.pt, key) for flavour in flavours}
+            sf = ak.ones_like(values["ee"])
+            for flavour in reversed(flavours):
+                sf = ak.where(flavours[flavour], values[flavour], sf)
+            sfs.append(sf)
+        weights.add('triggerSF', *sfs)
 
     def process_shift(self, event, shift_name:str=''):
         _data_path = os.path.join(os.path.dirname(__file__), 'data/')
@@ -1195,7 +1158,11 @@ class wzinclusive_processor(processor.ProcessorABC):
         else:
             selection.add('lumimask', np.ones(len(event), dtype='bool'))
         is_mc = not is_data
-        selection.add('triggers', trigger_rules(event, self._triggers, self._era, is_mc))
+        is_flashsim = event.metadata.get("is_flashsim", False)
+        # MET-stream data fills only the trigger measurement: its events are also in the lepton streams
+        reference_stream = is_data and is_reference_stream(dataset, self._triggers, self._era)
+        if not reference_stream:
+            selection.add('triggers', trigger_rules(event, self._triggers, self._era, is_mc))
         if self._jetveto is not None:
             selection.add('jetveto', ~ak.any(
                 self._jetveto.evaluate('jetvetomap', event.OrigJet.eta, event.OrigJet.phi), axis=1
@@ -1500,6 +1467,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         # subl_lep = ak.firsts(ak.where(dilep.l1.pt <= dilep.l2.pt, dilep.l1, dilep.l2),axis=1)
         lead_lep = ak.firsts(dilep.l1)
         subl_lep = ak.firsts(dilep.l2)
+        for flavour, mask in lepton_pair_flavours(lead_lep, subl_lep).items():
+            selection.add(f'trigger-{flavour}', ak.fill_none(mask, False))
 
 
         dilep_p4 = (lead_lep + subl_lep)
@@ -1811,7 +1780,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         _ones = np.ones(len(weights.weight()))
         if not is_data:
             weights.add('genweight', event.genWeight)
-            # self._btag.append_btag_sf(jets, weights)
+            if self.apply_btag_sf:
+                self._btag.append_btag_sf(good_jets, weights, dataset, shift_name, variations)
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
                 self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)
@@ -1824,7 +1794,7 @@ class wzinclusive_processor(processor.ProcessorABC):
                                                 weights, variations=variations
                                                 )
             # self._tauID.append_tauID_sf(had_taus, weights)
-            self._add_trigger_sf(weights, lead_lep, subl_lep, clibhandler=self.clibhandler, variations=variations)
+            self._add_trigger_sf(weights, lead_lep, subl_lep, variations=variations)
             self._leSF.append_lepton_sf(lead_lep, subl_lep, weights, variations=variations)
             if self.ewk_process_name:
                 self.ewk_corr.get_weight(
@@ -1893,9 +1863,10 @@ class wzinclusive_processor(processor.ProcessorABC):
                 for dddy_mcsyst in dddy_var.mc_systematics:
                     weights.add(f"datadriven_{dddy_mcsyst}_{dddy_tag}", _ones, dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Up"), dddy_var.estimate_dd_DY(ngood_jets, tau_pt_loose, f"{dddy_mcsyst}Down"))
 
-        common_sel = ['triggers', 'lumimask', 'goodPV', 'metfilter']
+        cleaning = ['lumimask', 'goodPV', 'metfilter']
         if "jetveto" in selection.names:
-            common_sel += ["jetveto"]
+            cleaning += ["jetveto"]
+        common_sel = ['triggers'] + cleaning
         channels = {
             "inc-SR0": common_sel + [
                 'require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '0njets', '1nhtaus_vtight', '~2plusnhtaus_tight', 'high_met_pt',
@@ -2012,6 +1983,8 @@ class wzinclusive_processor(processor.ProcessorABC):
             "inc-B01": common_sel + ['require-ossf', 'require-2lep', 'dilep_m', 'dilep_dphi_met', 'dilep_pt', '1njets', '1nhtaus_loose', '~1nhtaus_tight', '~1nhtaus_vtight', 'high_met_pt', 'tau_loosetovtight_high_wz_mt'],
             "Pol_reg": [],
             }
+        if reference_stream:
+            channels = {}
             
             
 
@@ -2145,6 +2118,35 @@ class wzinclusive_processor(processor.ProcessorABC):
                 fill_map('tau_vtight_upsilon', 'tau_vtight_pt', 'tau_vtight_upsilon_vs_pt')
                 fill_map('tau_tight_upsilon', 'tau_tight_pt', 'tau_tight_upsilon_vs_pt')
                 fill_map('tau_loose_upsilon', 'tau_loose_pt', 'tau_loose_upsilon_vs_pt')
+                if reference_stream or (is_mc and not is_flashsim and is_trigger_mc_dataset(dataset)):
+                    trigger_channels = ChannelSelections(selection, {
+                        f'trigger-{flavour}': cleaning + ['require-2lep', f'trigger-{flavour}']
+                        for flavour in ('mm', 'me', 'em', 'ee')
+                    })
+                    trigger_values = {
+                        'trigger_lead_pt': ak.to_numpy(ak.fill_none(lead_lep.pt, np.nan)),
+                        'trigger_trail_pt': ak.to_numpy(ak.fill_none(subl_lep.pt, np.nan)),
+                        'trigger_reference': reference_triggers(event, self._triggers, self._era).astype(int),
+                        'trigger_lepton': lepton_triggers(event, self._triggers, self._era).astype(int),
+                    }
+                    trigger_weight = weights.partial_weight(exclude=['triggerSF']) if is_mc else np.ones(len(event))
+                    fill(histos, 'trigger_measurement', trigger_values, nominal_labels,
+                         syst_weight(trigger_weight[np.newaxis]), trigger_channels)
+                if is_mc and not is_flashsim:
+                    njets = ak.to_numpy(ak.num(good_jets))
+                    jet_selection = PackedSelection()
+                    jet_selection.add('btag-jets', np.repeat(selection.all(*common_sel, 'require-2lep'), njets)
+                                      & ak.to_numpy(ak.flatten(np.abs(good_jets.eta) < BTAG_MAX_ABSETA)))
+                    passed_wps = self._btag.tagged_jets(good_jets, wp=list(FIXED_WPS[self.btag_tagger]))
+                    btag_values = {
+                        'btag_flavour': ak.to_numpy(ak.flatten(good_jets.hadronFlavour)),
+                        'btag_pt': ak.to_numpy(ak.flatten(good_jets.pt)),
+                        'btag_abseta': ak.to_numpy(ak.flatten(np.abs(good_jets.eta))),
+                        'btag_wp': sum(ak.to_numpy(ak.flatten(passed)).astype(int) for passed in passed_wps.values()),
+                    }
+                    btag_weight = np.repeat(weights.partial_weight(exclude=list(self._btag.weight_names)), njets)
+                    fill(histos, 'btag_measurement', btag_values, nominal_labels, syst_weight(btag_weight[np.newaxis]),
+                         ChannelSelections(jet_selection, {'btag-jets': ['btag-jets']}))
 
         self._process_shift_warnings = False # this will only print warning for first process shift
         if self.histserv_registry is not None:
@@ -2316,37 +2318,21 @@ class wzinclusive_processor(processor.ProcessorABC):
         event = ak.with_field(event, met, 'MET')
     
         # define all the shifts
+        def jes_shift(field, source, direction):
+            return ({"Jet": getattr(getattr(jets, field), direction.lower()), "MET": getattr(getattr(met, field), direction.lower())},
+                    f"JES_{source}{direction}")
         shifts = [
-            # Jets
-            ({"Jet": jets                             , "MET": met                               }, None                  ),
-            ({"Jet": jets.JES_Total.up                , "MET": met.JES_Total.up                  }, "JESUp"               ),
-            ({"Jet": jets.JES_Total.down              , "MET": met.JES_Total.down                }, "JESDown"             ),
-            ({"Jet": jets.JES_Absolute.up             , "MET": met.JES_Absolute.up               }, "JES_AbsoluteUp"      ),
-            ({"Jet": jets.JES_Absolute.down           , "MET": met.JES_Absolute.down             }, "JES_AbsoluteDown"    ),
-            ({"Jet": jets.JES_BBEC1.up                , "MET": met.JES_BBEC1.up                  }, "JES_BBEC1Up"         ),
-            ({"Jet": jets.JES_BBEC1.down              , "MET": met.JES_BBEC1.down                }, "JES_BBEC1Down"       ),
-            ({"Jet": jets.JES_EC2.up                  , "MET": met.JES_EC2.up                    }, "JES_EC2Up"           ),
-            ({"Jet": jets.JES_EC2.down                , "MET": met.JES_EC2.down                  }, "JES_EC2Down"         ),
-            ({"Jet": jets.JES_FlavorQCD.up            , "MET": met.JES_FlavorQCD.up              }, "JES_FlavorQCDUp"     ),
-            ({"Jet": jets.JES_FlavorQCD.down          , "MET": met.JES_FlavorQCD.down            }, "JES_FlavorQCDDown"   ),
-            ({"Jet": jets.JES_HF.up                   , "MET": met.JES_HF.up                     }, "JES_HFUp"            ),
-            ({"Jet": jets.JES_HF.down                 , "MET": met.JES_HF.down                   }, "JES_HFDown"          ),
-            ({"Jet": jets.JES_RelativeBal.up          , "MET": met.JES_RelativeBal.up            }, "JES_RelativeBalUp"   ),
-            ({"Jet": jets.JES_RelativeBal.down        , "MET": met.JES_RelativeBal.down          }, "JES_RelativeBalDown" ),
-            ({"Jet": jets                             , "MET": met.MET_UnclusteredEnergy.up      }, "UESUp"               ),
-            ({"Jet": jets                             , "MET": met.MET_UnclusteredEnergy.down    }, "UESDown"             ), 
-              ##year dependent systematics
-            ({"Jet": getattr(jets,f'JES_BBEC1_{self._era}').up     , "MET": getattr(met,f'JES_BBEC1_{self._era}').up      }, f"JES_BBEC1{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_BBEC1_{self._era}').down   , "MET": getattr(met,f'JES_BBEC1_{self._era}').down    }, f"JES_BBEC1{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_Absolute_{self._era}').up  , "MET": getattr(met,f'JES_Absolute_{self._era}').up   }, f"JES_Absolute{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_Absolute_{self._era}').down, "MET": getattr(met,f'JES_Absolute_{self._era}').down }, f"JES_Absolute{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_EC2_{self._era}').up       , "MET": getattr(met,f'JES_EC2_{self._era}').up        }, f"JES_EC2{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_EC2_{self._era}').down     , "MET": getattr(met,f'JES_EC2_{self._era}').down      }, f"JES_EC2{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_HF_{self._era}').up        , "MET": getattr(met,f'JES_HF_{self._era}').up         }, f"JES_HF{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_HF_{self._era}').down      , "MET": getattr(met,f'JES_HF_{self._era}').down       }, f"JES_HF{self._era}Down"),
-            ({"Jet": getattr(jets,f'JES_RelativeSample_{self._era}').up  , "MET": getattr(met,f'JES_RelativeSample_{self._era}').up   }, f"JES_RelativeSample{self._era}Up"  ),
-            ({"Jet": getattr(jets,f'JES_RelativeSample_{self._era}').down, "MET": getattr(met,f'JES_RelativeSample_{self._era}').down }, f"JES_RelativeSample{self._era}Down"),
+            ({"Jet": jets, "MET": met}, None),
+            ({"Jet": jets.JES_Total.up, "MET": met.JES_Total.up}, "JESUp"),
+            ({"Jet": jets.JES_Total.down, "MET": met.JES_Total.down}, "JESDown"),
         ]
+        shifts += [jes_shift(f"JES_{source}", source, direction) for source in JES_SOURCES for direction in ("Up", "Down")]
+        shifts += [
+            ({"Jet": jets, "MET": met.MET_UnclusteredEnergy.up}, "UESUp"),
+            ({"Jet": jets, "MET": met.MET_UnclusteredEnergy.down}, "UESDown"),
+        ]
+        shifts += [jes_shift(f"JES_{source}_{self._era}", f"{source}{self._era}", direction)
+                   for source in JES_ERA_SOURCES for direction in ("Up", "Down")]
         if "JER" in jets.fields and "JER" in met.fields:
             shifts += [
                 ({"Jet": jets.JER.up                      , "MET": met.JER.up                        }, "JERUp"               ),
