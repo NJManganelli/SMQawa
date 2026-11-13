@@ -48,6 +48,7 @@ JET_TYPE = "AK4PFPuppi"
 VARIATIONS = ("nom", "up", "down")
 JER_TAG_ERAS = {
     "Summer24Prompt24_JRV2": ("2024", False),
+    "Summer24Prompt25_JRV2": ("2025", False),
     "Summer20UL16APV_JRV5": ("2016", True),
     "Summer20UL16_JRV5": ("2016", False),
     "Summer19UL17_JRV4": ("2017", False),
@@ -1309,12 +1310,13 @@ def test_jetmet_mitigation_table():
     run3 = {"jer_genmatched_only_eta": ((2.5, 3.0),), "jet_pt_min": (((2.5, 3.0), 50.0), ((3.0, 5.0), 50.0)), "residual_pt_floor": None}
     assert jetmet_mitigations("2022") == run3
     assert jetmet_mitigations("2023") == run3
-    assert jetmet_mitigations("2024") == {
-        "jer_genmatched_only_eta": ((2.5, 3.0),), "jet_pt_min": (((2.5, 3.0), 50.0),), "residual_pt_floor": (((2.0, 2.5),), 30.0),
-    }
-    for era in ("2016", "2017", "2018", "2025", "2026", None):
+    for era in ("2024", "2025"):
+        assert jetmet_mitigations(era) == {
+            "jer_genmatched_only_eta": ((2.5, 3.0),), "jet_pt_min": (((2.5, 3.0), 50.0),), "residual_pt_floor": (((2.0, 2.5),), 30.0),
+        }, era
+    for era in ("2016", "2017", "2018", "2026", None):
         assert jetmet_mitigations(era) == {"jer_genmatched_only_eta": (), "jet_pt_min": (), "residual_pt_floor": None}, era
-    assert set(JETMET_RUN3_MITIGATIONS) == {"2022", "2023", "2024"}
+    assert set(JETMET_RUN3_MITIGATIONS) == {"2022", "2023", "2024", "2025"}
     pt = np.array([20, 20, 60, 20, 20, 50.0, np.nextafter(50.0, np.inf), 20, 20, 20, 20], dtype=np.float64)
     eta = np.array([0.5, 2.7, -2.8, 3.5, -2.2, 2.6, 2.6, 2.5, np.nextafter(np.float32(2.5), np.float32(0)), 3.0, 5.0], dtype=np.float32)
     assert pt[6] != 50.0 and eta[8] != np.float32(2.5), "near-boundary point collapsed onto the boundary"
@@ -1324,7 +1326,8 @@ def test_jetmet_mitigation_table():
         "2022": [T, F, T, F, T, F, T, F, T, F, T],
         "2023": [T, F, T, F, T, F, T, F, T, F, T],
         "2024": [T, F, T, T, T, F, T, F, T, T, T],
-        "2018": [T] * 11, "2025": [T] * 11, None: [T] * 11,
+        "2025": [T, F, T, T, T, F, T, F, T, T, T],
+        "2018": [T] * 11, None: [T] * 11,
     }
     for era, exp in expected.items():
         assert ak.to_list(forward_jet_pt_mask(jets, era)[0]) == exp, f"{era}: {ak.to_list(forward_jet_pt_mask(jets, era)[0])}"

@@ -93,7 +93,7 @@ POL_TAU_NAMES = {
 }
 
 _POL_ERA_KEY = {"2016": "Run2", "2016APV": "Run2", "2017": "Run2", "2018": "Run2",
-                "2024": "2024"}
+                "2024": "2024", "2025": "2024"}
 
 POL_GEN_FRACTIONS_BY_ERA = {
     "Run2": {
@@ -535,14 +535,21 @@ class wzinclusive_processor(processor.ProcessorABC):
         jec_tag = ''
         jer_tag = ''
         jetveto_tag = None
-        if self._ver == "v15" and self._era in ["2016", "2017", "2018"]:
-            # Run 2 NanoAODv15 uses AK4 PUPPI jets: JECs come from the central jet_jerc.json.gz (one tag for MC and all data runs)
-            jec_tag = f'Summer20UL{self._era[-2:]}{"APV" if self._isAPV else ""}NanoV15_V1'
-            jer_tag = {"2016": "Summer20UL16APV_JRV5" if self._isAPV else "Summer20UL16_JRV5", "2017": "Summer19UL17_JRV4", "2018": "Summer19UL18_JRV3"}[self._era]
-            # one map for 2016 preVFP and postVFP; 'jetvetomap' type. For 2018 the 'jetvetomap' already contains the
-            # HEM 15/16 box (eta -3.0 to -1.3, phi -1.57 to -0.87; identical to 'jetvetomap_hem1516'), so the HEM region
-            # is vetoed for the full year, in data and MC alike
-            jetveto_tag = f'Summer19UL{self._era[-2:]}_V1'
+        if self._ver == "v15":
+            # NanoAODv15 uses AK4 PUPPI jets: the central jet_jerc.json.gz has one JEC tag for MC and all data runs
+            # For 2018 the 'jetvetomap' already contains the HEM 15/16 box (eta -3.0 to -1.3, phi -1.57 to -0.87
+            v15_jec_jer_jetveto_tags = {
+                "2016APV": ("Summer20UL16APVNanoV15_V1", "Summer20UL16APV_JRV5", "Summer19UL16_V1"),
+                "2016": ("Summer20UL16NanoV15_V1", "Summer20UL16_JRV5", "Summer19UL16_V1"),
+                "2017": ("Summer20UL17NanoV15_V1", "Summer19UL17_JRV4", "Summer19UL17_V1"),
+                "2018": ("Summer20UL18NanoV15_V1", "Summer19UL18_JRV3", "Summer19UL18_V1"),
+                "2024": ("Summer24Prompt24_V5", "Summer24Prompt24_JRV2", "Summer24Prompt24_RunBCDEFGHI_V1"),
+                "2025": ("Summer24Prompt25_V3", "Summer24Prompt25_JRV2", "Summer24Prompt25_RunCDEFG_V1"),
+            }
+            era_key = f'{self._era}{"APV" if self._isAPV else ""}'
+            if era_key not in v15_jec_jer_jetveto_tags:
+                raise NotImplementedError(f"{era_key} is not yet implemented")
+            jec_tag, jer_tag, jetveto_tag = v15_jec_jer_jetveto_tags[era_key]
         elif len(run_period)==0:
             if self._era == '2016':
                 if self._isAPV:
@@ -557,11 +564,7 @@ class wzinclusive_processor(processor.ProcessorABC):
             elif self._era == '2018':
                 jec_tag = 'Summer19UL18_V5_MC'
                 jer_tag = 'Summer19UL18_JRV2_MC'
-            elif self._era == '2024':
-                jec_tag = 'Summer24Prompt24_V5'
-                jer_tag = 'Summer24Prompt24_JRV2'
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era in ["2022", "2023", "2025"]:
+            elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
@@ -578,15 +581,11 @@ class wzinclusive_processor(processor.ProcessorABC):
                 jec_tag = f'Summer19UL17_Run{run_period}_V5_DATA'
             elif self._era == '2018':
                 jec_tag = f'Summer19UL18_Run{run_period}_V5_DATA'
-            elif self._era == '2024':
-                # Data JECs are run-dependent inside the correctionlib payload (all 2024 nibs)
-                jec_tag = 'Summer24Prompt24_V5'
-                jetveto_tag = 'Summer24Prompt24_RunBCDEFGHI_V1'
-            elif self._era in ["2022", "2023", "2025"]:
+            elif self._era in ["2022", "2023"]:
                 raise NotImplementedError(f"{self._era} is not yet implemented")
             else:
                 raise ValueError(f"Unexpected era={self._era}")
-        self._use_clib_jme = self._era == "2024" or self._ver == "v15"
+        self._use_clib_jme = self._ver == "v15"
 
         self.btag_wp = 'L'
         self.btag_tagger = "deepJet" if self._ver in [f"v{V}" for V in range(12)] else "UParTAK4"
@@ -622,7 +621,9 @@ class wzinclusive_processor(processor.ProcessorABC):
         self._tauID= tauIDScaleFactors(era=self._era, vsjet_wp=self.tauIDvsjet_wp, vse_wp=self.tauIDvse_wp_for_sfs, vsmu_wp=self.tauIDvsmu_wp,
                                        isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler, nanoAODversion=self._ver)
         
-        _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler)
+        # PLACEHOLDER - the 2024 estimate used for 2025 carries only stat_2024
+        _dd_kwargs = dict(era=self._era, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
+                          override_stat_check=self._era == "2025")
         self._dd = DataDrivenEventReweight(estimator=DD_SR_ESTIMATOR, **_dd_kwargs)
         self._dd_targets = {
             dd_targetdddy_tag(_name): DataDrivenEventReweight(estimator=_name, **_dd_kwargs)
@@ -634,7 +635,7 @@ class wzinclusive_processor(processor.ProcessorABC):
 
         ### polarization part ####
         # era-aware generator fractions: Run-2 eras -> measured UL set,
-        # 2024 -> GEN_FRACTIONS_BY_ERA["2024"] (placeholder until fitted).
+        # 2024 and 2025 (Summer24 MC) -> GEN_FRACTIONS_BY_ERA["2024"] (placeholder until fitted).
         self.gen_fractions = get_pol_gen_fractions(self._era)
         self.pol_slope = get_pol_slope(self._era)
         self.pol_intercept = get_pol_intercept(self._era)
