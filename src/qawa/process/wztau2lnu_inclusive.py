@@ -505,13 +505,13 @@ class wzinclusive_processor(processor.ProcessorABC):
     #    Update inc-ZZ to utilize the same interfaces
     # NICE TO HAVE / DEFER
     #    Switch to correctionlib JECS + Type1 MET when coffea implementation for MET and JME implementation of "L1" only correction can be loaded/built
-    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", trigger_sf_alpha: bool = False, histserv_registry=None, histserv_sample=None):
+    def __init__(self, era: str ='2018', ewk_process_name=None, run_period: str = '', split_by_charge:bool = False, split_FV:bool = False, pol:bool = False, version="v9", trigger_sf_alpha: bool = False, apply_btag_sf: bool = False, histserv_registry=None, histserv_sample=None):
         if (histserv_registry is None) != (histserv_sample is None):
             raise ValueError("histserv_registry and histserv_sample must be given together")
         if histserv_registry is not None:
             if histserv_sample not in histserv_registry["samples"]:
                 raise ValueError(f"histserv_sample {histserv_sample!r} is not registered; registered: {sorted(histserv_registry['samples'])}")
-            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV, "trigger_sf_alpha": trigger_sf_alpha}
+            options = {"era": era, "version": version, "pol": pol, "split_by_charge": split_by_charge, "split_FV": split_FV, "trigger_sf_alpha": trigger_sf_alpha, "apply_btag_sf": apply_btag_sf}
             if histserv_registry["options"] != options:
                 raise ValueError(f"registry options {histserv_registry['options']} differ from the processor options {options}")
             variations = histserv_registry["samples"][histserv_sample]["variations"]
@@ -625,7 +625,11 @@ class wzinclusive_processor(processor.ProcessorABC):
             if reason:
                 raise ValueError(reason)
         self._btag = BTVCorrector(era=self._era, wp=self.btag_wp, tagger=self.btag_tagger, isAPV=self._isAPV, isEE=self._isEE, isBPix=self._isBPix, clibhandler=self.clibhandler,
-                                  jes_shifts=jes_shift_names(self._era))
+                                  jes_shifts=jes_shift_names(self._era), apply_sf=apply_btag_sf)
+        self.apply_btag_sf = apply_btag_sf
+        if apply_btag_sf and not self._btag.efficiency_available:
+            raise ValueError(f"apply_btag_sf needs a {self.btag_tagger} b-tag efficiency payload (btag_eff) for era {era} ({version}); "
+                             "b-tag SF weights are implemented for UParTAK4 with a registered btag_eff payload only")
         # FIXME: Need JER updates according to https://cms-talk.web.cern.ch/t/new-jer-smearing-inputs-available-for-2024-and-2025/145723/1
         self._jmeu = JMEUncertainty(jec_tag, jer_tag, era=self._era, is_mc=(len(run_period)==0), clibhandler=self.clibhandler if self._use_clib_jme else None, version=self._ver, isAPV=self._isAPV)
         self._jetid = JetID(self._era, self._ver, self.clibhandler)
@@ -1776,10 +1780,8 @@ class wzinclusive_processor(processor.ProcessorABC):
         _ones = np.ones(len(weights.weight()))
         if not is_data:
             weights.add('genweight', event.genWeight)
-            if self._btag.efficiency_available:
+            if self.apply_btag_sf:
                 self._btag.append_btag_sf(good_jets, weights, dataset, shift_name, variations)
-            elif self._process_shift_warnings:
-                coffea_console.print("[red]B-TAG SFs DISABLED: no efficiency payload[/red]")
             # FIXME: jpSF only valid for Run2 currently, to be fixed for AK4PUPPI or never needed?
             if self._jpSF is not None:
                 self._jpSF.append_jetPU_sf(good_jets, weights, variations=variations)

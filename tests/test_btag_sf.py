@@ -269,10 +269,10 @@ def recorded_pass(monkeypatch):
     return run
 
 
-def processor_with_payload(monkeypatch, tmp_path):
+def processor_with_payload(monkeypatch, tmp_path, apply_btag_sf=True):
     payload = eff_payload(tmp_path / "btagEff_2024_v15.json")
     monkeypatch.setattr("qawa.jsoncorrections.btag_eff_path", lambda era_label, version: payload)
-    return wzmod.wzinclusive_processor(era="2024", version="v15")
+    return wzmod.wzinclusive_processor(era="2024", version="v15", apply_btag_sf=apply_btag_sf)
 
 
 def btag_labels(out):
@@ -316,13 +316,30 @@ def test_processor_jes_pass(monkeypatch, tmp_path, recorded_pass):
 
 
 @needs_m1
-def test_processor_without_payload(recorded_pass):
-    proc = wzmod.wzinclusive_processor(era="2024", version="v15")
+def test_processor_switched_off(monkeypatch, tmp_path, recorded_pass):
     with coffea_console.capture() as captured:
+        proc = processor_with_payload(monkeypatch, tmp_path, apply_btag_sf=False)
         recorded = recorded_pass(proc, None)
-    assert "B-TAG SFs DISABLED" in captured.get()
+    assert "BTVCorrector" not in captured.get()
+    assert proc._btag.efficiency_available
     assert "btag_sf" not in recorded["weights"].weightStatistics
     assert not btag_labels(recorded["out"])
+    assert recorded["out"]["btag_measurement"].values(flow=True).sum() > 0
+
+
+def test_processor_without_payload():
+    with pytest.raises(ValueError, match="b-tag efficiency payload"):
+        wzmod.wzinclusive_processor(era="2024", version="v15", apply_btag_sf=True)
+    with pytest.raises(ValueError, match="b-tag efficiency payload"):
+        wzmod.wzinclusive_processor(era="2018", version="v9", apply_btag_sf=True)
+
+
+def test_corrector_switched_off(tmp_path):
+    with coffea_console.capture() as captured:
+        btv = corrector("2024", tmp_path, jes_shifts=(), apply_sf=False)
+    assert "not paired" not in captured.get()
+    with pytest.raises(ValueError, match="apply_sf=False"):
+        btv.append_btag_sf(classic_jets(btv), Weights(1, storeIndividual=True), "TTto2L2Nu")
 
 
 @needs_m1

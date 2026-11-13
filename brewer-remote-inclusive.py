@@ -150,6 +150,7 @@ def main():
     parser.add_argument("--split_FV", action='store_true'          , help="split signal into IFV and OFV")
     parser.add_argument("--pol", action='store_true'          , help="Fill the histogram with polarization weights")
     parser.add_argument("--trigger-sf-alpha", action='store_true', help="inc-WZ: trigger SF up/down include |1-alpha|")
+    parser.add_argument("--btag-sf", action='store_true', help="inc-WZ/inc-ZZ: apply b-tag SF weights (needs b-tag efficiency payloads for inc-WZ)")
     parser.add_argument('--executor' , type=str, default="FuturesExecutor", help="Executor to use, one of IterativeExecutor (good for debugging), FuturesExecutor (multithreaded), or other coffea option")
     parser.add_argument('--copyInput', action='store_true'     , help="xrdcp a file to the worker node before executing the coffea processor on it")
     parser.add_argument('--maxChunks', '--maxchunks', type=int, default= -1, help="limit number of chunks per-file to this number at most, default '-1' to process all")
@@ -299,6 +300,7 @@ def main():
                     run_period=options.runperiod if is_data else '',
                     version=auto_ver,
                     trigger_sf_alpha=options.trigger_sf_alpha,
+                    apply_btag_sf=options.btag_sf,
                     histserv_registry=histserv_registry,
                     histserv_sample=histserv_sample,
                 )
@@ -321,7 +323,8 @@ def main():
                     dd = options.zzdd,
                     ewk_process_name=ewk_flag,
                     # dump_gnn_array=options.dumpgnn,
-                    run_period=options.runperiod if is_data else ''
+                    run_period=options.runperiod if is_data else '',
+                    apply_btag_sf=options.btag_sf,
                 )
             elif options.analysis in ["vbs-ZZ"]:
                 from qawa.process.zz2l2nu_vbs import zzinc_processor

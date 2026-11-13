@@ -38,7 +38,7 @@ DAS_X = "/X/RunX-v1/NANOAODSIM"
 DAS_C = "/Muon0/Run2024C-v1/NANOAOD"
 DAS_D = "/Muon0/Run2024D-v1/NANOAOD"
 OPTIONS = {"era": "2024", "version": "v15", "pol": False, "split_by_charge": False, "split_FV": False,
-           "trigger_sf_alpha": False}
+           "trigger_sf_alpha": False, "apply_btag_sf": False}
 CHANNELS = {"chA": ["triggers", "met_pt"], "chB": ["triggers", "~low"], "chEmpty": ["triggers", "empty"]}
 LABELS = [("nominal",), ("up",), ("down",)]
 CVMFS, needs_cvmfs = input_path(CVMFS_HEAD, "cms-griddata.cern.ch")
@@ -787,6 +787,20 @@ def test_registry_requires_trigger_sf_alpha(tmp_path, monkeypatch):
     monkeypatch.setattr(wzmod, "category_keys", lambda path, correction: ["nominal", "up", "down", "alpha_up"])
     proc = wzmod.wzinclusive_processor(**registry["options"], histserv_registry=registry, histserv_sample=DAS_S)
     assert proc.trigger_sf_alpha is True
+
+
+@needs_cvmfs
+def test_registry_requires_apply_btag_sf(tmp_path, monkeypatch):
+    from test_btag_sf import eff_payload
+    registry = hand_registry("mc", dict(OPTIONS, apply_btag_sf=True))
+    with pytest.raises(ValueError, match="registry options"):
+        wzmod.wzinclusive_processor(era="2024", version="v15", histserv_registry=registry, histserv_sample=DAS_S)
+    with pytest.raises(ValueError, match="b-tag efficiency payload"):
+        wzmod.wzinclusive_processor(**registry["options"], histserv_registry=registry, histserv_sample=DAS_S)
+    payload = eff_payload(tmp_path / "btagEff_2024_v15.json")
+    monkeypatch.setattr("qawa.jsoncorrections.btag_eff_path", lambda era_label, version: payload)
+    proc = wzmod.wzinclusive_processor(**registry["options"], histserv_registry=registry, histserv_sample=DAS_S)
+    assert proc.apply_btag_sf is True
 
 
 @needs_cvmfs

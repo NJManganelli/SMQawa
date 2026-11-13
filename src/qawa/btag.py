@@ -67,7 +67,7 @@ class BTVCorrector:
     weight_names = ("btag_sf",)
 
     def __init__(self, era:str='2018', wp:str='L', tagger:str='deepJet', isAPV=False, isEE=False, isBPix=False,
-                 clibhandler=None, wps=None, bc_correction="comb", *, jes_shifts):
+                 clibhandler=None, wps=None, bc_correction="comb", *, jes_shifts, apply_sf=True):
         if clibhandler is None:
             raise ValueError("BTVCorrector needs a CorrectionlibHandler")
         assert tagger in FIXED_WPS
@@ -99,7 +99,8 @@ class BTVCorrector:
         self.efficiency_available = tagger == "UParTAK4" and "btag_eff" in clibhandler.keys()
         self.guard_counts = {}
         self.inclusive_reported = set()
-        if tagger != "UParTAK4":
+        self.apply_sf = apply_sf
+        if tagger != "UParTAK4" or not apply_sf:
             return
         bc_systematics = category_keys(clibhandler.getPath("btagging"), self.bc_name)
         unmatched = [s for s in jes_shifts if btv_shift_systematic(s) not in set(bc_systematics)]
@@ -147,7 +148,7 @@ class BTVCorrector:
         else:
             process_key = process
         return self.efficiency_correction.evaluate(process_key, systematic, wp, np.asarray(jets.hadronFlavour), np.asarray(jets.pt),
-                                  np.abs(np.asarray(jets.eta)))
+                                                   np.abs(np.asarray(jets.eta)))
 
     def jet_factors(self, jets, light, process, bc_systematic, light_systematic, eff_systematic):
         sf, eff = {}, {}
@@ -162,6 +163,8 @@ class BTVCorrector:
     def append_btag_sf(self, jets: ak.Array, weights: Weights, process, shift_name=None, variations=True):
         if self._tagger != "UParTAK4":
             raise NotImplementedError("b-tag SF weights are implemented for UParTAK4 (NanoAODv15) only")
+        if not self.apply_sf:
+            raise ValueError("this BTVCorrector was built with apply_sf=False")
         accepted = jets[np.abs(jets.eta) < BTAG_MAX_ABSETA]
         counts = ak.num(accepted)
         flat = ak.flatten(accepted)
