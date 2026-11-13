@@ -537,6 +537,7 @@ class wzinclusive_processor(processor.ProcessorABC):
         jetveto_tag = None
         if self._ver == "v15":
             # NanoAODv15 uses AK4 PUPPI jets: the central jet_jerc.json.gz has one JEC tag for MC and all data runs
+            # For 2018 the 'jetvetomap' already contains the HEM 15/16 box (eta -3.0 to -1.3, phi -1.57 to -0.87
             v15_jec_jer_jetveto_tags = {
                 "2016APV": ("Summer20UL16APVNanoV15_V1", "Summer20UL16APV_JRV5", "Summer19UL16_V1"),
                 "2016": ("Summer20UL16NanoV15_V1", "Summer20UL16_JRV5", "Summer19UL16_V1"),
